@@ -8,6 +8,23 @@ The tool features interactive zoom and pan capabilities, frame-by-frame navigati
 
 Built using Python with the PySide6 (Qt6) framework for the GUI and OpenCV for video handling. Uses Python's standard `logging` module for diagnostics and Qt's `QSettings` for preference persistence.
 
+## Download and Run (Recommended for Most Users)
+
+Pre-built versions of PyroTracker for Windows, macOS, and Linux are available for easy installation without needing to install Python or other dependencies.
+
+1.  **Go to the [Latest Release page](https://github.com/EdLlewellin/PyroTracker/releases).**
+2.  Under the "Assets" section for the latest release, download the correct file for your operating system:
+    * **Windows:** Download the `PyroTracker-windows.exe` file.
+    * **macOS:** Download the `PyroTracker-macos.zip` file.
+    * **Linux:** Download the `PyroTracker-linux` file.
+3.  **Run the application:**
+    * **Windows:** Simply double-click the downloaded `PyroTracker-windows.exe` file. You might see a security warning ("Windows protected your PC"); click "More info" and then "Run anyway".
+    * **macOS:** Double-click the downloaded `PyroTracker-macos.zip` file to unzip it. This will create a `PyroTracker.app` file. Double-click `PyroTracker.app` to run it.
+        * *Note:* You might see a security warning ("App can't be opened because it is from an unidentified developer"). If so, right-click (or Ctrl-click) the `PyroTracker.app` file and select "Open", then confirm in the dialog box. You should only need to do this the first time.
+    * **Linux:** Open a terminal, navigate to the directory where you downloaded the file, make it executable using the command `chmod +x PyroTracker-linux`, and then run it using `./PyroTracker-linux`.
+
+---
+
 ## Features
 
 * **Load Video:** Open common video file formats (.mp4, .avi, .mov, .mkv) via `File -> Open Video...`.
@@ -58,48 +75,61 @@ Built using Python with the PySide6 (Qt6) framework for the GUI and OpenCV for v
 * **Video Information:** View technical metadata extracted from the loaded video file via `File -> Video Information...`.
 * **Logging:** Diagnostic information is printed to the console using standard Python logging (configured in `main.py`). Level defaults to DEBUG.
 
-## Requirements
+## Developer Requirements
 
 * Python 3.x (Developed with 3.9+)
 * PySide6 (`pip install PySide6`)
 * OpenCV for Python (`pip install opencv-python`)
 * NumPy (usually installed as a dependency with OpenCV) (`pip install numpy`)
+* Pillow (`pip install Pillow`) (Needed for icon conversion during automated builds)
 
 *(Note: The Python standard libraries `csv`, `os`, `math`, `logging`, `enum`, `sys`, `typing` are also used but do not require separate installation).*
 
-## Installation
+## Developer Installation (from Source)
 
-1.  Ensure Python 3 is installed.
-2.  Install the required external libraries:
+1.  Ensure Python 3 and pip are installed.
+2.  Clone the repository: `git clone https://github.com/YourUsername/PyroTracker.git` *(Replace YourUsername)*
+3.  Navigate into the directory: `cd PyroTracker`
+4.  (Recommended) Create and activate a virtual environment:
     ```bash
-    pip install PySide6 opencv-python numpy
+    python -m venv venv
+    # On Windows:
+    venv\Scripts\activate
+    # On macOS/Linux:
+    source venv/bin/activate
     ```
-3.  Place the `PyroTracker.ico` file in the same directory as the Python scripts (optional, for the application icon).
+5.  Install the required external libraries:
+    ```bash
+    pip install -r requirements.txt
+    ```
+    *(The `requirements.txt` file includes PySide6, opencv-python, numpy, and Pillow).*
+6.  The `PyroTracker.ico` file should be present in the main directory (used by PyInstaller during builds).
 
-## Usage
+## Developer Usage (from Source)
 
-1.  Save all Python files (`main.py`, `main_window.py`, `interactive_image_view.py`, `track_manager.py`, `video_handler.py`, `file_io.py`, `ui_setup.py`, `config.py`, `coordinates.py`, `settings_manager.py`, `preferences_dialog.py`, `metadata_dialog.py`) and optionally `PyroTracker.ico` in the same directory.
-2.  Run the application from your terminal:
+1.  Ensure you have followed the Developer Installation steps, including activating the virtual environment if you created one.
+2.  Run the application from your terminal in the project's root directory:
     ```bash
     python main.py
     ```
     *(Note: Debugging information will be printed to the console).*
-3.  Go to `File -> Open Video...` to load a video file.
-4.  Use the slider, buttons, or `Mouse Wheel` to navigate frames. Use `Spacebar` to toggle play/pause.
-5.  Use `Ctrl + Mouse Wheel` or overlay buttons (+/-) to zoom, and left-click-drag to pan. Use the overlay "Fit" button (⤢) to reset view.
-6.  In the "Coordinate System" panel, select the desired system. Use "Pick Custom" to set a user-defined origin. Toggle the origin marker with "Show Origin". Observe live cursor coordinates.
-7.  Click "New Track" in the "Tracks" tab (or press `Ctrl+N`).
-8.  **Select** a track using `Ctrl+Click` on a marker or by clicking its table row.
-9.  **Select & Jump** to a specific point's frame using `Shift+Click` on its marker.
-10. **Add/Update Point:** Navigate to the desired frame and left-click (no modifiers) on the video to mark the active pyroclast's position.
-11. **(Optional) Auto-Advance:** Enable and configure in the "Frame Advance" panel.
-12. **Set Visibility:** Use radio buttons or header icons in the "Tracks" table.
-13. **Delete Point:** Press `Delete` or `Backspace` to remove the active track's point on the current frame.
-14. **Delete Track:** Click the trash can icon in the "Tracks" table.
-15. **Save/Load:** Use `File -> Save Tracks As...` and `File -> Load Tracks...`.
-16. **Customize:** Go to `Edit -> Preferences...` to change visual settings.
-17. **View Info:** Go to `File -> Video Information...` to see video metadata.
-18. **About:** Go to `Help -> About` for application details.
+3.  **Basic Workflow:**
+    * Go to `File -> Open Video...` to load a video file.
+    * Use the slider, buttons, or `Mouse Wheel` to navigate frames. Use `Spacebar` to toggle play/pause.
+    * Use `Ctrl + Mouse Wheel` or overlay buttons (+/-) to zoom, and left-click-drag to pan. Use the overlay "Fit" button (⤢) to reset view.
+    * In the "Coordinate System" panel, select the desired system. Use "Pick Custom" to set a user-defined origin. Toggle the origin marker with "Show Origin". Observe live cursor coordinates.
+    * Click "New Track" in the "Tracks" tab (or press `Ctrl+N`).
+    * **Select** a track using `Ctrl+Click` on a marker or by clicking its table row.
+    * **Select & Jump** to a specific point's frame using `Shift+Click` on its marker.
+    * **Add/Update Point:** Navigate to the desired frame and left-click (no modifiers) on the video to mark the active pyroclast's position.
+    * **(Optional) Auto-Advance:** Enable and configure in the "Frame Advance" panel.
+    * **Set Visibility:** Use radio buttons or header icons in the "Tracks" table.
+    * **Delete Point:** Press `Delete` or `Backspace` to remove the active track's point on the current frame.
+    * **Delete Track:** Click the trash can icon in the "Tracks" table.
+    * **Save/Load:** Use `File -> Save Tracks As...` and `File -> Load Tracks...`.
+    * **Customize:** Go to `Edit -> Preferences...` to change visual settings.
+    * **View Info:** Go to `File -> Video Information...` to see video metadata.
+    * **About:** Go to `Help -> About` for application details.
 
 ## File Structure
 
@@ -115,7 +145,10 @@ Built using Python with the PySide6 (Qt6) framework for the GUI and OpenCV for v
 * `file_io.py`: Functions for CSV track data reading/writing, including metadata and coordinate transformations.
 * `preferences_dialog.py`: `PreferencesDialog` class for editing visual settings stored by `settings_manager`.
 * `metadata_dialog.py`: `MetadataDialog` class for displaying video metadata retrieved by `video_handler`.
-* `PyroTracker.ico`: (Optional) Application icon file.
+* `PyroTracker.ico`: Application icon file (used for builds).
+* `.github/workflows/release.yml`: GitHub Actions workflow for automated building and releasing.
+* `requirements.txt`: Lists Python dependencies for `pip`.
+* `.gitignore`: Specifies intentionally untracked files for Git.
 
 ## Future Improvements / Todo
 
