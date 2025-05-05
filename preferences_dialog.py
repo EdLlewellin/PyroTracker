@@ -45,10 +45,15 @@ class ColorButton(QtWidgets.QPushButton):
 
     def select_color(self) -> None:
         """Opens a QColorDialog to allow the user to select a new color."""
-        new_color = QtWidgets.QColorDialog.getColor(self._color, self, "Select Color")
-        if new_color.isValid():
-            self.set_color(new_color)
-            self.colorChanged.emit(new_color) # Emit signal if color changed
+        # Create a dialog instance separate from the button to avoid inheriting styles
+        dialog = QtWidgets.QColorDialog(self._color, self.window())
+        dialog.setWindowTitle("Select Color")
+        dialog.setStyleSheet("")  # Clear any inherited stylesheet rules
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            new_color = dialog.selectedColor()
+            if new_color.isValid():
+                self.set_color(new_color)
+                self.colorChanged.emit(new_color)  # Emit signal if color changed
 
 class PreferencesDialog(QtWidgets.QDialog):
     """Dialog for editing application preferences stored via settings_manager."""
