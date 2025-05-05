@@ -14,3 +14,6 @@ build/
 # IDE / Editor specific
 .idea/
 .vscode/
+
+# Other documents
+workflow_cribsheet.docx
