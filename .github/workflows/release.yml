@@ -1,0 +1,83 @@
+name: Build and Release PyroTracker
+
+# Run this workflow when a new tag starting with 'v' (e.g., v1.0, v2.3.4) is pushed
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Permissions needed for the workflow to create releases and upload assets
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build on ${{ matrix.os }}
+    # Run on different operating systems
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        # Define the operating systems and corresponding Python versions
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Use a Python version compatible with your code (e.g., 3.9 based on README)
+        python-version: ['3.9']
+
+    steps:
+    - name: Check out repository code
+      # Action to get your code from the repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      # Action to install the specified Python version
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build with PyInstaller
+      # Run PyInstaller. --noconfirm prevents prompts. --onefile bundles everything.
+      # --windowed prevents console window on Windows/macOS. --name sets output name.
+      # --icon sets the application icon.
+      run: pyinstaller --noconfirm --onefile --windowed --icon=PyroTracker.ico --name=PyroTracker main.py
+      # Note: PyInstaller might sometimes need extra flags (--hidden-import=...) for complex libraries
+      # like OpenCV or PySide6. If builds fail, this is the first place to investigate.
+
+    - name: Prepare Artifact Name (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        ren dist\PyroTracker.exe PyroTracker-windows.exe
+        echo "ASSET_PATH=dist/PyroTracker-windows.exe" >> $env:GITHUB_ENV
+        echo "ASSET_NAME=PyroTracker-windows.exe" >> $env:GITHUB_ENV
+      shell: pwsh # Use PowerShell for Windows steps
+
+    - name: Prepare Artifact Name (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        mv dist/PyroTracker dist/PyroTracker-linux
+        echo "ASSET_PATH=dist/PyroTracker-linux" >> $GITHUB_ENV
+        echo "ASSET_NAME=PyroTracker-linux" >> $GITHUB_ENV
+
+    - name: Prepare Artifact Name (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        # macOS apps are bundles (folders). Zip it for easier distribution.
+        zip -r dist/PyroTracker-macos.zip dist/PyroTracker.app
+        echo "ASSET_PATH=dist/PyroTracker-macos.zip" >> $GITHUB_ENV
+        echo "ASSET_NAME=PyroTracker-macos.zip" >> $GITHUB_ENV
+
+    - name: Upload Release Asset
+      # Action to upload the built file to the GitHub Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        # Get the upload URL from the trigger event (the release creation)
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ${{ env.ASSET_PATH }}
+        asset_name: ${{ env.ASSET_NAME }}
+        asset_content_type: application/octet-stream # Generic binary type
