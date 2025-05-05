@@ -89,4 +89,4 @@ MAX_ABS_SCALE = 50.0    # Absolute maximum allowed view scale factor (e.g., 50x 
 # --- Application Info ---
 APP_NAME = "PyroTracker"
 APP_ORGANIZATION = "Durham University"
-APP_VERSION = "2.1 Coords"
+APP_VERSION = "2.0.0 Beta"
