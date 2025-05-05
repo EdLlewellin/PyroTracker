@@ -91,9 +91,9 @@ jobs:
         # Get upload URL from the release event that triggered the workflow
         upload_url: ${{ github.event.release.upload_url }}
         # Path to the PDF file in the repository (use ./ if it's in the root)
-        asset_path: ./PyroTracker_Manual.pdf
+        asset_path: ./PyroTracker_manual.pdf
         # Name the asset should have in the release
-        asset_name: PyroTracker_Manual.pdf
+        asset_name: PyroTracker_manual.pdf
         # Content type for PDF
         asset_content_type: application/pdf        
         
