@@ -1,10 +1,9 @@
 name: Build and Release PyroTracker
 
-# Run this workflow when a new tag starting with 'v' (e.g., v1.0, v2.3.4) is pushed
+# Run this workflow when a Release is published on GitHub
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  release:
+    types: [published]
 
 # Permissions needed for the workflow to create releases and upload assets
 permissions:
