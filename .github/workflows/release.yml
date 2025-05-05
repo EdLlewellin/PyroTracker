@@ -80,3 +80,20 @@ jobs:
         asset_path: ${{ env.ASSET_PATH }}
         asset_name: ${{ env.ASSET_NAME }}
         asset_content_type: application/octet-stream # Generic binary type
+
+    - name: Upload User Manual PDF
+      # Run this step only on the Linux runner to avoid uploading the PDF multiple times
+      if: runner.os == 'Linux'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        # Get upload URL from the release event that triggered the workflow
+        upload_url: ${{ github.event.release.upload_url }}
+        # Path to the PDF file in the repository (use ./ if it's in the root)
+        asset_path: ./PyroTracker_Manual.pdf
+        # Name the asset should have in the release
+        asset_name: PyroTracker_Manual.pdf
+        # Content type for PDF
+        asset_content_type: application/pdf        
+        
