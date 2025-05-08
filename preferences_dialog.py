@@ -7,6 +7,11 @@ from typing import Dict, Any, Optional # Removed unused Callable
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+# Ensure tooltips use the default palette to avoid inheriting widget styles
+app = QtWidgets.QApplication.instance()
+if app is not None:
+    QtWidgets.QToolTip.setPalette(app.palette())
+
 import settings_manager # Assumes settings_manager defines the KEY_* constants
 
 logger = logging.getLogger(__name__)
@@ -32,9 +37,7 @@ class ColorButton(QtWidgets.QPushButton):
             text_color = "black" if brightness > 128 else "white"
             # Update stylesheet in one go
             self.setStyleSheet(
-                f"background-color: {self._color.name()}; "
-                f"color: {text_color}; "
-                f"border: 1px solid gray;"
+                f"QPushButton {{ background-color: {self._color.name()}; color: {text_color}; border: 1px solid gray; }}"
             )
             # Optional: Display the hex code on the button
             # self.setText(self._color.name())

@@ -318,21 +318,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pen_origin_marker = _create_pen(color_origin_marker, origin_pen_width, settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ORIGIN_MARKER_COLOR])
         logger.debug("QPen setup complete using settings.")
 
-        # --- Update Config Sizes (Temporary Workaround) ---
-        # WARNING: Modifying imported constants (like config values) at runtime is
-        # generally bad practice. This is a temporary workaround.
-        # A better solution is to pass the sizes directly to the drawing functions.
-        try:
-             config.DEFAULT_MARKER_SIZE = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-             # Fix: Use correct config constant name
-             config.DEFAULT_ORIGIN_MARKER_SIZE = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
-        except (ValueError, TypeError):
-             logger.warning("Invalid marker/origin size setting found, using defaults from config.")
-             # Ensure fallback uses the correct keys from DEFAULT_SETTINGS
-             config.DEFAULT_MARKER_SIZE = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_MARKER_SIZE]
-             config.DEFAULT_ORIGIN_MARKER_SIZE = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ORIGIN_MARKER_SIZE]
-        logger.debug(f"Updated effective marker size: {config.DEFAULT_MARKER_SIZE}, origin size: {config.DEFAULT_ORIGIN_MARKER_SIZE} (Warning: Modified config module)")
-
     def _reset_ui_after_video_close(self) -> None:
         """Resets UI elements to their state when no video is loaded."""
         logger.debug("Resetting UI elements for no video loaded state.")
