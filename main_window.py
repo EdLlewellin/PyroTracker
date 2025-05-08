@@ -17,6 +17,7 @@ import ui_setup # Handles the creation of UI elements
 from coordinates import CoordinateSystem, CoordinateTransformer
 import settings_manager
 from preferences_dialog import PreferencesDialog
+from scale_manager import ScaleManager
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -61,6 +62,12 @@ class MainWindow(QtWidgets.QMainWindow):
     # Coordinate System State
     _is_setting_origin: bool
     _show_origin_marker: bool
+    
+    # Add type hints for scale panel widgets
+    scale_m_per_px_input: Optional[QtWidgets.QLineEdit] = None
+    scale_px_per_m_input: Optional[QtWidgets.QLineEdit] = None
+    scale_reset_button: Optional[QtWidgets.QPushButton] = None
+    scale_display_meters_checkbox: Optional[QtWidgets.QCheckBox] = None
 
     # UI Elements (These are assigned by ui_setup.setup_main_window_ui)
     # Add type hints for elements accessed directly in MainWindow methods
@@ -101,6 +108,7 @@ class MainWindow(QtWidgets.QMainWindow):
     newTrackAction: QtGui.QAction # Shortcut action
     videoInfoAction: QtGui.QAction
     preferencesAction: QtGui.QAction
+    scale_manager: ScaleManager
 
     # UI Element Collections / State
     track_visibility_button_groups: Dict[int, QtWidgets.QButtonGroup]
@@ -152,12 +160,15 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.debug("TrackManager initialized.")
         self.coord_transformer = CoordinateTransformer()
         logger.debug("CoordinateTransformer initialized.")
+        self.scale_manager = ScaleManager(self)
+        logger.debug("ScaleManager initialized.")
 
         # Initialize Coordinate System State
         self._is_setting_origin = False
         # Default origin marker state (checkbox default is usually checked in ui_setup)
         self._show_origin_marker = True
         logger.debug(f"Initial origin marker visibility state: {self._show_origin_marker}")
+        self._block_scale_signals: bool = False
 
         # Dictionary to keep track of button groups for track visibility
         self.track_visibility_button_groups = {}
@@ -213,6 +224,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.track_manager.activeTrackDataChanged.connect(self._update_points_table)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
         logger.debug("TrackManager signals connected.")
+        
+        # Connect ScaleManager signal
+        self.scale_manager.scaleOrUnitChanged.connect(self._update_scale_ui_from_manager)
+        # For now, let's also connect it to placeholders or directly to table/label updates
+        # that will be implemented in the next phase.
+        # self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table) # Enable in next phase
+        # self.scale_manager.scaleOrUnitChanged.connect(self._update_cursor_labels_for_scale) # Enable in next phase
+        # Connect scale panel UI element signals
+        if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input:
+            self.scale_m_per_px_input.editingFinished.connect(self._on_scale_m_per_px_editing_finished)
+        if hasattr(self, 'scale_px_per_m_input') and self.scale_px_per_m_input:
+            self.scale_px_per_m_input.editingFinished.connect(self._on_scale_px_per_m_editing_finished)
+        if hasattr(self, 'scale_reset_button') and self.scale_reset_button:
+            self.scale_reset_button.clicked.connect(self._on_scale_reset_clicked)
+        if hasattr(self, 'scale_display_meters_checkbox') and self.scale_display_meters_checkbox:
+            self.scale_display_meters_checkbox.toggled.connect(self._on_display_units_toggled)
+        
 
         # UI Element Signals -> MainWindow Slots (Check elements exist first)
         if hasattr(self, 'tracksTableWidget'):
@@ -264,6 +292,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_points_table()
         # Set initial label text and radio state for coordinates
         self._update_coordinate_ui_display()
+        self._update_scale_ui_from_manager()
         logger.info("MainWindow initialization complete.")
 
 
@@ -357,26 +386,25 @@ class MainWindow(QtWidgets.QMainWindow):
         # Update coordinate UI (radio buttons, origin labels) to reflect reset state
         self._update_coordinate_ui_display()
         # Update general UI enabled/disabled states
+        self.scale_manager.reset() # Reset scale manager
         self._update_ui_state()
 
 
     def _update_ui_state(self) -> None:
         """Updates the enabled/disabled state and appearance of UI elements based on application state."""
-        is_enabled: bool = self.video_loaded
+        is_video_loaded: bool = self.video_loaded # Cache for clarity
 
-        # Enable/disable basic controls
-        if hasattr(self, 'frameSlider'): self.frameSlider.setEnabled(is_enabled)
-        if hasattr(self, 'prevFrameButton'): self.prevFrameButton.setEnabled(is_enabled)
-        if hasattr(self, 'nextFrameButton'): self.nextFrameButton.setEnabled(is_enabled)
-        if hasattr(self, 'newTrackAction'): self.newTrackAction.setEnabled(is_enabled) # Enable shortcut
-        if hasattr(self, 'autoAdvanceCheckBox'): self.autoAdvanceCheckBox.setEnabled(is_enabled)
-        if hasattr(self, 'autoAdvanceSpinBox'): self.autoAdvanceSpinBox.setEnabled(is_enabled)
+        # --- Standard Video Controls ---
+        if hasattr(self, 'frameSlider'): self.frameSlider.setEnabled(is_video_loaded)
+        if hasattr(self, 'prevFrameButton'): self.prevFrameButton.setEnabled(is_video_loaded)
+        if hasattr(self, 'nextFrameButton'): self.nextFrameButton.setEnabled(is_video_loaded)
+        if hasattr(self, 'newTrackAction'): self.newTrackAction.setEnabled(is_video_loaded) # Enable shortcut
+        if hasattr(self, 'autoAdvanceCheckBox'): self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
+        if hasattr(self, 'autoAdvanceSpinBox'): self.autoAdvanceSpinBox.setEnabled(is_video_loaded)
 
-        # Enable play button only if video loaded and has valid FPS
-        can_play: bool = is_enabled and self.fps > 0
+        can_play: bool = is_video_loaded and self.fps > 0
         if hasattr(self, 'playPauseButton'): self.playPauseButton.setEnabled(can_play)
 
-        # Update play/pause button icon and tooltip
         if hasattr(self, 'playPauseButton') and hasattr(self, 'stop_icon') and hasattr(self, 'play_icon'):
             if self.is_playing:
                 self.playPauseButton.setIcon(self.stop_icon)
@@ -385,19 +413,40 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.playPauseButton.setIcon(self.play_icon)
                 self.playPauseButton.setToolTip("Play Video (Space)")
 
-        # Enable/disable file menu actions
-        if hasattr(self, 'loadTracksAction'): self.loadTracksAction.setEnabled(is_enabled)
-        can_save: bool = is_enabled and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
+        # --- File Menu Actions ---
+        if hasattr(self, 'loadTracksAction'): self.loadTracksAction.setEnabled(is_video_loaded)
+        can_save: bool = is_video_loaded and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
         if hasattr(self, 'saveTracksAction'): self.saveTracksAction.setEnabled(can_save)
-        if hasattr(self, 'videoInfoAction'): self.videoInfoAction.setEnabled(is_enabled)
+        if hasattr(self, 'videoInfoAction'): self.videoInfoAction.setEnabled(is_video_loaded)
 
-        # Update Coordinate System UI Enablement
-        if hasattr(self, 'coordTopLeftRadio'): self.coordTopLeftRadio.setEnabled(is_enabled)
-        if hasattr(self, 'coordBottomLeftRadio'): self.coordBottomLeftRadio.setEnabled(is_enabled)
-        if hasattr(self, 'coordCustomRadio'): self.coordCustomRadio.setEnabled(is_enabled)
-        if hasattr(self, 'setOriginButton'): self.setOriginButton.setEnabled(is_enabled)
-        if hasattr(self, 'showOriginCheckBox'): self.showOriginCheckBox.setEnabled(is_enabled) # Enable checkbox if video loaded
+        # --- Coordinate System Panel ---
+        if hasattr(self, 'coordTopLeftRadio'): self.coordTopLeftRadio.setEnabled(is_video_loaded)
+        if hasattr(self, 'coordBottomLeftRadio'): self.coordBottomLeftRadio.setEnabled(is_video_loaded)
+        if hasattr(self, 'coordCustomRadio'): self.coordCustomRadio.setEnabled(is_video_loaded)
+        if hasattr(self, 'setOriginButton'): self.setOriginButton.setEnabled(is_video_loaded)
+        if hasattr(self, 'showOriginCheckBox'): self.showOriginCheckBox.setEnabled(is_video_loaded)
 
+        # --- Scale Configuration Panel ---
+        scale_panel_widgets_exist = hasattr(self, 'scale_m_per_px_input') # Check one, assume all exist
+
+        if scale_panel_widgets_exist:
+            self.scale_m_per_px_input.setEnabled(is_video_loaded)
+            self.scale_px_per_m_input.setEnabled(is_video_loaded)
+            # The enabled state of scale_reset_button and scale_display_meters_checkbox
+            # depends on both video_loaded AND whether a scale is currently set.
+            # _update_scale_ui_from_manager handles this when scale_manager's state changes.
+            # If video is loaded, we ensure _update_scale_ui_from_manager is called
+            # to set their states correctly. If not loaded, they are simply disabled here.
+            if is_video_loaded:
+                # This will correctly set the reset button and checkbox states
+                # based on whether a scale is defined in scale_manager.
+                self._update_scale_ui_from_manager()
+            else:
+                # Explicitly disable if no video loaded
+                if hasattr(self, 'scale_reset_button'): self.scale_reset_button.setEnabled(False)
+                if hasattr(self, 'scale_display_meters_checkbox'):
+                    self.scale_display_meters_checkbox.setEnabled(False)
+                    self.scale_display_meters_checkbox.setChecked(False) # Also ensure it's unchecked
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
         """Updates UI elements displaying current frame number and time."""
@@ -479,9 +528,144 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track_manager.reset()
             logger.debug("TrackManager reset complete.")
 
+        self.scale_manager.reset()
+        
         # Reset UI elements to initial state (clears image, labels, tables etc.)
         self._reset_ui_after_video_close()
         logger.info("Video release and associated reset complete.")
+
+    # Slot for m/px input editing finished
+    @QtCore.Slot()
+    def _on_scale_m_per_px_editing_finished(self) -> None:
+        """Handles editingFinished signal from the m/px input."""
+        if self._block_scale_signals:
+            return
+        if not hasattr(self, 'scale_m_per_px_input') or not self.scale_m_per_px_input:
+            return
+
+        text = self.scale_m_per_px_input.text()
+        try:
+            # If text is empty (placeholder was shown), it means no value / reset for this field.
+            if not text: # Empty string after placeholder is cleared by user interaction
+                # If the other field is also effectively empty, then truly reset.
+                other_text_empty = True
+                if hasattr(self, 'scale_px_per_m_input') and self.scale_px_per_m_input:
+                    if self.scale_px_per_m_input.text(): # Not empty
+                        other_text_empty = False
+                
+                if other_text_empty:
+                    self.scale_manager.set_scale(None)
+                # If only this field is cleared, but other has value, let scaleOrUnitChanged re-evaluate.
+                # Forcing set_scale(None) if this field was the source of truth and now cleared.
+                elif self.scale_manager.get_scale_m_per_px() is not None:
+                     self.scale_manager.set_scale(None)
+                return # UI will update from scaleOrUnitChanged
+
+            value = float(text) # Try to convert non-empty text
+            if value > 0.0:
+                self.scale_manager.set_scale(value)
+            elif value == 0.0:
+                self.scale_manager.set_scale(None) # Treat 0 as unsetting
+            else: # Negative value, invalid
+                logger.warning(f"Invalid (negative) scale input for m/px: '{text}'. Reverting UI.")
+                self._update_scale_ui_from_manager() # Revert to last valid state
+        except ValueError:
+            # Invalid float input that wasn't caught by validator (e.g., "--" or multiple dots)
+            logger.warning(f"Invalid float conversion for m/px: '{text}'. Reverting UI.")
+            self._update_scale_ui_from_manager()
+
+
+    @QtCore.Slot()
+    def _on_scale_px_per_m_editing_finished(self) -> None:
+        """Handles editingFinished signal from the px/m input."""
+        if self._block_scale_signals:
+            return
+        if not hasattr(self, 'scale_px_per_m_input') or not self.scale_px_per_m_input:
+            return
+
+        text = self.scale_px_per_m_input.text()
+        try:
+            if not text: # Empty string
+                other_text_empty = True
+                if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input:
+                    if self.scale_m_per_px_input.text():
+                        other_text_empty = False
+                
+                if other_text_empty:
+                    self.scale_manager.set_scale(None)
+                elif self.scale_manager.get_scale_m_per_px() is not None:
+                     self.scale_manager.set_scale(None)
+                return
+
+            value = float(text)
+            if value > 0.0:
+                m_per_px = 1.0 / value
+                self.scale_manager.set_scale(m_per_px)
+            elif value == 0.0:
+                self.scale_manager.set_scale(None)
+            else: # Negative
+                logger.warning(f"Invalid (negative) scale input for px/m: '{text}'. Reverting UI.")
+                self._update_scale_ui_from_manager()
+        except ValueError:
+            logger.warning(f"Invalid float conversion for px/m: '{text}'. Reverting UI.")
+            self._update_scale_ui_from_manager()
+
+    @QtCore.Slot()
+    def _on_scale_reset_clicked(self) -> None:
+        """Handles the scale reset button click."""
+        logger.debug("Scale reset button clicked.")
+        self.scale_manager.reset()
+
+    @QtCore.Slot(bool)
+    def _on_display_units_toggled(self, checked: bool) -> None:
+        """Handles the 'Display in meters' checkbox toggle."""
+        if hasattr(self, 'scale_display_meters_checkbox') and self.scale_display_meters_checkbox:
+            # Only proceed if the checkbox is enabled (i.e., a scale is set)
+            if self.scale_display_meters_checkbox.isEnabled():
+                self.scale_manager.set_display_in_meters(checked)
+            else: # Should not happen if UI logic is correct, but good to handle
+                logger.warning("Display units toggled while checkbox was disabled. Forcing manager state.")
+                self.scale_manager.set_display_in_meters(False) # Force to pixels if scale not set
+                # UI will update via scaleOrUnitChanged signal
+
+
+    @QtCore.Slot()
+    def _update_scale_ui_from_manager(self) -> None:
+        """Updates the scale panel UI elements based on ScaleManager's state."""
+        if not all(hasattr(self, attr) for attr in [
+            'scale_m_per_px_input', 'scale_px_per_m_input',
+            'scale_display_meters_checkbox', 'scale_reset_button', 'scale_manager'
+        ]):
+            logger.debug("_update_scale_ui_from_manager skipped: UI elements or manager not ready.")
+            return
+
+        logger.debug("Updating scale UI from ScaleManager state.")
+        self._block_scale_signals = True
+
+        current_scale_m_px = self.scale_manager.get_scale_m_per_px()
+        current_reciprocal_px_m = self.scale_manager.get_reciprocal_scale_px_per_m()
+        display_in_meters_state = self.scale_manager.display_in_meters()
+
+        # Update QLineEdits: Set to empty string if no scale, allowing placeholder to show.
+        self.scale_m_per_px_input.setText(f"{current_scale_m_px:.6g}" if current_scale_m_px is not None else "")
+        self.scale_px_per_m_input.setText(f"{current_reciprocal_px_m:.6g}" if current_reciprocal_px_m is not None else "")
+
+        scale_is_set = current_scale_m_px is not None
+        video_is_loaded = self.video_loaded
+
+        if video_is_loaded:
+            self.scale_display_meters_checkbox.setEnabled(scale_is_set)
+            if scale_is_set:
+                self.scale_display_meters_checkbox.setChecked(display_in_meters_state)
+            else:
+                self.scale_display_meters_checkbox.setChecked(False)
+            self.scale_reset_button.setEnabled(scale_is_set)
+        else:
+            self.scale_display_meters_checkbox.setEnabled(False)
+            self.scale_display_meters_checkbox.setChecked(False)
+            self.scale_reset_button.setEnabled(False)
+
+        self._block_scale_signals = False
 
     @QtCore.Slot()
     def _trigger_save_tracks(self) -> None:
@@ -610,6 +794,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Reset image view's initial load flag for proper fitting
         if hasattr(self, 'imageView'): self.imageView.resetInitialLoadFlag()
+
+        self.scale_manager.reset() # +++ NEW: Reset scale for new video
 
         # Update general UI enabled/disabled state and coordinate display
         self._update_ui_state()

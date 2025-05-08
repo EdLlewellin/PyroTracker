@@ -225,6 +225,60 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.dataTabsWidget.addTab(pointsTab, "Points")
     logger.debug("Points tab configured.")
 
+    rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1) # Add tabs before scale and coord
+
+    # Scale Configuration Panel
+    scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
+    scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+    scale_group_layout = QtWidgets.QVBoxLayout(scale_config_group)
+    scale_group_layout.setContentsMargins(6, 6, 6, 6)
+    scale_group_layout.setSpacing(8)
+
+    # Input Row
+    scale_input_layout = QtWidgets.QHBoxLayout()
+    scale_input_layout.setSpacing(5) # Compact spacing within the row
+
+    scale_input_layout.addWidget(QtWidgets.QLabel("Set scale:")) # General label
+    scale_input_layout.addStretch(1) # Push specific inputs to the right a bit
+
+    scale_input_layout.addWidget(QtWidgets.QLabel("m/px:"))
+    main_window.scale_m_per_px_input = QtWidgets.QLineEdit()
+    main_window.scale_m_per_px_input.setPlaceholderText("-")
+    main_window.scale_m_per_px_input.setValidator(QtGui.QDoubleValidator(0.0, 1000000.0, 8, main_window.scale_m_per_px_input)) # Allow 0 for now, handle in logic
+    main_window.scale_m_per_px_input.setToolTip("Enter scale as meters per pixel (e.g., 0.001)")
+    main_window.scale_m_per_px_input.setMaximumWidth(100) # Control width
+    scale_input_layout.addWidget(main_window.scale_m_per_px_input)
+
+    scale_input_layout.addWidget(QtWidgets.QLabel("px/m:"))
+    main_window.scale_px_per_m_input = QtWidgets.QLineEdit()
+    main_window.scale_px_per_m_input.setPlaceholderText("-")
+    main_window.scale_px_per_m_input.setValidator(QtGui.QDoubleValidator(0.0, 100000000.0, 8, main_window.scale_px_per_m_input)) # Allow 0 for now
+    main_window.scale_px_per_m_input.setToolTip("Enter scale as pixels per meter (e.g., 1000)")
+    main_window.scale_px_per_m_input.setMaximumWidth(100) # Control width
+    scale_input_layout.addWidget(main_window.scale_px_per_m_input)
+
+    main_window.scale_reset_button = QtWidgets.QPushButton()
+    main_window.scale_reset_button.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogResetButton)) # Or SP_TrashIcon
+    main_window.scale_reset_button.setToolTip("Reset scale to undefined")
+    main_window.scale_reset_button.setFixedSize(main_window.scale_reset_button.iconSize() + QtCore.QSize(10,5)) # Make it snug
+    scale_input_layout.addWidget(main_window.scale_reset_button)
+    scale_input_layout.addStretch(2) # Add more stretch at the end
+
+    scale_group_layout.addLayout(scale_input_layout)
+
+    # Toggle Row
+    scale_toggle_layout = QtWidgets.QHBoxLayout()
+    main_window.scale_display_meters_checkbox = QtWidgets.QCheckBox("Display in meters")
+    main_window.scale_display_meters_checkbox.setToolTip("Convert displayed values to meters (only if scale is set)")
+    main_window.scale_display_meters_checkbox.setChecked(False)
+    main_window.scale_display_meters_checkbox.setEnabled(False) # Initially disabled
+    scale_toggle_layout.addWidget(main_window.scale_display_meters_checkbox)
+    scale_toggle_layout.addStretch() # Align checkbox to the left
+    scale_group_layout.addLayout(scale_toggle_layout)
+
+    rightPanelLayout.addWidget(scale_config_group) # Add before Coordinate System
+    logger.debug("Scale Configuration panel configured.")
+
     # Coordinate System Controls GroupBox (using GridLayout)
     coords_group = QtWidgets.QGroupBox("Coordinate System")
     coords_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed) # Fixed vertical size
