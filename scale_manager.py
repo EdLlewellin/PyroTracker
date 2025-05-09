@@ -96,33 +96,33 @@ class ScaleManager(QtCore.QObject):
             # For pixels, typically 2-3 decimal places is sufficient if they are floats
             return round(transformed_value, 3), unit_str
 
-    def get_transformed_coordinates_for_display(self, x_px: float, y_px: float) -> Tuple[float, float, str]:
+    def get_transformed_coordinates_for_display(self, x_px: float, y_px: float, force_meters: bool = False) -> Tuple[float, float, str]:
         """
-        Transforms pixel coordinates (x,y) to the current display unit.
+        Transforms pixel coordinates (x,y) to the display unit or forced meters.
         Returns (transformed_x, transformed_y, unit_string).
         """
-        # Default to pixels
         unit_str = "px"
         display_x = x_px
         display_y = y_px
-
-        if self._display_in_meters and self._scale_m_per_px is not None and self._scale_m_per_px > 0:
+    
+        should_convert_to_meters = (self._display_in_meters or force_meters)
+    
+        if should_convert_to_meters and self._scale_m_per_px is not None and self._scale_m_per_px > 0:
             try:
                 display_x = x_px * self._scale_m_per_px
                 display_y = y_px * self._scale_m_per_px
                 unit_str = "m"
             except TypeError:
                 logger.error(f"TypeError during coordinate scaling. Values: ({x_px}, {y_px}), Scale: {self._scale_m_per_px}")
-                # Fallback to pixels
-                display_x = x_px
-                display_y = y_px
+                display_x = x_px # Fallback
+                display_y = y_px # Fallback
                 unit_str = "px"
-        
-        # Apply rounding based on unit
+    
+        # Apply rounding based on actual unit of display_x, display_y
         if unit_str == "m":
-            return round(display_x, 4), round(display_y, 4), unit_str
+            return round(display_x, 3), round(display_y, 3), unit_str # Adjusted precision for example
         else:
-            return round(display_x, 3), round(display_y, 3), unit_str
+            return round(display_x, 1), round(display_y, 1), unit_str # Adjusted precision for example
 
     def get_display_unit_short(self) -> str:
         """Returns 'm' or 'px' based on current display setting."""

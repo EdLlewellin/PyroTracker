@@ -298,51 +298,73 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     cursor_label_min_width = 100 # Minimum width for cursor coordinate labels
 
     # Grid Column Headers (Row 0)
-    header_origin_label = QtWidgets.QLabel("Origin Position (TL)")
+    header_origin_label = QtWidgets.QLabel("Origin")
     header_origin_label.setStyleSheet("font-weight: bold;")
     header_origin_label.setToolTip("The Top-Left coordinates of the system's origin")
     header_origin_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    header_cursor_label = QtWidgets.QLabel("Cursor Position")
+    header_cursor_label = QtWidgets.QLabel("Cursor [px]")
     header_cursor_label.setStyleSheet("font-weight: bold;")
     header_cursor_label.setToolTip("Live position of the mouse cursor in this coordinate system")
     header_cursor_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    header_cursor_m_label = QtWidgets.QLabel("Cursor [m]")
+    header_cursor_m_label.setStyleSheet("font-weight: bold;")
+    header_cursor_m_label.setToolTip("Live mouse cursor position in meters (if scale is set)")
+    header_cursor_m_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
     grid_layout.addWidget(header_origin_label, 0, 1) # Origin header in Col 1
-    grid_layout.addWidget(header_cursor_label, 0, 2) # Cursor header in Col 2
+    grid_layout.addWidget(header_cursor_label, 0, 2) # Cursor [px] header in Col 2
+    grid_layout.addWidget(header_cursor_m_label, 0, 3)  # Cursor [m] header in Col 3
 
     # Row 1: Top Left
-    main_window.coordTopLeftRadio = QtWidgets.QRadioButton("Top Left")
+    main_window.coordTopLeftRadio = QtWidgets.QRadioButton("TL")
     main_window.coordTopLeftRadio.setToolTip("Origin at (0,0), Y increases downwards")
     main_window.coordSystemGroup.addButton(main_window.coordTopLeftRadio)
     main_window.coordTopLeftOriginLabel = QtWidgets.QLabel("(0.0, 0.0)") # Fixed origin
     main_window.coordTopLeftOriginLabel.setToolTip("Effective origin (Top-Left Coordinates)")
     main_window.coordTopLeftOriginLabel.setMinimumWidth(label_min_width)
     main_window.coordTopLeftOriginLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.cursorPosLabelTL = QtWidgets.QLabel("(--, --)") # Placeholder
-    main_window.cursorPosLabelTL.setToolTip("Current mouse cursor position (Top-Left coordinates)")
-    main_window.cursorPosLabelTL.setMinimumWidth(cursor_label_min_width)
+    
+    main_window.cursorPosLabelTL = QtWidgets.QLabel("(--, --)") # This is for [px]
+    main_window.cursorPosLabelTL.setToolTip("Cursor position (Top-Left pixels)")
+    main_window.cursorPosLabelTL.setMinimumWidth(cursor_label_min_width) # cursor_label_min_width might need adjustment
     main_window.cursorPosLabelTL.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+    main_window.cursorPosLabelTL_m = QtWidgets.QLabel("(--, --)") # NEW for [m]
+    main_window.cursorPosLabelTL_m.setToolTip("Cursor position (Top-Left meters)")
+    main_window.cursorPosLabelTL_m.setMinimumWidth(cursor_label_min_width) # Adjust as needed
+    main_window.cursorPosLabelTL_m.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
     grid_layout.addWidget(main_window.coordTopLeftRadio, 1, 0)
     grid_layout.addWidget(main_window.coordTopLeftOriginLabel, 1, 1)
-    grid_layout.addWidget(main_window.cursorPosLabelTL, 1, 2)
+    grid_layout.addWidget(main_window.cursorPosLabelTL, 1, 2)    # px display
+    grid_layout.addWidget(main_window.cursorPosLabelTL_m, 1, 3) # NEW: m display
 
     # Row 2: Bottom Left
-    main_window.coordBottomLeftRadio = QtWidgets.QRadioButton("Bottom Left")
+    main_window.coordBottomLeftRadio = QtWidgets.QRadioButton("BL")
     main_window.coordBottomLeftRadio.setToolTip("Origin at (0, Frame Height), Y increases upwards")
     main_window.coordSystemGroup.addButton(main_window.coordBottomLeftRadio)
     main_window.coordBottomLeftOriginLabel = QtWidgets.QLabel("(0.0, -)") # Placeholder
     main_window.coordBottomLeftOriginLabel.setToolTip("Effective origin (Top-Left Coordinates)")
     main_window.coordBottomLeftOriginLabel.setMinimumWidth(label_min_width)
     main_window.coordBottomLeftOriginLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.cursorPosLabelBL = QtWidgets.QLabel("(--, --)") # Placeholder
-    main_window.cursorPosLabelBL.setToolTip("Current mouse cursor position (Bottom-Left coordinates)")
+    
+    main_window.cursorPosLabelBL = QtWidgets.QLabel("(--, --)") # px
+    main_window.cursorPosLabelBL.setToolTip("Cursor position (Bottom-Left pixels)")
     main_window.cursorPosLabelBL.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelBL.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+    main_window.cursorPosLabelBL_m = QtWidgets.QLabel("(--, --)") # NEW for [m]
+    main_window.cursorPosLabelBL_m.setToolTip("Cursor position (Bottom-Left meters)")
+    main_window.cursorPosLabelBL_m.setMinimumWidth(cursor_label_min_width)
+    main_window.cursorPosLabelBL_m.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
     grid_layout.addWidget(main_window.coordBottomLeftRadio, 2, 0)
     grid_layout.addWidget(main_window.coordBottomLeftOriginLabel, 2, 1)
-    grid_layout.addWidget(main_window.cursorPosLabelBL, 2, 2)
+    grid_layout.addWidget(main_window.cursorPosLabelBL, 2, 2)    # px display
+    grid_layout.addWidget(main_window.cursorPosLabelBL_m, 2, 3) # NEW: m display
 
     # Row 3: Custom
-    main_window.coordCustomRadio = QtWidgets.QRadioButton("Custom")
+    main_window.coordCustomRadio = QtWidgets.QRadioButton("Cust.")
     main_window.coordCustomRadio.setToolTip("Origin set by user click, Y increases upwards")
     main_window.coordCustomRadio.setEnabled(False) # Enabled when video loads
     main_window.coordSystemGroup.addButton(main_window.coordCustomRadio)
@@ -350,19 +372,28 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.coordCustomOriginLabel.setToolTip("Effective custom origin (Top-Left Coordinates)")
     main_window.coordCustomOriginLabel.setMinimumWidth(label_min_width)
     main_window.coordCustomOriginLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.cursorPosLabelCustom = QtWidgets.QLabel("(--, --)") # Placeholder
-    main_window.cursorPosLabelCustom.setToolTip("Current mouse cursor position (Custom coordinates)")
+    
+    main_window.cursorPosLabelCustom = QtWidgets.QLabel("(--, --)") # px
+    main_window.cursorPosLabelCustom.setToolTip("Cursor position (Custom pixels)")
     main_window.cursorPosLabelCustom.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelCustom.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
+    main_window.cursorPosLabelCustom_m = QtWidgets.QLabel("(--, --)") # NEW for [m]
+    main_window.cursorPosLabelCustom_m.setToolTip("Cursor position (Custom meters)")
+    main_window.cursorPosLabelCustom_m.setMinimumWidth(cursor_label_min_width)
+    main_window.cursorPosLabelCustom_m.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+
     grid_layout.addWidget(main_window.coordCustomRadio, 3, 0)
     grid_layout.addWidget(main_window.coordCustomOriginLabel, 3, 1)
-    grid_layout.addWidget(main_window.cursorPosLabelCustom, 3, 2)
+    grid_layout.addWidget(main_window.cursorPosLabelCustom, 3, 2)    # px display
+    grid_layout.addWidget(main_window.cursorPosLabelCustom_m, 3, 3) # NEW: m display
 
     # Configure grid stretching and minimum widths for alignment
-    grid_layout.setColumnStretch(3, 1) # Stretch column after cursor labels
-    grid_layout.setColumnMinimumWidth(1, label_min_width)
-    grid_layout.setColumnMinimumWidth(2, cursor_label_min_width)
-
+    grid_layout.setColumnMinimumWidth(1, label_min_width) # Origin TL
+    grid_layout.setColumnMinimumWidth(2, cursor_label_min_width) # Cursor [px]
+    grid_layout.setColumnMinimumWidth(3, cursor_label_min_width) # Cursor [m]
+    grid_layout.setColumnStretch(4, 1) # Add stretch to a new last column if needed, or adjust existing.
+                                       # Or, allow the last content column to take available space.
     coords_main_layout.addLayout(grid_layout) # Add grid to the group's main layout
 
     # Bottom Controls Row (Show Origin Checkbox and Pick Custom Button)

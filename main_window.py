@@ -68,6 +68,9 @@ class MainWindow(QtWidgets.QMainWindow):
     scale_px_per_m_input: Optional[QtWidgets.QLineEdit] = None
     scale_reset_button: Optional[QtWidgets.QPushButton] = None
     scale_display_meters_checkbox: Optional[QtWidgets.QCheckBox] = None
+    cursorPosLabelTL_m: Optional[QtWidgets.QLabel] = None
+    cursorPosLabelBL_m: Optional[QtWidgets.QLabel] = None
+    cursorPosLabelCustom_m: Optional[QtWidgets.QLabel] = None
 
     # UI Elements (These are assigned by ui_setup.setup_main_window_ui)
     # Add type hints for elements accessed directly in MainWindow methods
@@ -381,6 +384,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'cursorPosLabelTL'): self.cursorPosLabelTL.setText(placeholder)
         if hasattr(self, 'cursorPosLabelBL'): self.cursorPosLabelBL.setText(placeholder)
         if hasattr(self, 'cursorPosLabelCustom'): self.cursorPosLabelCustom.setText(placeholder)
+        if hasattr(self, 'cursorPosLabelTL_m'): self.cursorPosLabelTL_m.setText(placeholder)
+        if hasattr(self, 'cursorPosLabelBL_m'): self.cursorPosLabelBL_m.setText(placeholder)
+        if hasattr(self, 'cursorPosLabelCustom_m'): self.cursorPosLabelCustom_m.setText(placeholder)
 
         # Update coordinate UI (radio buttons, origin labels) to reflect reset state
         self._update_coordinate_ui_display()
@@ -1560,60 +1566,69 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float)
     def _handle_mouse_moved(self, scene_x_px: float, scene_y_px: float) -> None:
-        """Updates the cursor position labels for all coordinate systems."""
-        # Store last known scene coordinates (even if off-image for _trigger_cursor_label_update)
         self._last_scene_mouse_x = scene_x_px
         self._last_scene_mouse_y = scene_y_px
 
-        if not all(hasattr(self, attr) for attr in [
-            'cursorPosLabelTL', 'cursorPosLabelBL', 'cursorPosLabelCustom',
-            'coord_transformer', 'scale_manager'
-        ]):
+        required_labels_px = ['cursorPosLabelTL', 'cursorPosLabelBL', 'cursorPosLabelCustom']
+        required_labels_m = ['cursorPosLabelTL_m', 'cursorPosLabelBL_m', 'cursorPosLabelCustom_m']
+        
+        if not all(hasattr(self, attr) for attr in required_labels_px + required_labels_m + ['coord_transformer', 'scale_manager']):
             return
 
         placeholder = "(--, --)"
-        # Get current display unit suffix from ScaleManager for labels
-        unit_str_suffix = f" [{self.scale_manager.get_display_unit_short()}]"
+        scale_is_set = self.scale_manager.get_scale_m_per_px() is not None
 
-        if not self.video_loaded or scene_x_px == -1.0: # scene_x_px == -1.0 means off image
-            self.cursorPosLabelTL.setText(placeholder)
-            self.cursorPosLabelBL.setText(placeholder)
-            self.cursorPosLabelCustom.setText(placeholder)
+        if not self.video_loaded or scene_x_px == -1.0:
+            for label_name in required_labels_px + required_labels_m:
+                if hasattr(self, label_name):
+                    getattr(self, label_name).setText(placeholder)
             return
 
-        # --- Calculate and Display Coordinates in Each System ---
-        # scene_x_px and scene_y_px are the raw Top-Left pixel coordinates from the view
+        # --- PIXEL DISPLAY (Always calculated and shown) ---
+        # 1. Top-Left [px]
+        self.cursorPosLabelTL.setText(f"({scene_x_px:.1f}, {scene_y_px:.1f})")
 
-        # 1. Top-Left (already in TL pixels, now apply scale via ScaleManager)
-        tl_x_display, tl_y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(scene_x_px, scene_y_px)
-        self.cursorPosLabelTL.setText(f"({tl_x_display:.2f}, {tl_y_display:.2f}){unit_str_suffix}")
-
-        # 2. Bottom-Left
+        # 2. Bottom-Left [px]
         video_h_px = self.coord_transformer.video_height
         if video_h_px > 0:
-            # First, transform to what BL coordinates would be IF still in pixels
-            bl_x_equivalent_px = scene_x_px # X doesn't change relative to origin definition
-            bl_y_equivalent_px = -(scene_y_px - float(video_h_px)) # Y relative to BL origin (0,H_px), Y-up
-
-            # Then, apply scale to these BL-equivalent pixel values
-            bl_x_display, bl_y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(bl_x_equivalent_px, bl_y_equivalent_px)
-            self.cursorPosLabelBL.setText(f"({bl_x_display:.2f}, {bl_y_display:.2f}){unit_str_suffix}")
+            bl_x_equivalent_px = scene_x_px
+            bl_y_equivalent_px = -(scene_y_px - float(video_h_px))
+            self.cursorPosLabelBL.setText(f"({bl_x_equivalent_px:.1f}, {bl_y_equivalent_px:.1f})")
         else:
             self.cursorPosLabelBL.setText(placeholder)
 
-        # 3. Custom
-        # Get custom origin (which is stored in TL pixels)
-        origin_meta = self.coord_transformer.get_metadata() # This gives TL origin of the custom system
+        # 3. Custom [px]
+        origin_meta = self.coord_transformer.get_metadata()
         cust_origin_x_tl_px = origin_meta.get('origin_x_tl', 0.0)
         cust_origin_y_tl_px = origin_meta.get('origin_y_tl', 0.0)
-
-        # First, transform to what Custom coordinates would be IF still in pixels
         custom_x_equivalent_px = scene_x_px - cust_origin_x_tl_px
-        custom_y_equivalent_px = -(scene_y_px - cust_origin_y_tl_px) # Y relative to custom origin, Y-up
+        custom_y_equivalent_px = -(scene_y_px - cust_origin_y_tl_px)
+        self.cursorPosLabelCustom.setText(f"({custom_x_equivalent_px:.1f}, {custom_y_equivalent_px:.1f})")
 
-        # Then, apply scale to these Custom-equivalent pixel values
-        custom_x_display, custom_y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(custom_x_equivalent_px, custom_y_equivalent_px)
-        self.cursorPosLabelCustom.setText(f"({custom_x_display:.2f}, {custom_y_display:.2f}){unit_str_suffix}")
+        # --- METRIC DISPLAY (Shown if scale is set) ---
+        if scale_is_set:
+            # Convert TL pixels to meters
+            tl_x_m, tl_y_m = scene_x_px * self.scale_manager.get_scale_m_per_px(), \
+                             scene_y_px * self.scale_manager.get_scale_m_per_px()
+            self.cursorPosLabelTL_m.setText(f"({tl_x_m:.1f}, {tl_y_m:.1f})")
+    
+            # Convert BL equivalent pixels to meters
+            if video_h_px > 0:
+                bl_x_m, bl_y_m = bl_x_equivalent_px * self.scale_manager.get_scale_m_per_px(), \
+                                 bl_y_equivalent_px * self.scale_manager.get_scale_m_per_px()
+                self.cursorPosLabelBL_m.setText(f"({bl_x_m:.1f}, {bl_y_m:.1f})")
+            else:
+                self.cursorPosLabelBL_m.setText(placeholder)
+    
+            # Convert Custom equivalent pixels to meters
+            custom_x_m, custom_y_m = custom_x_equivalent_px * self.scale_manager.get_scale_m_per_px(), \
+                                     custom_y_equivalent_px * self.scale_manager.get_scale_m_per_px()
+            self.cursorPosLabelCustom_m.setText(f"({custom_x_m:.1f}, {custom_y_m:.1f})")
+        else:
+            # If no scale is set, show placeholder in metric labels
+            self.cursorPosLabelTL_m.setText(placeholder)
+            self.cursorPosLabelBL_m.setText(placeholder)
+            self.cursorPosLabelCustom_m.setText(placeholder)
 
     @QtCore.Slot()
     def _trigger_cursor_label_update(self) -> None:
