@@ -15,6 +15,8 @@ META_HEIGHT = "Frame Height"
 META_FRAMES = "Frame Count"
 META_FPS = "FPS"
 META_DURATION = "Duration (ms)"
+META_SCALE_FACTOR_M_PER_PX = "Scale Factor (m/px)"
+META_DATA_UNITS = "Data Units" # Expected values: "px" or "m"
 META_COORD_SYSTEM_MODE = "Coordinate System Mode"
 META_COORD_ORIGIN_X_TL = "Coordinate Origin X (TL)"
 META_COORD_ORIGIN_Y_TL = "Coordinate Origin Y (TL)"
@@ -25,9 +27,9 @@ META_APP_VERSION = "Application Version"
 EXPECTED_METADATA_KEYS = [
     META_APP_NAME, META_APP_VERSION,
     META_FILENAME, META_WIDTH, META_HEIGHT, META_FRAMES, META_FPS, META_DURATION,
-    META_COORD_SYSTEM_MODE, META_COORD_ORIGIN_X_TL, META_COORD_ORIGIN_Y_TL
+    META_COORD_SYSTEM_MODE, META_COORD_ORIGIN_X_TL, META_COORD_ORIGIN_Y_TL,
+    META_SCALE_FACTOR_M_PER_PX, META_DATA_UNITS
 ]
-
 
 # --- Table Column Indices ---
 # Shared column indices for UI tables.

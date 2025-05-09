@@ -20,6 +20,7 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 if TYPE_CHECKING:
     from main_window import MainWindow
     from track_manager import TrackManager, AllTracksData, Track
+    from scale_manager import ScaleManager
 
 # Type alias for the raw point data structure read from CSV:
 # (track_id, frame_idx, time_ms, x_in_file_system, y_in_file_system)
@@ -31,80 +32,131 @@ logger = logging.getLogger(__name__)
 # --- CSV Reading/Writing ---
 
 def write_track_csv(filepath: str, metadata_dict: Dict[str, Any],
-                    all_tracks_data: 'AllTracksData',
-                    coord_transformer: CoordinateTransformer) -> None:
+                    all_tracks_data: 'AllTracksData', # This is internal TL pixel data
+                    coord_transformer: CoordinateTransformer,
+                    scale_manager: 'ScaleManager', # +++ NEW PARAMETER +++
+                    main_window_parent: Optional['MainWindow'] = None) -> None: # +++ NEW Optional parent for dialog +++
     """
-    Writes track data and associated metadata to a CSV file, transforming
-    coordinates to the format specified by the CoordinateTransformer.
+    Writes track data and associated metadata to a CSV file.
+    Handles coordinate system transformation and optional scaling to meters.
 
     Args:
         filepath: The path to the CSV file to write.
         metadata_dict: A dictionary containing video metadata.
-        all_tracks_data: A list where each element is a list of point data tuples
-                         for a track (MUST be in internal Top-Left coordinates).
-        coord_transformer: The coordinate transformer instance defining the output format.
-
-    Raises:
-        IOError, PermissionError, Exception: If writing fails.
+        all_tracks_data: A list of tracks (internal Top-Left pixel coordinates).
+        coord_transformer: The coordinate transformer for system transformations.
+        scale_manager: The scale manager for unit transformations and scale metadata.
+        main_window_parent: Optional parent MainWindow, needed for the precision warning dialog.
     """
     logger.info(f"Writing track data to CSV: {filepath}")
+
+    # --- Determine Save Units and Handle Precision Warning ---
+    save_in_meters = False
+    actual_scale_to_save = scale_manager.get_scale_m_per_px() # This is m/px
+
+    if scale_manager.display_in_meters() and actual_scale_to_save is not None and main_window_parent:
+        reply = QtWidgets.QMessageBox.question(
+            main_window_parent,
+            "Confirm Save Units",
+            "You are about to save track data in METERS. This may involve a loss of precision "
+            "compared to saving in pixels.\n\nSaving in meters is useful for direct use in other software. "
+            "It is recommended to also keep a version saved in pixels for archival or re-processing "
+            "within PyroTracker.\n\nWould you like to save in METERS or save in PIXELS instead?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No | QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Yes  # Default to Yes (Save in Meters)
+        )
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes: # Save in Meters
+            save_in_meters = True
+            logger.info("User chose to save data in METERS.")
+        elif reply == QtWidgets.QMessageBox.StandardButton.No: # Save in Pixels
+            save_in_meters = False
+            logger.info("User chose to save data in PIXELS instead.")
+        else: # Cancel
+            logger.info("Track saving cancelled by user at precision warning.")
+            if hasattr(main_window_parent, 'statusBar'):
+                 main_window_parent.statusBar.showMessage("Save cancelled.", 3000)
+            return # Abort saving
+    elif actual_scale_to_save is not None : # No dialog, but scale is set (e.g. display_in_meters was false)
+        # Default to saving in pixels if display_in_meters is false, even if scale is set
+        save_in_meters = False # Or make this configurable if desired
+        logger.info("Defaulting to save data in PIXELS (display in meters was not active or no dialog).")
+    else: # No scale set
+        save_in_meters = False # Must save in pixels
+        logger.info("No scale set. Saving data in PIXELS.")
+
     try:
-        # Get coordinate system metadata from the transformer
+        # Get coordinate system metadata
         coord_metadata = {
             config.META_COORD_SYSTEM_MODE: str(coord_transformer.mode),
             config.META_COORD_ORIGIN_X_TL: coord_transformer.get_metadata().get("origin_x_tl", 0.0),
             config.META_COORD_ORIGIN_Y_TL: coord_transformer.get_metadata().get("origin_y_tl", 0.0),
-            config.META_HEIGHT: coord_transformer.video_height # Use META_HEIGHT key
+            config.META_HEIGHT: coord_transformer.video_height
         }
-        # Combine video metadata with coordinate metadata and app info
-        full_metadata = {**metadata_dict, **coord_metadata}
+
+        # Get scale metadata
+        scale_metadata = {
+            config.META_SCALE_FACTOR_M_PER_PX: f"{actual_scale_to_save:.8g}" if actual_scale_to_save is not None else "N/A",
+            config.META_DATA_UNITS: "m" if save_in_meters else "px"
+        }
+
+        full_metadata = {**metadata_dict, **coord_metadata, **scale_metadata} # Add scale metadata
         full_metadata[config.META_APP_NAME] = config.APP_NAME
         full_metadata[config.META_APP_VERSION] = config.APP_VERSION
-
         logger.debug(f"Full metadata for saving: {full_metadata}")
 
         with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
-
-            # Write metadata section (using EXPECTED_METADATA_KEYS for preferred order)
             written_keys = set()
-            for key in config.EXPECTED_METADATA_KEYS:
+            for key in config.EXPECTED_METADATA_KEYS: # Now includes scale keys
                 if key in full_metadata:
                     value = full_metadata[key]
                     writer.writerow([f"{config.CSV_METADATA_PREFIX}{key}: {value}"])
                     written_keys.add(key)
                 else:
-                    # Log if an expected key is somehow missing
-                    logger.warning(f"Expected metadata key '{key}' not found in metadata dictionary for saving.")
-
-            # Write any extra keys not in the expected list (defensive programming)
+                    logger.warning(f"Expected metadata key '{key}' not found for saving.")
+            
             for key, value in full_metadata.items():
                 if key not in written_keys:
                     logger.warning(f"Writing unexpected metadata key: {key}")
                     writer.writerow([f"{config.CSV_METADATA_PREFIX}{key}: {value}"])
 
-            # Write Header row
-            logger.debug(f"Writing header: {config.CSV_HEADER}")
-            writer.writerow(config.CSV_HEADER)
+            writer.writerow(config.CSV_HEADER) # Header is always px/m agnostic
 
-            # Write Data rows (transformed coordinates)
-            points_written: int = 0
-            for track_index, track_points in enumerate(all_tracks_data):
-                track_id: int = track_index + 1 # Use 1-based ID
-                for point_data in track_points:
-                    # Points from TrackManager are internal Top-Left
-                    frame_idx, time_ms, x_tl, y_tl = point_data
-                    # Transform to the display/save coordinate system
-                    x_display, y_display = coord_transformer.transform_point_for_display(x_tl, y_tl)
-                    # Format floats for consistent output
-                    writer.writerow([track_id, frame_idx, f"{time_ms:.4f}", f"{x_display:.4f}", f"{y_display:.4f}"])
+            points_written = 0
+            for track_index, track_points_tl_px in enumerate(all_tracks_data):
+                track_id = track_index + 1
+                for point_data_tl_px in track_points_tl_px:
+                    frame_idx, time_ms, x_tl_px, y_tl_px = point_data_tl_px
+                    
+                    # 1. Transform to the chosen *coordinate system* (still in pixels)
+                    x_coord_sys_px, y_coord_sys_px = coord_transformer.transform_point_for_display(x_tl_px, y_tl_px)
+
+                    x_to_write = x_coord_sys_px
+                    y_to_write = y_coord_sys_px
+
+                    # 2. If saving in meters, apply scale transformation
+                    if save_in_meters and actual_scale_to_save is not None:
+                        x_to_write = x_coord_sys_px * actual_scale_to_save
+                        y_to_write = y_coord_sys_px * actual_scale_to_save
+                        # Use appropriate precision for meters
+                        writer.writerow([track_id, frame_idx, f"{time_ms:.4f}", f"{x_to_write:.6f}", f"{y_to_write:.6f}"])
+                    else:
+                        # Save in pixels with pixel precision
+                        writer.writerow([track_id, frame_idx, f"{time_ms:.4f}", f"{x_to_write:.4f}", f"{y_to_write:.4f}"])
                     points_written += 1
-            logger.info(f"Successfully wrote {points_written} points for {len(all_tracks_data)} tracks to {filepath}")
+            
+            success_msg = f"Tracks successfully saved to {os.path.basename(filepath)} (Units: {'meters' if save_in_meters else 'pixels'})"
+            logger.info(success_msg)
+            if main_window_parent and hasattr(main_window_parent, 'statusBar'):
+                 main_window_parent.statusBar.showMessage(success_msg, 5000)
+
     except (IOError, PermissionError) as e:
         logger.error(f"Error writing CSV file '{filepath}': {e}", exc_info=True)
+        if main_window_parent: QtWidgets.QMessageBox.critical(main_window_parent, "Save Error", f"Error writing file: {e}")
         raise
     except Exception as e:
         logger.error(f"Unexpected error writing CSV file '{filepath}': {e}", exc_info=True)
+        if main_window_parent: QtWidgets.QMessageBox.critical(main_window_parent, "Save Error", f"An unexpected error occurred: {e}")
         raise
 
 
@@ -217,7 +269,8 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
 # --- UI Interaction Functions ---
 
 def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
-                       coord_transformer: CoordinateTransformer) -> None:
+                       coord_transformer: CoordinateTransformer,
+                       scale_manager: 'ScaleManager') -> None:
     """
     Handles the 'File -> Save Tracks As...' action logic.
 
@@ -229,7 +282,7 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         track_manager: The track manager instance holding the data.
         coord_transformer: The coordinate transformer defining the output format.
     """
-    if not main_window.video_loaded or not track_manager or not coord_transformer or len(track_manager.tracks) == 0:
+    if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager or len(track_manager.tracks) == 0:
         logger.warning("Save Tracks action ignored: Video not loaded, components unavailable, or no tracks exist.")
         if hasattr(main_window, 'statusBar'):
             main_window.statusBar.showMessage("No tracks to save.", 3000)
@@ -266,12 +319,13 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             config.META_DURATION: main_window.total_duration_ms,
         }
         # Get INTERNAL (Top-Left) track data from track manager
-        all_tracks_data_tl: 'AllTracksData' = track_manager.get_all_track_data()
-        logger.debug(f"Gathered {len(all_tracks_data_tl)} tracks (internal TL) for saving.")
+        all_tracks_data_tl_px = track_manager.get_all_track_data()
+        logger.debug(f"Gathered {len(all_tracks_data_tl_px)} tracks (internal TL) for saving.")
 
         # Call the writing function, passing the current main transformer
         # write_track_csv handles getting coord metadata and transforming points
-        write_track_csv(save_path, video_metadata, all_tracks_data_tl, coord_transformer)
+        write_track_csv(save_path, video_metadata, all_tracks_data_tl_px,
+                        coord_transformer, scale_manager, main_window) # Pass main_window here
 
         if hasattr(main_window, 'statusBar'):
             main_window.statusBar.showMessage(f"Tracks successfully saved to {os.path.basename(save_path)}", 5000)
@@ -285,7 +339,8 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             main_window.statusBar.showMessage("Error saving tracks. See log.", 5000)
 
 def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
-                       coord_transformer: CoordinateTransformer) -> None:
+                       coord_transformer: CoordinateTransformer,
+                       scale_manager: 'ScaleManager') -> None:
     """
     Handles the 'File -> Load Tracks...' action logic.
 
@@ -298,7 +353,7 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         track_manager: The track manager instance to load data into.
         coord_transformer: The main coordinate transformer instance (to be updated on success).
     """
-    if not main_window.video_loaded or not track_manager or not coord_transformer:
+    if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager: # Added scale_manager check
         logger.warning("Load Tracks action ignored: Video not loaded or components unavailable.")
         if hasattr(main_window, 'statusBar'):
             main_window.statusBar.showMessage("Cannot load tracks: No video loaded.", 3000)
@@ -340,8 +395,28 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
     warnings_list: List[str] = []
     try:
         # Read raw data and all metadata (incl. coord system)
-        loaded_metadata, parsed_data_raw = read_track_csv(load_path)
-        logger.debug(f"Read {len(parsed_data_raw)} points from CSV with metadata: {loaded_metadata}")
+        loaded_metadata, parsed_data_raw_from_file = read_track_csv(load_path) # x,y here are as per file
+        logger.debug(f"Read {len(parsed_data_raw_from_file)} points from CSV with metadata: {loaded_metadata}")
+
+        # --- Parse Scale Metadata (before coordinate system for transformation order) ---
+        loaded_scale_str = loaded_metadata.get(config.META_SCALE_FACTOR_M_PER_PX)
+        loaded_data_units = loaded_metadata.get(config.META_DATA_UNITS, "px").lower() # Default to "px"
+        
+        loaded_scale_m_per_px: Optional[float] = None
+        if loaded_scale_str and loaded_scale_str != "N/A":
+            try:
+                loaded_scale_m_per_px = float(loaded_scale_str)
+                if loaded_scale_m_per_px <= 0:
+                    warnings_list.append(f"Invalid scale factor '{loaded_scale_str}' in CSV. Scale ignored.")
+                    loaded_scale_m_per_px = None
+            except ValueError:
+                warnings_list.append(f"Non-numeric scale factor '{loaded_scale_str}' in CSV. Scale ignored.")
+        
+        if loaded_data_units == "m" and loaded_scale_m_per_px is None:
+            warnings_list.append("CSV data units are 'm' but no valid scale factor found. Treating coordinates as pixels.")
+            loaded_data_units = "px" # Fallback
+
+        logger.info(f"Parsed scale from file: Factor={loaded_scale_m_per_px}, Units='{loaded_data_units}'")
 
         # --- Parse Coordinate System Metadata from loaded file ---
         loaded_mode_str = loaded_metadata.get(config.META_COORD_SYSTEM_MODE)
@@ -443,21 +518,45 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             else:
                 warnings_list.append("Proceeded despite potential metadata mismatch.")
 
-        # --- Transform loaded points to Internal Top-Left format ---
-        transformed_parsed_data: List[RawParsedData] = []
+        data_to_transform_to_internal_px: List[RawParsedData] = []
+
+        logger.info(f"Converting {len(parsed_data_raw_from_file)} points from file units/system to file system pixels...")
+        for point_raw_from_file in parsed_data_raw_from_file:
+            track_id, frame_idx, time_ms, x_file, y_file = point_raw_from_file
+            
+            x_file_coord_sys_px = x_file
+            y_file_coord_sys_px = y_file
+
+            # If file data was in meters, convert to pixels *within the file's coordinate system*
+            if loaded_data_units == "m" and loaded_scale_m_per_px is not None: # Scale must be valid
+                x_file_coord_sys_px = x_file / loaded_scale_m_per_px
+                y_file_coord_sys_px = y_file / loaded_scale_m_per_px
+            
+            data_to_transform_to_internal_px.append(
+                (track_id, frame_idx, time_ms, x_file_coord_sys_px, y_file_coord_sys_px)
+            )
+
+
+        # --- Transform points (now in file's system pixels) to Internal Top-Left pixels ---
+        transformed_to_internal_tl_px_data: List[RawParsedData] = []
         points_transformed = 0
         points_transform_failed = 0
-        logger.info(f"Transforming {len(parsed_data_raw)} loaded points to internal TL format using file's coordinate system...")
-        for point_raw in parsed_data_raw:
-            track_id, frame_idx, time_ms, x_loaded, y_loaded = point_raw
+        logger.info(f"Transforming {len(data_to_transform_to_internal_px)} points (in file system pixels) to internal TL pixels...")
+        # Status bar message for potentially long transformation
+        num_points_to_transform = len(data_to_transform_to_internal_px)
+        if num_points_to_transform > 1000: # Threshold for showing message, adjust as needed
+            if hasattr(main_window, 'statusBar'):
+                main_window.statusBar.showMessage(f"Transforming {num_points_to_transform} points to internal system...", 0) # Persistent
+                QtWidgets.QApplication.processEvents() # Ensure UI updates
+        for point_to_transform in data_to_transform_to_internal_px:
+            track_id, frame_idx, time_ms, x_fspx, y_fspx = point_to_transform # fspx = file system pixels
             try:
-                # Use the main transformer's method with the LOADED system parameters
                 x_tl, y_tl = coord_transformer.transform_point_to_internal(
-                    x_loaded, y_loaded,
+                    x_fspx, y_fspx,
                     loaded_mode_enum, loaded_origin_tl, loaded_video_height
                 )
-                transformed_parsed_data.append((track_id, frame_idx, time_ms, x_tl, y_tl))
-                points_transformed += 1
+                transformed_to_internal_tl_px_data.append((track_id, frame_idx, time_ms, x_tl, y_tl))
+                points_transformed += 1 # Ensure points_transformed is initialized
             except Exception as transform_err:
                 msg = f"Skipping point (Track {track_id}, Frame {frame_idx+1}) due to transformation error: {transform_err}"
                 logger.error(msg, exc_info=False) # Log error, but don't show traceback unless necessary
@@ -473,7 +572,7 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         success: bool
         load_warnings: List[str]
         success, load_warnings = track_manager.load_tracks_from_data(
-            transformed_parsed_data, # Data is now x_tl, y_tl
+            transformed_to_internal_tl_px_data, # Data is now x_tl_px, y_tl_px
             main_window.frame_width, main_window.frame_height,
             main_window.total_frames, main_window.fps
         )
@@ -482,6 +581,11 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         if not success:
             # If TrackManager load failed, raise an error to be caught below
             raise ValueError(f"TrackManager failed to load data: {'; '.join(load_warnings) or 'Unknown reason'}")
+        if success: # Only update scale manager if main load was successful
+            # --- Update main ScaleManager state and UI ---
+            logger.info("Load successful, updating main ScaleManager state and UI...")
+            scale_manager.set_scale(loaded_scale_m_per_px)
+            scale_manager.set_display_in_meters(True if loaded_data_units == "m" and loaded_scale_m_per_px is not None else False)
 
         # --- Update main coordinate transformer state and UI if load succeeded ---
         logger.info("Load successful, updating main coordinate transformer state and UI...")

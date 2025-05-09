@@ -674,21 +674,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_save_tracks(self) -> None:
-        """Handles the File -> Save Tracks As action by delegating to file_io."""
-        if hasattr(self, 'track_manager') and hasattr(self, 'coord_transformer'):
-            # Pass necessary components for saving
-            file_io.save_tracks_dialog(self, self.track_manager, self.coord_transformer)
-        else:
+        if hasattr(self, 'track_manager') and hasattr(self, 'coord_transformer') and hasattr(self, 'scale_manager'): # Added scale_manager check
+            file_io.save_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager) # Pass scale_manager
+        else:   
             logger.error("Cannot save tracks: TrackManager or CoordinateTransformer not available.")
             if hasattr(self, 'statusBar'): self.statusBar.showMessage("Save Error: Components missing.", 3000)
 
     @QtCore.Slot()
     def _trigger_load_tracks(self) -> None:
-        """Handles the File -> Load Tracks action by delegating to file_io."""
-        if hasattr(self, 'track_manager') and hasattr(self, 'coord_transformer'):
-            # file_io.load_tracks_dialog handles confirmation, reading, validation,
-            # transformation, updating TrackManager, and updating coord_transformer state/UI.
-            file_io.load_tracks_dialog(self, self.track_manager, self.coord_transformer)
+        if hasattr(self, 'track_manager') and hasattr(self, 'coord_transformer') and hasattr(self, 'scale_manager'): # Added scale_manager check
+            file_io.load_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager) # Pass scale_manager
         else:
              logger.error("Cannot load tracks: TrackManager or CoordinateTransformer not available.")
              if hasattr(self, 'statusBar'): self.statusBar.showMessage("Load Error: Components missing.", 3000)
