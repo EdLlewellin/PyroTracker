@@ -70,17 +70,59 @@ class ScaleManager(QtCore.QObject):
             return 1.0 / self._scale_m_per_px
         return None
 
-    # --- Placeholder for future transformation methods ---
     def transform_value_for_display(self, value_px: float) -> Tuple[float, str]:
         """
         Transforms a pixel value to the current display unit (px or m).
         Returns the transformed value and the unit string.
-        (To be fully implemented in the next phase)
         """
-        if self._display_in_meters and self._scale_m_per_px is not None:
-            # return value_px * self._scale_m_per_px, "m" # Actual transformation
-            return value_px, "m (scaled)" # Placeholder
-        return value_px, "px"
+        unit_str = "px"
+        transformed_value = value_px
+
+        if self._display_in_meters and self._scale_m_per_px is not None and self._scale_m_per_px > 0:
+            try:
+                transformed_value = value_px * self._scale_m_per_px
+                unit_str = "m"
+            except TypeError:
+                logger.error(f"TypeError during scaling. Value: {value_px}, Scale: {self._scale_m_per_px}")
+                # Fallback to pixels
+                transformed_value = value_px
+                unit_str = "px"
+        
+        # Apply rounding based on unit
+        if unit_str == "m":
+            # For meters, 4 decimal places (0.1 mm precision) seems reasonable
+            return round(transformed_value, 4), unit_str
+        else:
+            # For pixels, typically 2-3 decimal places is sufficient if they are floats
+            return round(transformed_value, 3), unit_str
+
+    def get_transformed_coordinates_for_display(self, x_px: float, y_px: float) -> Tuple[float, float, str]:
+        """
+        Transforms pixel coordinates (x,y) to the current display unit.
+        Returns (transformed_x, transformed_y, unit_string).
+        """
+        # Default to pixels
+        unit_str = "px"
+        display_x = x_px
+        display_y = y_px
+
+        if self._display_in_meters and self._scale_m_per_px is not None and self._scale_m_per_px > 0:
+            try:
+                display_x = x_px * self._scale_m_per_px
+                display_y = y_px * self._scale_m_per_px
+                unit_str = "m"
+            except TypeError:
+                logger.error(f"TypeError during coordinate scaling. Values: ({x_px}, {y_px}), Scale: {self._scale_m_per_px}")
+                # Fallback to pixels
+                display_x = x_px
+                display_y = y_px
+                unit_str = "px"
+        
+        # Apply rounding based on unit
+        if unit_str == "m":
+            return round(display_x, 4), round(display_y, 4), unit_str
+        else:
+            return round(display_x, 3), round(display_y, 3), unit_str
 
     def get_display_unit_short(self) -> str:
         """Returns 'm' or 'px' based on current display setting."""

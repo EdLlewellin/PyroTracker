@@ -169,6 +169,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_origin_marker = True
         logger.debug(f"Initial origin marker visibility state: {self._show_origin_marker}")
         self._block_scale_signals: bool = False
+        self._last_scene_mouse_x: float = -1.0
+        self._last_scene_mouse_y: float = -1.0
 
         # Dictionary to keep track of button groups for track visibility
         self.track_visibility_button_groups = {}
@@ -227,11 +229,8 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Connect ScaleManager signal
         self.scale_manager.scaleOrUnitChanged.connect(self._update_scale_ui_from_manager)
-        # For now, let's also connect it to placeholders or directly to table/label updates
-        # that will be implemented in the next phase.
-        # self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table) # Enable in next phase
-        # self.scale_manager.scaleOrUnitChanged.connect(self._update_cursor_labels_for_scale) # Enable in next phase
-        # Connect scale panel UI element signals
+        self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table)
+        self.scale_manager.scaleOrUnitChanged.connect(self._trigger_cursor_label_update)
         if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input:
             self.scale_m_per_px_input.editingFinished.connect(self._on_scale_m_per_px_editing_finished)
         if hasattr(self, 'scale_px_per_m_input') and self.scale_px_per_m_input:
@@ -1262,7 +1261,8 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def _update_points_table(self) -> None:
         """Updates the points table based on the currently active track."""
-        if not all(hasattr(self, attr) for attr in ['pointsTableWidget', 'track_manager', 'pointsTabLabel', 'coord_transformer']):
+        if not all(hasattr(self, attr) for attr in ['pointsTableWidget', 'track_manager', 'pointsTabLabel', 'coord_transformer', 'scale_manager']): # Added scale_manager
+             logger.debug("_update_points_table skipped: Essential components not ready.")
              return
         logger.debug("Updating points table...")
 
@@ -1271,43 +1271,50 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pointsTableWidget.setRowCount(0) # Clear existing rows
         active_points = self.track_manager.get_active_track_points_for_table()
 
-        link_color = QtGui.QColor("blue") # Color for clickable frame numbers
+        link_color = QtGui.QColor("blue")
         link_tooltip = "Click to jump to this frame"
+
+        # Get current display unit from ScaleManager for headers
+        display_unit_short = self.scale_manager.get_display_unit_short()
+        x_header_text = f"X [{display_unit_short}]"
+        y_header_text = f"Y [{display_unit_short}]"
+
+        pointsHeader = self.pointsTableWidget.horizontalHeader()
+        pointsHeader.model().setHeaderData(config.COL_POINT_X, QtCore.Qt.Orientation.Horizontal, x_header_text)
+        pointsHeader.model().setHeaderData(config.COL_POINT_Y, QtCore.Qt.Orientation.Horizontal, y_header_text)
 
         self.pointsTableWidget.setRowCount(len(active_points))
         for row, point_data in enumerate(active_points):
-            # Points from TrackManager are ALWAYS internal Top-Left
-            frame_idx, time_ms, x_internal, y_internal = point_data
+            frame_idx, time_ms, x_internal_px, y_internal_px = point_data
 
-            # Col 0: Frame (1-based, clickable)
             frame_item = QtWidgets.QTableWidgetItem(str(frame_idx + 1))
             frame_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             frame_item.setForeground(link_color); frame_item.setToolTip(link_tooltip)
             frame_item.setFlags(frame_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.pointsTableWidget.setItem(row, config.COL_POINT_FRAME, frame_item)
 
-            # Col 1: Time (seconds)
             time_sec_str = f"{(time_ms / 1000.0):.3f}" if time_ms >= 0 else "--.---"
             time_item = QtWidgets.QTableWidgetItem(time_sec_str)
             time_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             time_item.setFlags(time_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.pointsTableWidget.setItem(row, config.COL_POINT_TIME, time_item)
 
-            # Transform internal coordinates to the current display format
-            x_display, y_display = self.coord_transformer.transform_point_for_display(x_internal, y_internal)
+            # 1. Transform for coordinate system (origin, Y-axis) - result is still in pixels
+            x_coord_sys_px, y_coord_sys_px = self.coord_transformer.transform_point_for_display(x_internal_px, y_internal_px)
 
-            # Col 2: X Coordinate (Display)
-            x_item = QtWidgets.QTableWidgetItem(f"{x_display:.3f}")
+            # 2. Transform for scale (pixels to meters if applicable) using ScaleManager
+            x_display, y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(x_coord_sys_px, y_coord_sys_px)
+
+            # Use the precision from ScaleManager's transformation
+            x_item = QtWidgets.QTableWidgetItem(f"{x_display}") 
             x_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.pointsTableWidget.setItem(row, config.COL_POINT_X, x_item)
 
-            # Col 3: Y Coordinate (Display)
-            y_item = QtWidgets.QTableWidgetItem(f"{y_display:.3f}")
+            y_item = QtWidgets.QTableWidgetItem(f"{y_display}")
             y_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             y_item.setFlags(y_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self.pointsTableWidget.setItem(row, config.COL_POINT_Y, y_item)
-
 
     # --- Drawing ---
 
@@ -1552,45 +1559,74 @@ class MainWindow(QtWidgets.QMainWindow):
         # Note: _update_ui_state() handles general enablement based on video loaded.
 
     @QtCore.Slot(float, float)
-    def _handle_mouse_moved(self, scene_x: float, scene_y: float) -> None:
+    def _handle_mouse_moved(self, scene_x_px: float, scene_y_px: float) -> None:
         """Updates the cursor position labels for all coordinate systems."""
-        # Check if all required labels and the transformer exist
-        if not all(hasattr(self, attr) for attr in ['cursorPosLabelTL', 'cursorPosLabelBL', 'cursorPosLabelCustom', 'coord_transformer']):
+        # Store last known scene coordinates (even if off-image for _trigger_cursor_label_update)
+        self._last_scene_mouse_x = scene_x_px
+        self._last_scene_mouse_y = scene_y_px
+
+        if not all(hasattr(self, attr) for attr in [
+            'cursorPosLabelTL', 'cursorPosLabelBL', 'cursorPosLabelCustom',
+            'coord_transformer', 'scale_manager'
+        ]):
             return
 
         placeholder = "(--, --)"
+        # Get current display unit suffix from ScaleManager for labels
+        unit_str_suffix = f" [{self.scale_manager.get_display_unit_short()}]"
 
-        # Clear labels if video isn't loaded or mouse is off the image (scene_x == -1.0)
-        if not self.video_loaded or scene_x == -1.0:
+        if not self.video_loaded or scene_x_px == -1.0: # scene_x_px == -1.0 means off image
             self.cursorPosLabelTL.setText(placeholder)
             self.cursorPosLabelBL.setText(placeholder)
             self.cursorPosLabelCustom.setText(placeholder)
             return
 
         # --- Calculate and Display Coordinates in Each System ---
-        # 1. Top-Left (Input scene coordinates are already TL)
-        self.cursorPosLabelTL.setText(f"({scene_x:.1f}, {scene_y:.1f})")
+        # scene_x_px and scene_y_px are the raw Top-Left pixel coordinates from the view
+
+        # 1. Top-Left (already in TL pixels, now apply scale via ScaleManager)
+        tl_x_display, tl_y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(scene_x_px, scene_y_px)
+        self.cursorPosLabelTL.setText(f"({tl_x_display:.2f}, {tl_y_display:.2f}){unit_str_suffix}")
 
         # 2. Bottom-Left
-        video_h = self.coord_transformer.video_height
-        if video_h > 0:
-            # Manually transform TL cursor pos to BL display coords
-            # Origin is (0, video_h) in TL
-            cursor_bl_x = scene_x
-            cursor_bl_y = -(scene_y - float(video_h)) # Y relative to origin, inverted
-            self.cursorPosLabelBL.setText(f"({cursor_bl_x:.1f}, {cursor_bl_y:.1f})")
+        video_h_px = self.coord_transformer.video_height
+        if video_h_px > 0:
+            # First, transform to what BL coordinates would be IF still in pixels
+            bl_x_equivalent_px = scene_x_px # X doesn't change relative to origin definition
+            bl_y_equivalent_px = -(scene_y_px - float(video_h_px)) # Y relative to BL origin (0,H_px), Y-up
+
+            # Then, apply scale to these BL-equivalent pixel values
+            bl_x_display, bl_y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(bl_x_equivalent_px, bl_y_equivalent_px)
+            self.cursorPosLabelBL.setText(f"({bl_x_display:.2f}, {bl_y_display:.2f}){unit_str_suffix}")
         else:
-            self.cursorPosLabelBL.setText(placeholder) # Cannot calculate without height
+            self.cursorPosLabelBL.setText(placeholder)
 
         # 3. Custom
-        origin_meta = self.coord_transformer.get_metadata()
-        cust_origin_x_tl = origin_meta.get('origin_x_tl', 0.0)
-        cust_origin_y_tl = origin_meta.get('origin_y_tl', 0.0)
-        # Manually transform TL cursor pos to Custom display coords
-        cursor_cust_x = scene_x - cust_origin_x_tl # X relative to custom origin
-        cursor_cust_y = -(scene_y - cust_origin_y_tl) # Y relative to custom origin, inverted
-        self.cursorPosLabelCustom.setText(f"({cursor_cust_x:.1f}, {cursor_cust_y:.1f})")
+        # Get custom origin (which is stored in TL pixels)
+        origin_meta = self.coord_transformer.get_metadata() # This gives TL origin of the custom system
+        cust_origin_x_tl_px = origin_meta.get('origin_x_tl', 0.0)
+        cust_origin_y_tl_px = origin_meta.get('origin_y_tl', 0.0)
 
+        # First, transform to what Custom coordinates would be IF still in pixels
+        custom_x_equivalent_px = scene_x_px - cust_origin_x_tl_px
+        custom_y_equivalent_px = -(scene_y_px - cust_origin_y_tl_px) # Y relative to custom origin, Y-up
+
+        # Then, apply scale to these Custom-equivalent pixel values
+        custom_x_display, custom_y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(custom_x_equivalent_px, custom_y_equivalent_px)
+        self.cursorPosLabelCustom.setText(f"({custom_x_display:.2f}, {custom_y_display:.2f}){unit_str_suffix}")
+
+    @QtCore.Slot()
+    def _trigger_cursor_label_update(self) -> None:
+        """
+        Forces an update of cursor position labels.
+        Called when scale or display unit changes, to reflect the change
+        even if the mouse hasn't moved.
+        """
+        if hasattr(self, '_last_scene_mouse_x') and hasattr(self, '_last_scene_mouse_y'):
+             logger.debug("Triggering cursor label update due to scale/unit change.")
+             self._handle_mouse_moved(self._last_scene_mouse_x, self._last_scene_mouse_y)
+        else:
+             logger.warning("_trigger_cursor_label_update called but last mouse position not available.")
 
     # --- Dialog Slots ---
 
