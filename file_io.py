@@ -413,8 +413,16 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
                 warnings_list.append(f"Non-numeric scale factor '{loaded_scale_str}' in CSV. Scale ignored.")
         
         if loaded_data_units == "m" and loaded_scale_m_per_px is None:
-            warnings_list.append("CSV data units are 'm' but no valid scale factor found. Treating coordinates as pixels.")
-            loaded_data_units = "px" # Fallback
+            error_msg = (f"CSV data units are specified as 'meters' ({config.META_DATA_UNITS}: m), "
+                         f"but a valid positive scale factor ({config.META_SCALE_FACTOR_M_PER_PX}) "
+                         f"was not found or is invalid in the metadata.\n\n"
+                         f"Cannot convert meter data to internal pixel system without a valid scale.\n\n"
+                         f"Loading aborted.")
+            logger.error(error_msg + f" (Scale string from file was: '{loaded_scale_str}')")
+            QtWidgets.QMessageBox.critical(main_window, "Load Error - Missing/Invalid Scale", error_msg)
+            if hasattr(main_window, 'statusBar'):
+                main_window.statusBar.showMessage("Load failed: Missing/invalid scale for metric data.", 5000)
+            return # ABORT loading
 
         logger.info(f"Parsed scale from file: Factor={loaded_scale_m_per_px}, Units='{loaded_data_units}'")
 
@@ -535,7 +543,6 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             data_to_transform_to_internal_px.append(
                 (track_id, frame_idx, time_ms, x_file_coord_sys_px, y_file_coord_sys_px)
             )
-
 
         # --- Transform points (now in file's system pixels) to Internal Top-Left pixels ---
         transformed_to_internal_tl_px_data: List[RawParsedData] = []
