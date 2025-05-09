@@ -2,9 +2,9 @@
 
 ## Description
 
-PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), mark the changing position of specific pyroclasts over time to generate tracks, and save/load this track data.
+PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), **optionally define a pixel-to-meter scale,** mark the changing position of specific pyroclasts over time to generate tracks, and save/load this track data.
 
-The tool features interactive zoom and pan capabilities, frame-by-frame navigation, optional auto-advancing, multi-track management with visibility controls, track selection via table or image view clicks, visual feedback for marked tracks, persistent visual preferences (colors, sizes), and a video metadata viewer. Coordinate system information (including custom origins) is saved and loaded with track files.
+The tool features interactive zoom and pan capabilities, frame-by-frame navigation, optional auto-advancing, multi-track management with visibility controls, track selection via table or image view clicks, visual feedback for marked tracks, persistent visual preferences (colors, sizes), and a video metadata viewer. Coordinate system information, **custom origins, and scaling factors (if set) are saved and loaded with track files, allowing data to be output in either pixels or meters.**
 
 Built using Python with the PySide6 (Qt6) framework for the GUI and OpenCV for video handling. Uses Python's standard `logging` module for diagnostics and Qt's `QSettings` for preference persistence.
 
@@ -49,28 +49,34 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * **Select Active Track:**
         * `Ctrl+Click` on a visible track marker in the image view.
         * Click on a track row in the "Tracks" table.
-    * **Add/Update Points:** Left-click on the video frame to mark a pyroclast's position for the *active* track on the current frame. Clicking again *updates* the existing point's coordinates. Only one point per track per frame is allowed. Coordinates are stored internally in Top-Left system but displayed according to the selected coordinate system.
+    * **Add/Update Points:** Left-click on the video frame to mark a pyroclast's position for the *active* track on the current frame. Clicking again *updates* the existing point's coordinates. Only one point per track per frame is allowed. Coordinates are stored internally in Top-Left system but displayed according to the selected coordinate system **and scale unit (pixels or meters)**.
     * **Delete Point:** Delete the point for the *active* track on the *current* frame by pressing the `Delete` or `Backspace` key.
     * **Visuals:** Markers (crosses) and lines are drawn based on track activity and visibility settings. Default colors (e.g., active=yellow/red, inactive=blue/cyan) can be customized via Preferences.
     * **Track Visibility Control:** Control track display mode individually (Hidden 'X', Incremental '>', Always Visible '✓') using radio buttons in the "Tracks" table. Set all tracks to a specific mode by clicking the corresponding header icon. Visuals update according to the selected mode and current frame.
     * **Delete Tracks:** Delete entire tracks using the trash can icon button (🗑️) in the first column of the "Tracks" table (confirmation required).
 * **Auto-Advance:** Optionally enable automatic frame advance after adding/updating a point via the "Frame Advance" panel. Control the number of frames to advance using the spin box.
+* **Scale Configuration:**
+    * Set a pixel-to-meter scale using input boxes for "m/px" or "px/m" in the "Scale Configuration" panel. Entering a value in one box automatically calculates the reciprocal.
+    * Reset the scale using the reset button.
+    * A "Display in meters" checkbox allows toggling the units for displayed data in the "Points" table. This checkbox is only enabled if a valid scale is set.
 * **Coordinate System Management:**
     * Select coordinate system mode (Top-Left, Bottom-Left, Custom) using radio buttons in the "Coordinate System" panel.
     * Set a custom origin by clicking "Pick Custom" and then clicking the desired origin location on the image view.
     * The effective Top-Left coordinates of the origin for each system are displayed.
-    * **Live Cursor Position:** The current position of the mouse cursor over the image is displayed live, transformed into each of the three coordinate systems (Top-Left, Bottom-Left, Custom).
+    * **Live Cursor Position:** The current position of the mouse cursor over the image is displayed live, transformed into each of the three coordinate systems (Top-Left, Bottom-Left, Custom). **Both pixel and metric (if scale is set) coordinates are shown simultaneously for each system.**
     * Toggle the visibility of the effective origin marker on the image using the "Show Origin" checkbox. The marker color can be customized via Preferences.
     * Selected coordinate system and custom origin are saved/loaded with track files.
 * **Data Display & UI:**
     * Resizable main window split between the video view/controls (left) and data/settings panels (right).
     * "Tracks" tab: Lists all tracks with controls for deletion, selection, and visibility.
-    * "Points" tab: Displays points (Frame, Time (s), X, Y) for the active track, with coordinates shown in the current display system.
+    * "Points" tab: Displays points (Frame, Time (s), X, Y) for the active track. **Column headers (X, Y) indicate current display units (pixels or meters).**
     * "Frame Advance" panel: Controls for the auto-advance feature.
-    * "Coordinate System" panel: Controls for selecting coordinate system, setting custom origin, viewing live cursor positions, and toggling origin marker visibility.
+    * "Scale Configuration" panel: Controls for setting the m/px scale and toggling display units.
+    * "Coordinate System" panel: Controls for selecting coordinate system, setting custom origin, viewing live cursor positions (in both pixels and meters), and toggling origin marker visibility.
 * **Save/Load Tracks:**
-    * Save all current track point data to a CSV file via `File -> Save Tracks As...`. The CSV includes a header with video metadata (filename, dimensions, frame count, FPS, duration), application version, coordinate system settings, and columns for `track_id`, `frame_index`, `time_ms`, `x`, `y` (coordinates saved in the currently selected system's format).
-    * Load track point data from a previously saved CSV file via `File -> Load Tracks...`. This replaces any existing tracks (confirmation required). Coordinate system settings are loaded from the file and applied. Basic validation and metadata mismatch warnings are provided.
+    * Save all current track point data to a CSV file via `File -> Save Tracks As...`. The CSV includes a header with video metadata (filename, dimensions, frame count, FPS, duration), application version, coordinate system settings, **scale factor, and data units (px or m)**. Coordinates are saved in the chosen system and unit.
+    * **Precision Warning:** If saving in meters, a warning is displayed about potential precision loss, offering options to save in meters, pixels, or cancel.
+    * Load track point data from a previously saved CSV file via `File -> Load Tracks...`. This replaces any existing tracks (confirmation required). Coordinate system and **scale settings (factor and display unit preference)** are loaded from the file and applied. Basic validation and metadata mismatch warnings are provided.
 * **Preferences:** Customize visual settings (track/origin colors, marker size, line width) via `Edit -> Preferences...`. Settings are persisted between sessions using `QSettings`.
 * **Video Information:** View technical metadata extracted from the loaded video file via `File -> Video Information...`.
 * **Logging:** Diagnostic information is printed to the console using standard Python logging (configured in `main.py`). Level defaults to DEBUG.
@@ -117,7 +123,8 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Go to `File -> Open Video...` to load a video file.
     * Use the slider, buttons, or `Mouse Wheel` to navigate frames. Use `Spacebar` to toggle play/pause.
     * Use `Ctrl + Mouse Wheel` or overlay buttons (+/-) to zoom, and left-click-drag to pan. Use the overlay "Fit" button (⤢) to reset view.
-    * In the "Coordinate System" panel, select the desired system. Use "Pick Custom" to set a user-defined origin. Toggle the origin marker with "Show Origin". Observe live cursor coordinates.
+    * **(Optional) Set Scale:** In the "Scale Configuration" panel, enter a value for `m/px` (or `px/m`) and press Enter. The other box will auto-update. Check "Display in meters" to see coordinates in meters in the "Points" table.
+    * In the "Coordinate System" panel, select the desired system. Use "Pick Custom" to set a user-defined origin. Toggle the origin marker with "Show Origin". Observe live cursor coordinates (shown in both pixels and meters if scale is set).
     * Click "New Track" in the "Tracks" tab (or press `Ctrl+N`).
     * **Select** a track using `Ctrl+Click` on a marker or by clicking its table row.
     * **Select & Jump** to a specific point's frame using `Shift+Click` on its marker.
@@ -136,6 +143,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * `main.py`: Entry point script; initializes QApplication, logging, and MainWindow.
 * `config.py`: Shared constants (CSV format, metadata keys, table indices, default styles, app info).
 * `coordinates.py`: `CoordinateSystem` enum and `CoordinateTransformer` class for coordinate management.
+* `scale_manager.py`: `ScaleManager` class; manages pixel-to-meter scale factor and display units.**
 * `settings_manager.py`: Manages persistent application settings (visuals) using QSettings.
 * `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus.
 * `main_window.py`: `MainWindow` class; orchestrates UI, components, signals/slots, drawing.
@@ -155,6 +163,6 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * Add basic data analysis capabilities (e.g., velocity calculation, track plotting).
 * Enhance logging configuration (e.g., allow user to set level, log to file).
 * Replace standard text/pixmap overlay buttons with custom SVG icons for a cleaner look.
-* Consider adding unit tests for core logic (e.g., `TrackManager`, `VideoHandler`, `CoordinateTransformer`).
+* Consider adding unit tests for core logic (e.g., `TrackManager`, `VideoHandler`, `CoordinateTransformer`, `ScaleManager`).
 * Improve error handling for invalid video files or corrupted CSVs.
 * Add undo/redo functionality for point marking/deletion.
