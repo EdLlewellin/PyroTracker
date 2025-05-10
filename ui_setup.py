@@ -244,39 +244,50 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     scale_input_layout.addWidget(QtWidgets.QLabel("m/px:"))
     main_window.scale_m_per_px_input = QtWidgets.QLineEdit()
     main_window.scale_m_per_px_input.setPlaceholderText("-")
-    main_window.scale_m_per_px_input.setValidator(QtGui.QDoubleValidator(0.0, 1000000.0, 8, main_window.scale_m_per_px_input)) # Allow 0 for now, handle in logic
+    main_window.scale_m_per_px_input.setValidator(QtGui.QDoubleValidator(0.0, 1000000.0, 8, main_window.scale_m_per_px_input))
     main_window.scale_m_per_px_input.setToolTip("Enter scale as meters per pixel (e.g., 0.001)")
-    main_window.scale_m_per_px_input.setMaximumWidth(100) # Control width
+    main_window.scale_m_per_px_input.setMaximumWidth(100)
     scale_input_layout.addWidget(main_window.scale_m_per_px_input)
 
     scale_input_layout.addWidget(QtWidgets.QLabel("px/m:"))
     main_window.scale_px_per_m_input = QtWidgets.QLineEdit()
     main_window.scale_px_per_m_input.setPlaceholderText("-")
-    main_window.scale_px_per_m_input.setValidator(QtGui.QDoubleValidator(0.0, 100000000.0, 8, main_window.scale_px_per_m_input)) # Allow 0 for now
+    main_window.scale_px_per_m_input.setValidator(QtGui.QDoubleValidator(0.0, 100000000.0, 8, main_window.scale_px_per_m_input))
     main_window.scale_px_per_m_input.setToolTip("Enter scale as pixels per meter (e.g., 1000)")
-    main_window.scale_px_per_m_input.setMaximumWidth(100) # Control width
+    main_window.scale_px_per_m_input.setMaximumWidth(100)
     scale_input_layout.addWidget(main_window.scale_px_per_m_input)
 
     main_window.scale_reset_button = QtWidgets.QPushButton()
-    main_window.scale_reset_button.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogResetButton)) # Or SP_TrashIcon
+    main_window.scale_reset_button.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogResetButton))
     main_window.scale_reset_button.setToolTip("Reset scale to undefined")
-    main_window.scale_reset_button.setFixedSize(main_window.scale_reset_button.iconSize() + QtCore.QSize(10,5)) # Make it snug
+    main_window.scale_reset_button.setFixedSize(main_window.scale_reset_button.iconSize() + QtCore.QSize(10,5))
     scale_input_layout.addWidget(main_window.scale_reset_button)
-    scale_input_layout.addStretch(2) # Add more stretch at the end
+    scale_input_layout.addStretch(2)
 
     scale_group_layout.addLayout(scale_input_layout)
 
-    # Toggle Row
+    # Toggle Row (Display in meters AND Show Scale Bar)
     scale_toggle_layout = QtWidgets.QHBoxLayout()
+    scale_toggle_layout.setSpacing(10) # Add some spacing between checkboxes
+
     main_window.scale_display_meters_checkbox = QtWidgets.QCheckBox("Display in meters")
     main_window.scale_display_meters_checkbox.setToolTip("Convert displayed values to meters (only if scale is set)")
     main_window.scale_display_meters_checkbox.setChecked(False)
-    main_window.scale_display_meters_checkbox.setEnabled(False) # Initially disabled
+    main_window.scale_display_meters_checkbox.setEnabled(False)
     scale_toggle_layout.addWidget(main_window.scale_display_meters_checkbox)
-    scale_toggle_layout.addStretch() # Align checkbox to the left
+
+    # --- NEW: Add "Show Scale Bar" Checkbox ---
+    main_window.showScaleBarCheckBox = QtWidgets.QCheckBox("Show Scale Bar")
+    main_window.showScaleBarCheckBox.setToolTip("Toggle visibility of the scale bar on the image (only if scale is set)")
+    main_window.showScaleBarCheckBox.setChecked(False) # Default to unchecked (will be checked if scale is set)
+    main_window.showScaleBarCheckBox.setEnabled(False) # Initially disabled
+    scale_toggle_layout.addWidget(main_window.showScaleBarCheckBox)
+    # --- END NEW ---
+
+    scale_toggle_layout.addStretch() # Align checkboxes to the left
     scale_group_layout.addLayout(scale_toggle_layout)
 
-    rightPanelLayout.addWidget(scale_config_group) # Add before Coordinate System
+    rightPanelLayout.addWidget(scale_config_group)
     logger.debug("Scale Configuration panel configured.")
 
     # Coordinate System Controls GroupBox (using GridLayout)

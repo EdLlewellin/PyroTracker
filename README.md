@@ -4,7 +4,7 @@
 
 PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), **optionally define a pixel-to-meter scale,** mark the changing position of specific pyroclasts over time to generate tracks, and save/load this track data.
 
-The tool features interactive zoom and pan capabilities, frame-by-frame navigation, optional auto-advancing, multi-track management with visibility controls, track selection via table or image view clicks, visual feedback for marked tracks, persistent visual preferences (colors, sizes), and a video metadata viewer. Coordinate system information, **custom origins, and scaling factors (if set) are saved and loaded with track files, allowing data to be output in either pixels or meters.**
+The tool features interactive zoom and pan capabilities, frame-by-frame navigation, optional auto-advancing, multi-track management with visibility controls, track selection via table or image view clicks, visual feedback for marked tracks, **an optional on-screen scale bar,** persistent visual preferences (colors, sizes), and a video metadata viewer. Coordinate system information, **custom origins, and scaling factors (if set) are saved and loaded with track files, allowing data to be output in either pixels or meters.**
 
 Built using Python with the PySide6 (Qt6) framework for the GUI and OpenCV for video handling. Uses Python's standard `logging` module for diagnostics and Qt's `QSettings` for preference persistence.
 
@@ -44,6 +44,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Zoom/pan state persists across frame changes (after the initial frame).
     * Minimum and maximum zoom levels enforced.
     * Overlay buttons for Zoom In (+), Zoom Out (-), and Fit View (⤢) in the top-right corner.
+    * **Optional Scale Bar:** If a pixel-to-meter scale is set, a scale bar is displayed in the bottom-right corner of the image view. Its length represents a round number in appropriate units (e.g., cm, m, km) and dynamically updates with zoom. Visibility can be toggled via a checkbox in the "Scale Configuration" panel.
 * **Multi-Track Pyroclast Tracking:**
     * Create new tracks using the "New Track" button (or `Ctrl+N` shortcut via `Edit -> New Track`).
     * **Select Active Track:**
@@ -58,7 +59,8 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * **Scale Configuration:**
     * Set a pixel-to-meter scale using input boxes for "m/px" or "px/m" in the "Scale Configuration" panel. Entering a value in one box automatically calculates the reciprocal.
     * Reset the scale using the reset button.
-    * A "Display in meters" checkbox allows toggling the units for displayed data in the "Points" table. This checkbox is only enabled if a valid scale is set.
+    * A "Display in meters" checkbox allows toggling the units for displayed data in the "Points" table.
+    * A "Show Scale Bar" checkbox allows toggling the visibility of the on-screen scale bar. Both checkboxes are only enabled if a valid scale is set.
 * **Coordinate System Management:**
     * Select coordinate system mode (Top-Left, Bottom-Left, Custom) using radio buttons in the "Coordinate System" panel.
     * Set a custom origin by clicking "Pick Custom" and then clicking the desired origin location on the image view.
@@ -71,7 +73,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * "Tracks" tab: Lists all tracks with controls for deletion, selection, and visibility.
     * "Points" tab: Displays points (Frame, Time (s), X, Y) for the active track. **Column headers (X, Y) indicate current display units (pixels or meters).**
     * "Frame Advance" panel: Controls for the auto-advance feature.
-    * "Scale Configuration" panel: Controls for setting the m/px scale and toggling display units.
+    * "Scale Configuration" panel: Controls for setting the m/px scale, toggling display units, and **toggling scale bar visibility.**
     * "Coordinate System" panel: Controls for selecting coordinate system, setting custom origin, viewing live cursor positions (in both pixels and meters), and toggling origin marker visibility.
 * **Save/Load Tracks:**
     * Save all current track point data to a CSV file via `File -> Save Tracks As...`. The CSV includes a header with video metadata (filename, dimensions, frame count, FPS, duration), application version, coordinate system settings, **scale factor, and data units (px or m)**. Coordinates are saved in the chosen system and unit.
@@ -123,7 +125,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Go to `File -> Open Video...` to load a video file.
     * Use the slider, buttons, or `Mouse Wheel` to navigate frames. Use `Spacebar` to toggle play/pause.
     * Use `Ctrl + Mouse Wheel` or overlay buttons (+/-) to zoom, and left-click-drag to pan. Use the overlay "Fit" button (⤢) to reset view.
-    * **(Optional) Set Scale:** In the "Scale Configuration" panel, enter a value for `m/px` (or `px/m`) and press Enter. The other box will auto-update. Check "Display in meters" to see coordinates in meters in the "Points" table.
+    * **(Optional) Set Scale:** In the "Scale Configuration" panel, enter a value for `m/px` (or `px/m`) and press Enter. The other box will auto-update. Check "Display in meters" to see coordinates in meters in the "Points" table. **Check "Show Scale Bar" to display the scale bar on the image view if a scale is set.**
     * In the "Coordinate System" panel, select the desired system. Use "Pick Custom" to set a user-defined origin. Toggle the origin marker with "Show Origin". Observe live cursor coordinates (shown in both pixels and meters if scale is set).
     * Click "New Track" in the "Tracks" tab (or press `Ctrl+N`).
     * **Select** a track using `Ctrl+Click` on a marker or by clicking its table row.
@@ -143,11 +145,12 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * `main.py`: Entry point script; initializes QApplication, logging, and MainWindow.
 * `config.py`: Shared constants (CSV format, metadata keys, table indices, default styles, app info).
 * `coordinates.py`: `CoordinateSystem` enum and `CoordinateTransformer` class for coordinate management.
-* `scale_manager.py`: `ScaleManager` class; manages pixel-to-meter scale factor and display units.**
+* `scale_manager.py`: `ScaleManager` class; manages pixel-to-meter scale factor and display units.
+* **`scale_bar_widget.py`**: `ScaleBarWidget` class; custom widget for drawing the dynamic on-screen scale bar.**
 * `settings_manager.py`: Manages persistent application settings (visuals) using QSettings.
 * `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus.
 * `main_window.py`: `MainWindow` class; orchestrates UI, components, signals/slots, drawing.
-* `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display and mouse interaction (zoom, pan, clicks).
+* `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display, mouse interaction, and hosting overlay widgets (including the scale bar).
 * `video_handler.py`: `VideoHandler` class; manages video loading (OpenCV), playback (QTimer), navigation, frame extraction.
 * `track_manager.py`: `TrackManager` class; stores and manages multi-track point data and visibility settings.
 * `file_io.py`: Functions for CSV track data reading/writing, including metadata and coordinate transformations.
@@ -163,6 +166,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * Add basic data analysis capabilities (e.g., velocity calculation, track plotting).
 * Enhance logging configuration (e.g., allow user to set level, log to file).
 * Replace standard text/pixmap overlay buttons with custom SVG icons for a cleaner look.
-* Consider adding unit tests for core logic (e.g., `TrackManager`, `VideoHandler`, `CoordinateTransformer`, `ScaleManager`).
+* Consider adding unit tests for core logic (e.g., `TrackManager`, `VideoHandler`, `CoordinateTransformer`, `ScaleManager`, `ScaleBarWidget`).
 * Improve error handling for invalid video files or corrupted CSVs.
 * Add undo/redo functionality for point marking/deletion.
+* Allow customization of scale bar appearance (colors, font) via Preferences.

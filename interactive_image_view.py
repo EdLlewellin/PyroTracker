@@ -7,6 +7,7 @@ from enum import Enum, auto
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import config
+from scale_bar_widget import ScaleBarWidget
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     modifiedClick = QtCore.Signal(float, float, QtCore.Qt.KeyboardModifiers) # Click with modifiers (scene coords, mods)
     originSetRequest = QtCore.Signal(float, float) # Emitted when clicking in Set Origin mode (scene coords)
     sceneMouseMoved = QtCore.Signal(float, float) # Emits scene (x, y) or (-1, -1) if off image
+    viewTransformChanged = QtCore.Signal() # Emitted when zoom/pan changes view scale
 
     # --- Instance Variables ---
     _scene: QtWidgets.QGraphicsScene
@@ -60,7 +62,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     _current_mode: InteractionMode # Current interaction mode (Normal or Set Origin)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
-        """Initializes the view, scene, interaction settings, and overlay buttons."""
+        """Initializes the view, scene, interaction settings, overlay buttons, and scale bar."""
         super().__init__(parent)
         logger.info("Initializing InteractiveImageView...")
 
@@ -97,6 +99,12 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
         # Create overlay buttons (Zoom In/Out, Fit)
         self._create_overlay_buttons()
+
+        # Create the Scale Bar Widget (initially hidden)
+        self._scale_bar_widget = ScaleBarWidget(self) # Parent to this view for positioning
+        self._scale_bar_widget.setVisible(False) # Explicitly ensure it's hidden initially
+        logger.debug("ScaleBarWidget created and initially hidden.")
+
         logger.info("InteractiveImageView initialization complete.")
 
 
@@ -188,33 +196,54 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         logger.debug("Overlay buttons created.")
 
 
-    def _update_button_positions(self) -> None:
-        """Positions the overlay buttons in the top-right corner of the viewport."""
+    def _update_overlay_widget_positions(self) -> None:
+        """Positions the overlay buttons and scale bar in the viewport."""
         if not hasattr(self, 'zoomInButton') or not self.zoomInButton:
-             logger.warning("_update_button_positions called before buttons created.")
+             logger.warning("_update_overlay_widget_positions called before overlay buttons created.")
              return
+        if not hasattr(self, '_scale_bar_widget') or not self._scale_bar_widget:
+            logger.warning("_update_overlay_widget_positions called before scale bar widget created.")
+            return
 
         margin: int = 10 # Margin from viewport edges
         vp_width: int = self.viewport().width()
+        vp_height: int = self.viewport().height()
+
+        # --- Position Overlay Buttons (Top-Right) ---
         button_width: int = self.zoomInButton.width()
         button_height: int = self.zoomInButton.height()
         spacing: int = 5 # Spacing between buttons
 
-        # Calculate top-right positions
-        x_pos: int = vp_width - button_width - margin
-        self.zoomInButton.move(x_pos, margin)
-        self.zoomOutButton.move(x_pos, margin + button_height + spacing)
-        self.resetViewButton.move(x_pos, margin + 2 * (button_height + spacing))
+        x_pos_buttons: int = vp_width - button_width - margin
+        self.zoomInButton.move(x_pos_buttons, margin)
+        self.zoomOutButton.move(x_pos_buttons, margin + button_height + spacing)
+        self.resetViewButton.move(x_pos_buttons, margin + 2 * (button_height + spacing))
+
+        # --- Position Scale Bar Widget (Bottom-Right) ---
+        if self._scale_bar_widget.isVisible(): # Only position if it's supposed to be visible
+            # The scale bar widget itself determines its own width and height via sizeHint/setFixedSize
+            sb_width: int = self._scale_bar_widget.width()
+            sb_height: int = self._scale_bar_widget.height()
+
+            x_pos_sb: int = vp_width - sb_width - margin
+            y_pos_sb: int = vp_height - sb_height - margin
+            self._scale_bar_widget.move(x_pos_sb, y_pos_sb)
+            logger.debug(f"Scale bar positioned at ({x_pos_sb}, {y_pos_sb}), size: {self._scale_bar_widget.size()}")
 
 
-    def _set_overlay_buttons_visible(self, visible: bool) -> None:
-        """Shows or hides the overlay buttons and updates their positions if showing."""
+    def _ensure_overlay_widgets_updated_on_show(self, buttons_visible: bool) -> None:
+        """
+        Shows or hides the overlay buttons.
+        Always updates overlay widget positions if buttons are being made visible.
+        Scale bar visibility is managed separately.
+        """
         if not hasattr(self, 'zoomInButton') or not self.zoomInButton:
-             logger.warning("_set_overlay_buttons_visible called before buttons created.")
+             logger.warning("_ensure_overlay_widgets_updated_on_show called before overlay buttons created.")
              return
-        logger.debug(f"Setting overlay buttons visible: {visible}")
-        if visible:
-            self._update_button_positions() # Update positions before showing
+
+        logger.debug(f"Setting overlay buttons visible: {buttons_visible}")
+        if buttons_visible:
+            self._update_overlay_widget_positions() # Update positions before showing buttons
             self.zoomInButton.show()
             self.zoomOutButton.show()
             self.resetViewButton.show()
@@ -222,6 +251,10 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             self.zoomInButton.hide()
             self.zoomOutButton.hide()
             self.resetViewButton.hide()
+
+        # Ensure scale bar position is also updated if it's visible
+        if self._scale_bar_widget and self._scale_bar_widget.isVisible():
+            self._update_overlay_widget_positions()
 
 
     def _zoom(self, factor: float) -> None:
@@ -247,6 +280,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             logger.debug(f"Applying scale factor {actual_zoom:.4f} (Target: {target_scale:.4f})")
             # Use AnchorUnderMouse set in __init__ to zoom relative to cursor
             self.scale(actual_zoom, actual_zoom)
+            self.viewTransformChanged.emit() # <<< EMIT SIGNAL
         else:
             logger.debug("Target scale close to current scale or limits reached. No zoom applied.")
 
@@ -283,13 +317,10 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         is_initial: bool = self._initial_load
         logger.debug(f"setPixmap called. Initial load flag: {is_initial}")
 
-        # Store current transform *before* clearing scene if not initial load,
-        # to restore zoom/pan state across frame changes.
         if self._pixmap_item and self.sceneRect().isValid() and not is_initial:
             current_transform = self.transform()
             logger.debug(f"Stored previous transform: {current_transform}")
 
-        # Clear the scene completely (removes old pixmap and any overlays)
         logger.debug("Clearing graphics scene...")
         self._scene.clear()
         self._pixmap_item = None
@@ -301,47 +332,55 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             self._pixmap_item.setTransformationMode(QtCore.Qt.TransformationMode.SmoothTransformation)
             self._scene.addItem(self._pixmap_item)
 
-            # Update scene rect to match the new pixmap
             new_scene_rect: QtCore.QRectF = QtCore.QRectF(pixmap.rect())
             self.setSceneRect(new_scene_rect)
             logger.debug(f"Scene rect set to: {new_scene_rect}")
 
-            # Recalculate zoom limits based on the new pixmap and current viewport
             self._calculate_zoom_limits()
 
+            transform_changed_by_set_pixmap = False
             if is_initial:
                 logger.info("Initial pixmap load, resetting view to fit.")
-                self.resetView()
-                self._initial_load = False # Clear flag after initial load is handled
+                self.resetView() # This will emit viewTransformChanged
+                self._initial_load = False
+                transform_changed_by_set_pixmap = True # resetView emits it
             elif current_transform is not None:
                 logger.info("Attempting to restore previous view transform.")
-                # Check if previous scale is still valid within new limits
                 previous_scale: float = current_transform.m11()
                 clamped_scale: float = max(self._min_scale, min(previous_scale, self._max_scale))
-                # Restore transform if previous scale is valid within new limits
                 if math.isclose(clamped_scale, previous_scale, rel_tol=1e-5):
                      self.setTransform(current_transform)
                      logger.debug("Previous transform restored.")
-                else: # Reset view if previous scale is now out of bounds
+                     transform_changed_by_set_pixmap = True
+                else:
                      logger.warning(f"Previous transform scale ({previous_scale:.4f}) outside new limits [{self._min_scale:.4f}, {self._max_scale:.4f}]. Resetting view.")
-                     self.resetView()
+                     self.resetView() # This will emit viewTransformChanged
+                     transform_changed_by_set_pixmap = True # resetView emits it
             else:
-                 # Should not happen if not initial load and pixmap was previously valid, but handle defensively
                  logger.warning("No valid previous transform stored despite not being initial load. Resetting view.")
-                 self.resetView()
+                 self.resetView() # This will emit viewTransformChanged
+                 transform_changed_by_set_pixmap = True # resetView emits it
 
-            # Show overlay buttons now that there's a pixmap
-            self._set_overlay_buttons_visible(True)
+            self._ensure_overlay_widgets_updated_on_show(True) # Show overlay buttons
+            if transform_changed_by_set_pixmap and not is_initial : # resetView emits, only emit if not initial and setTransform was used directly
+                # If setTransform was called directly, explicitly emit. resetView handles its own emission.
+                # This ensures the signal is sent if the transform was directly set.
+                if not (current_transform is not None and math.isclose(clamped_scale, previous_scale, rel_tol=1e-5)): # i.e. if resetView was NOT called.
+                    pass # resetView path already emits, avoid double emission
+                else: # if setTransform was called
+                    self.viewTransformChanged.emit()
+
         else:
-             # Pixmap is null or invalid
              logger.info("Invalid or null pixmap provided. Clearing scene rect and hiding buttons.")
-             self.setSceneRect(QtCore.QRectF()) # Set empty scene rect
-             # Reset zoom limits to defaults
+             self.setSceneRect(QtCore.QRectF())
              self._min_scale = 0.01
              self._max_scale = config.MAX_ABS_SCALE
-             self._set_overlay_buttons_visible(False) # Hide buttons
+             self._ensure_overlay_widgets_updated_on_show(False)
+             # Hide scale bar if pixmap is removed
+             if hasattr(self, '_scale_bar_widget') and self._scale_bar_widget:
+                self._scale_bar_widget.setVisible(False)
 
-        # Reset interaction state variables whenever pixmap changes
+
         logger.debug("Resetting interaction state variables (pan/click).")
         self._is_panning = False
         self._is_potential_pan = False
@@ -366,16 +405,14 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             logger.warning("Cannot reset view: No valid pixmap item or scene rect.")
             return
 
-        # Reset transform matrix to identity BEFORE scaling
         self.resetTransform()
-        # Apply the minimum scale (calculated to fit the image)
         logger.debug(f"Applying minimum scale: {self._min_scale:.4f}")
         self.scale(self._min_scale, self._min_scale)
 
-        # Ensure the image is centered after scaling
         scene_center: QtCore.QPointF = self.sceneRect().center()
         logger.debug(f"Centering view on scene center: {scene_center}")
         self.centerOn(scene_center)
+        self.viewTransformChanged.emit() # <<< EMIT SIGNAL
         logger.info("View reset complete.")
 
 
@@ -468,10 +505,9 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         """
         Handles view resize events. Recalculates zoom limits, attempts to
-        maintain view center/scale, and repositions overlay buttons.
+        maintain view center/scale, and repositions overlay widgets.
         """
         logger.debug(f"Resize event detected. New viewport size: {event.size()}")
-        # Store previous state before resize adjustments
         previous_transform: Optional[QtGui.QTransform] = None
         previous_center: Optional[QtCore.QPointF] = None
         if self._pixmap_item and self.sceneRect().isValid():
@@ -480,35 +516,84 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             logger.debug(f"Stored previous transform: {previous_transform}")
             logger.debug(f"Stored previous scene center: {previous_center}")
 
-        # Let the base class handle the resize first
         super().resizeEvent(event)
-
-        # Recalculate zoom limits for the new viewport size
         self._calculate_zoom_limits()
 
-        # Attempt to restore view state, adjusting only if necessary
+        view_reset_called = False
         if previous_transform and previous_center and self._pixmap_item and self.sceneRect().isValid():
              current_scale: float = previous_transform.m11()
-             # Clamp the previous scale within the newly calculated limits
              clamped_scale: float = max(self._min_scale, min(current_scale, self._max_scale))
 
              if not math.isclose(clamped_scale, current_scale, rel_tol=1e-5):
-                 # If scale had to be clamped, reset the view entirely for safety
                  logger.warning(f"Previous scale {current_scale:.4f} is outside new limits [{self._min_scale:.4f}, {self._max_scale:.4f}] after resize. Resetting view.")
-                 self.resetView()
+                 self.resetView() # This emits viewTransformChanged
+                 view_reset_called = True
              else:
-                 # If scale is still valid, re-center the view on the previous center point
                  logger.debug("Previous scale still within new limits after resize. Re-centering.")
                  self.centerOn(previous_center)
-        elif self._pixmap_item and self.sceneRect().isValid():
-             # If no previous state stored or image wasn't valid before, reset
-             logger.debug("No valid previous state or pixmap, resetting view after resize.")
-             self.resetView()
+                 # If only centered, but scale effectively changed due to aspect ratio, still emit.
+                 # However, a simple centerOn doesn't change the transform's scale part.
+                 # We need to ensure the signal is emitted if the view parameters affecting scale bar change.
+                 # The explicit emission after _update_overlay_widget_positions covers this.
 
-        # Always update button positions after resize
-        self._update_button_positions()
+        elif self._pixmap_item and self.sceneRect().isValid():
+             logger.debug("No valid previous state or pixmap, resetting view after resize.")
+             self.resetView() # This emits viewTransformChanged
+             view_reset_called = True
+
+        self._update_overlay_widget_positions() # Position overlay buttons and potentially scale bar
+
+        # If resetView wasn't called but the viewport dimensions changed,
+        # the scale bar still needs to know to update, which viewTransformChanged handles.
+        # Or, if only centered, still emit.
+        if not view_reset_called:
+            self.viewTransformChanged.emit()
+
         logger.debug("Resize event handling complete.")
 
+
+    def set_scale_bar_visibility(self, visible: bool) -> None:
+        """Shows or hides the scale bar widget and updates its position if showing."""
+        if hasattr(self, '_scale_bar_widget') and self._scale_bar_widget:
+            if visible and (not self._pixmap_item or not self.sceneRect().isValid()):
+                logger.debug("Request to show scale bar, but no valid pixmap. Keeping hidden.")
+                self._scale_bar_widget.setVisible(False)
+                return
+
+            if self._scale_bar_widget.isVisible() != visible:
+                self._scale_bar_widget.setVisible(visible)
+                logger.debug(f"Scale bar visibility set to: {visible}")
+                if visible:
+                    self._update_overlay_widget_positions() # Ensure it's positioned correctly
+            elif visible: # Already visible, ensure position is updated (e.g. after initial video load)
+                 self._update_overlay_widget_positions()
+
+
+    def update_scale_bar_dimensions(self, m_per_px_scene: Optional[float]) -> None:
+        """
+        Updates the scale bar with the current scene-to-meter scale and view parameters.
+        Called by MainWindow when the main scale (m/px) is set/changed or view transform changes.
+        """
+        if hasattr(self, '_scale_bar_widget') and self._scale_bar_widget:
+            if not self._pixmap_item or not self.sceneRect().isValid(): # Cannot update if no image context
+                self._scale_bar_widget.setVisible(False) # Ensure it's hidden
+                return
+
+            current_view_scale_factor = self.transform().m11() # Get current view zoom
+            parent_view_width = self.viewport().width()
+
+            self._scale_bar_widget.update_dimensions(
+                m_per_px_scene,
+                current_view_scale_factor,
+                parent_view_width
+            )
+            # After updating dimensions, it might change its own size, so re-evaluate position
+            if self._scale_bar_widget.isVisible():
+                 self._update_overlay_widget_positions()
+
+    def get_current_view_scale_factor(self) -> float:
+        """Returns the current horizontal scale factor of the view's transform."""
+        return self.transform().m11()
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         """

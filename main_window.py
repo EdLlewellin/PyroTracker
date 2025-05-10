@@ -68,6 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
     scale_px_per_m_input: Optional[QtWidgets.QLineEdit] = None
     scale_reset_button: Optional[QtWidgets.QPushButton] = None
     scale_display_meters_checkbox: Optional[QtWidgets.QCheckBox] = None
+    showScaleBarCheckBox: Optional[QtWidgets.QCheckBox] = None
     cursorPosLabelTL_m: Optional[QtWidgets.QLabel] = None
     cursorPosLabelBL_m: Optional[QtWidgets.QLabel] = None
     cursorPosLabelCustom_m: Optional[QtWidgets.QLabel] = None
@@ -268,6 +269,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setOriginButton.clicked.connect(self._enter_set_origin_mode)
         if hasattr(self, 'showOriginCheckBox'):
             self.showOriginCheckBox.stateChanged.connect(self._toggle_show_origin)
+        if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox:
+            self.showScaleBarCheckBox.toggled.connect(self._on_show_scale_bar_toggled)
+        if hasattr(self, 'imageView') and self.imageView:
+            self.imageView.viewTransformChanged.connect(self._on_view_transform_changed)
         if hasattr(self, 'videoInfoAction'):
             self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
         if hasattr(self, 'preferencesAction'):
@@ -391,7 +396,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Update coordinate UI (radio buttons, origin labels) to reflect reset state
         self._update_coordinate_ui_display()
         # Update general UI enabled/disabled states
-        self.scale_manager.reset() # Reset scale manager
+        self.scale_manager.reset()
+        if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox:
+            self.showScaleBarCheckBox.setChecked(False)
+            self.showScaleBarCheckBox.setEnabled(False)
+            if hasattr(self, 'imageView'):
+                self.imageView.set_scale_bar_visibility(False)
         self._update_ui_state()
 
 
@@ -437,21 +447,46 @@ class MainWindow(QtWidgets.QMainWindow):
         if scale_panel_widgets_exist:
             self.scale_m_per_px_input.setEnabled(is_video_loaded)
             self.scale_px_per_m_input.setEnabled(is_video_loaded)
-            # The enabled state of scale_reset_button and scale_display_meters_checkbox
-            # depends on both video_loaded AND whether a scale is currently set.
-            # _update_scale_ui_from_manager handles this when scale_manager's state changes.
-            # If video is loaded, we ensure _update_scale_ui_from_manager is called
-            # to set their states correctly. If not loaded, they are simply disabled here.
+
+            scale_is_set_internally = self.scale_manager.get_scale_m_per_px() is not None
+
             if is_video_loaded:
-                # This will correctly set the reset button and checkbox states
-                # based on whether a scale is defined in scale_manager.
-                self._update_scale_ui_from_manager()
-            else:
+                # This will correctly set the reset button and "Display in meters" checkbox states
+                self._update_scale_ui_from_manager() # Handles scale_display_meters_checkbox
+
+                # --- Manage "Show Scale Bar" Checkbox ---
+                if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox:
+                    self.showScaleBarCheckBox.setEnabled(scale_is_set_internally)
+                    if scale_is_set_internally:
+                        # Default to checked if scale is set, unless user has manually unchecked it this session
+                        # For now, we'll just ensure it's checked if scale is set and it's enabled.
+                        # The actual visibility is controlled by _on_show_scale_bar_toggled based on checkbox state.
+                        # If checkbox was already interactively changed, its state should be preserved by Qt.
+                        # If loading a video makes scale_is_set_internally true, we want to default to checked.
+                        # A more robust way might involve storing a flag if user explicitly unchecked it.
+                        # For now: If scale is set, default checkbox to checked.
+                        self.showScaleBarCheckBox.setChecked(True)
+                        if hasattr(self, 'imageView'): # Ensure imageView exists
+                            self.imageView.set_scale_bar_visibility(True) # Show it by default
+                            self.imageView.update_scale_bar_dimensions(self.scale_manager.get_scale_m_per_px())
+                    else:
+                        self.showScaleBarCheckBox.setChecked(False)
+                        if hasattr(self, 'imageView'): # Ensure imageView exists
+                             self.imageView.set_scale_bar_visibility(False)
+                # --- END Manage "Show Scale Bar" Checkbox ---
+
+            else: # Not video_loaded
                 # Explicitly disable if no video loaded
                 if hasattr(self, 'scale_reset_button'): self.scale_reset_button.setEnabled(False)
                 if hasattr(self, 'scale_display_meters_checkbox'):
                     self.scale_display_meters_checkbox.setEnabled(False)
-                    self.scale_display_meters_checkbox.setChecked(False) # Also ensure it's unchecked
+                    self.scale_display_meters_checkbox.setChecked(False)
+                if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox: # Also for scale bar
+                    self.showScaleBarCheckBox.setEnabled(False)
+                    self.showScaleBarCheckBox.setChecked(False)
+                    if hasattr(self, 'imageView'): # Ensure imageView exists
+                        self.imageView.set_scale_bar_visibility(False)
+
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
         """Updates UI elements displaying current frame number and time."""
@@ -636,41 +671,103 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _update_scale_ui_from_manager(self) -> None:
-        """Updates the scale panel UI elements based on ScaleManager's state."""
-        if not all(hasattr(self, attr) for attr in [
+        """Updates the scale panel UI elements based on ScaleManager's state, including the scale bar."""
+        required_attrs = [
             'scale_m_per_px_input', 'scale_px_per_m_input',
-            'scale_display_meters_checkbox', 'scale_reset_button', 'scale_manager'
-        ]):
+            'scale_display_meters_checkbox', 'scale_reset_button', 'scale_manager',
+            'showScaleBarCheckBox', 'imageView' # Add new dependencies
+        ]
+        if not all(hasattr(self, attr) and getattr(self, attr) is not None for attr in required_attrs):
             logger.debug("_update_scale_ui_from_manager skipped: UI elements or manager not ready.")
             return
 
-        logger.debug("Updating scale UI from ScaleManager state.")
+        logger.debug("Updating scale UI from ScaleManager state (including scale bar).")
         self._block_scale_signals = True
 
-        current_scale_m_px = self.scale_manager.get_scale_m_per_px()
+        current_m_per_px = self.scale_manager.get_scale_m_per_px()
         current_reciprocal_px_m = self.scale_manager.get_reciprocal_scale_px_per_m()
         display_in_meters_state = self.scale_manager.display_in_meters()
+        scale_is_set = current_m_per_px is not None
+        video_is_loaded_flag = self.video_loaded # Use consistent naming
 
-        # Update QLineEdits: Set to empty string if no scale, allowing placeholder to show.
-        self.scale_m_per_px_input.setText(f"{current_scale_m_px:.6g}" if current_scale_m_px is not None else "")
+        # Update QLineEdits
+        self.scale_m_per_px_input.setText(f"{current_m_per_px:.6g}" if current_m_per_px is not None else "")
         self.scale_px_per_m_input.setText(f"{current_reciprocal_px_m:.6g}" if current_reciprocal_px_m is not None else "")
 
-        scale_is_set = current_scale_m_px is not None
-        video_is_loaded = self.video_loaded
-
-        if video_is_loaded:
+        if video_is_loaded_flag:
+            # "Display in meters" checkbox
             self.scale_display_meters_checkbox.setEnabled(scale_is_set)
-            if scale_is_set:
-                self.scale_display_meters_checkbox.setChecked(display_in_meters_state)
-            else:
-                self.scale_display_meters_checkbox.setChecked(False)
+            self.scale_display_meters_checkbox.setChecked(display_in_meters_state if scale_is_set else False)
+
+            # Scale reset button
             self.scale_reset_button.setEnabled(scale_is_set)
-        else:
+
+            # "Show Scale Bar" checkbox
+            self.showScaleBarCheckBox.setEnabled(scale_is_set)
+            if scale_is_set:
+                # If scale becomes set, default checkbox to True (checked)
+                # User can then uncheck it for the session.
+                # The actual visibility is triggered by the checkbox's toggled signal or here directly.
+                self.showScaleBarCheckBox.setChecked(True) # Default to show if scale is set
+                self.imageView.set_scale_bar_visibility(True)
+                self.imageView.update_scale_bar_dimensions(current_m_per_px)
+            else:
+                self.showScaleBarCheckBox.setChecked(False)
+                self.imageView.set_scale_bar_visibility(False)
+        else: # No video loaded
             self.scale_display_meters_checkbox.setEnabled(False)
             self.scale_display_meters_checkbox.setChecked(False)
             self.scale_reset_button.setEnabled(False)
+            self.showScaleBarCheckBox.setEnabled(False)
+            self.showScaleBarCheckBox.setChecked(False)
+            self.imageView.set_scale_bar_visibility(False)
 
         self._block_scale_signals = False
+        logger.debug(f"Scale UI update complete. Scale bar visible: {self.imageView._scale_bar_widget.isVisible() if hasattr(self.imageView, '_scale_bar_widget') else 'N/A'}")
+
+    # --- Scale Bar Control Slots ---
+
+    @QtCore.Slot(bool)
+    def _on_show_scale_bar_toggled(self, checked: bool) -> None:
+        """Handles the 'Show Scale Bar' checkbox toggle."""
+        if not all(hasattr(self, attr) for attr in ['imageView', 'scale_manager', 'showScaleBarCheckBox']):
+            logger.warning("_on_show_scale_bar_toggled skipped: Components not ready.")
+            return
+
+        logger.debug(f"'Show Scale Bar' checkbox toggled to: {checked}")
+        scale_is_set = self.scale_manager.get_scale_m_per_px() is not None
+
+        if self.showScaleBarCheckBox.isEnabled() and scale_is_set: # Checkbox must be enabled and scale set
+            self.imageView.set_scale_bar_visibility(checked)
+            if checked:
+                # Ensure its dimensions are updated if it's being made visible
+                self.imageView.update_scale_bar_dimensions(self.scale_manager.get_scale_m_per_px())
+        elif not scale_is_set: # If scale is not set, ensure bar is hidden
+            self.imageView.set_scale_bar_visibility(False)
+            self.showScaleBarCheckBox.setChecked(False) # Ensure checkbox reflects this
+            self.showScaleBarCheckBox.setEnabled(False)
+
+
+    @QtCore.Slot()
+    def _on_view_transform_changed(self) -> None:
+        """
+        Handles the viewTransformChanged signal from InteractiveImageView.
+        Updates the scale bar dimensions if it's visible and a scale is set.
+        """
+        if not all(hasattr(self, attr) for attr in ['imageView', 'scale_manager', 'showScaleBarCheckBox']):
+            logger.debug("_on_view_transform_changed skipped: Components not ready.")
+            return
+
+        scale_is_set = self.scale_manager.get_scale_m_per_px() is not None
+        scale_bar_should_be_visible = self.showScaleBarCheckBox.isChecked()
+
+        if self.video_loaded and scale_is_set and scale_bar_should_be_visible:
+            logger.debug("View transform changed, updating scale bar dimensions.")
+            self.imageView.update_scale_bar_dimensions(self.scale_manager.get_scale_m_per_px())
+        elif self.imageView._scale_bar_widget.isVisible() and (not scale_is_set or not scale_bar_should_be_visible):
+            # If scale bar is currently visible but shouldn't be (e.g. scale removed or checkbox unchecked)
+            logger.debug("View transform changed, but scale bar should be hidden. Hiding.")
+            self.imageView.set_scale_bar_visibility(False)
 
     @QtCore.Slot()
     def _trigger_save_tracks(self) -> None:
@@ -833,6 +930,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_ui_for_frame(frame_index)
         # Redraw track overlays for the new frame
         self._redraw_scene_overlay()
+        if hasattr(self, 'imageView') and hasattr(self, 'scale_manager') and \
+           hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox.isChecked():
+            current_m_per_px = self.scale_manager.get_scale_m_per_px()
+            if current_m_per_px is not None:
+                self.imageView.update_scale_bar_dimensions(current_m_per_px)
+
 
     @QtCore.Slot(bool)
     def _handle_playback_state_changed(self, is_playing: bool) -> None:
