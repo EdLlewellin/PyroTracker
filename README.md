@@ -146,14 +146,16 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * `config.py`: Shared constants (CSV format, metadata keys, table indices, default styles, app info).
 * `coordinates.py`: `CoordinateSystem` enum and `CoordinateTransformer` class for coordinate management.
 * `scale_manager.py`: `ScaleManager` class; manages pixel-to-meter scale factor and display units.
-* **`scale_bar_widget.py`**: `ScaleBarWidget` class; custom widget for drawing the dynamic on-screen scale bar.**
+* `scale_bar_widget.py`: `ScaleBarWidget` class; custom widget for drawing the dynamic on-screen scale bar.
 * `settings_manager.py`: Manages persistent application settings (visuals) using QSettings.
-* `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus.
-* `main_window.py`: `MainWindow` class; orchestrates UI, components, signals/slots, drawing.
+* `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus for the `MainWindow`.
+* `main_window.py`: `MainWindow` class; orchestrates core components (VideoHandler, TrackManager, etc.), main application signals/slots, menu actions, and drawing of scene overlays. Initializes UI controllers.
 * `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display, mouse interaction, and hosting overlay widgets (including the scale bar).
 * `video_handler.py`: `VideoHandler` class; manages video loading (OpenCV), playback (QTimer), navigation, frame extraction.
 * `track_manager.py`: `TrackManager` class; stores and manages multi-track point data and visibility settings.
 * `file_io.py`: Functions for CSV track data reading/writing, including metadata and coordinate transformations.
+* `panel_controllers.py`: Contains controller classes (`ScalePanelController`, `CoordinatePanelController`) that manage UI logic, interactions, and updates for specific QGroupBox panels (Scale Configuration, Coordinate System) within the `MainWindow`.**
+* `table_controllers.py`: Contains `TrackDataViewController` class that manages UI logic, interactions, and updates for the Tracks and Points data tables within the `MainWindow`.**
 * `preferences_dialog.py`: `PreferencesDialog` class for editing visual settings stored by `settings_manager`.
 * `metadata_dialog.py`: `MetadataDialog` class for displaying video metadata retrieved by `video_handler`.
 * `PyroTracker.ico`: Application icon file (used for builds).
@@ -166,7 +168,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * Add basic data analysis capabilities (e.g., velocity calculation, track plotting).
 * Enhance logging configuration (e.g., allow user to set level, log to file).
 * Replace standard text/pixmap overlay buttons with custom SVG icons for a cleaner look.
-* Consider adding unit tests for core logic (e.g., `TrackManager`, `VideoHandler`, `CoordinateTransformer`, `ScaleManager`, `ScaleBarWidget`).
+* Consider adding unit tests for core logic (e.g., `TrackManager`, `VideoHandler`, `CoordinateTransformer`, `ScaleManager`, `ScaleBarWidget`, UI controllers).
 * Improve error handling for invalid video files or corrupted CSVs.
 * Add undo/redo functionality for point marking/deletion.
 * Allow customization of scale bar appearance (colors, font) via Preferences.

@@ -604,9 +604,12 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         if loaded_mode_enum == CoordinateSystem.CUSTOM:
              coord_transformer.set_custom_origin(loaded_origin_tl[0], loaded_origin_tl[1])
         # Update UI display (radio buttons, label, etc.) via MainWindow method
-        if hasattr(main_window, '_update_coordinate_ui_display'):
-             main_window._update_coordinate_ui_display()
-        logger.info("Coordinate system state updated to match loaded file.")
+        # Update UI display via CoordinatePanelController
+        if main_window.coord_panel_controller:
+            logger.debug("Calling CoordinatePanelController.update_ui_display() after loading tracks.")
+            main_window.coord_panel_controller.update_ui_display()
+        else:
+            logger.error("CoordinatePanelController not found on MainWindow during track load UI update.")
 
         # Explicitly trigger redraw AFTER transformer and UI display are updated.
         if hasattr(main_window, '_redraw_scene_overlay'):

@@ -19,6 +19,7 @@ import settings_manager
 from preferences_dialog import PreferencesDialog
 from scale_manager import ScaleManager
 from panel_controllers import ScalePanelController, CoordinatePanelController
+from table_controllers import TrackDataViewController
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -154,19 +155,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scale_manager = ScaleManager(self)
     
         self.scale_panel_controller: Optional[ScalePanelController] = None
-        self.coord_panel_controller: Optional[CoordinatePanelController] = None # New controller
+        self.coord_panel_controller: Optional[CoordinatePanelController] = None
+        self.table_data_controller: Optional[TrackDataViewController] = None # New controller
     
-        self.track_visibility_button_groups = {}
         self._setup_pens()
     
         screen_geometry = QtGui.QGuiApplication.primaryScreen().availableGeometry()
         self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
     
-        ui_setup.setup_main_window_ui(self)
+        ui_setup.setup_main_window_ui(self) # This creates self.tracksTableWidget, self.pointsTableWidget etc.
     
         # Instantiate Panel Controllers
-        if hasattr(self, 'scale_m_per_px_input'):
+        if hasattr(self, 'scale_m_per_px_input'): # Check if UI elements are ready
             self.scale_panel_controller = ScalePanelController(
                 scale_manager=self.scale_manager,
                 image_view=self.imageView,
@@ -178,45 +179,47 @@ class MainWindow(QtWidgets.QMainWindow):
                 parent=self
             )
             logger.debug("ScalePanelController initialized.")
-        else:
-            logger.error("Scale panel UI elements not found for ScalePanelController.")
-            self.scale_panel_controller = None
     
-        # Instantiate CoordinatePanelController
         if all(hasattr(self, attr) for attr in [
             'coordSystemGroup', 'coordTopLeftRadio', 'coordBottomLeftRadio', 'coordCustomRadio',
             'coordTopLeftOriginLabel', 'coordBottomLeftOriginLabel', 'coordCustomOriginLabel',
             'setOriginButton', 'showOriginCheckBox', 'cursorPosLabelTL', 'cursorPosLabelBL',
             'cursorPosLabelCustom', 'cursorPosLabelTL_m', 'cursorPosLabelBL_m', 'cursorPosLabelCustom_m',
-            'imageView', 'scale_manager' # Ensure scale_manager is available
+            'imageView', 'scale_manager'
         ]):
-            cursor_labels_px = {
-                "TL": self.cursorPosLabelTL, "BL": self.cursorPosLabelBL, "Custom": self.cursorPosLabelCustom
-            }
-            cursor_labels_m = {
-                "TL": self.cursorPosLabelTL_m, "BL": self.cursorPosLabelBL_m, "Custom": self.cursorPosLabelCustom_m
-            }
+            cursor_labels_px = { "TL": self.cursorPosLabelTL, "BL": self.cursorPosLabelBL, "Custom": self.cursorPosLabelCustom }
+            cursor_labels_m = { "TL": self.cursorPosLabelTL_m, "BL": self.cursorPosLabelBL_m, "Custom": self.cursorPosLabelCustom_m }
             self.coord_panel_controller = CoordinatePanelController(
-                coord_transformer=self.coord_transformer,
-                image_view=self.imageView,
-                scale_manager=self.scale_manager,
-                coord_system_group=self.coordSystemGroup,
-                coord_top_left_radio=self.coordTopLeftRadio,
-                coord_bottom_left_radio=self.coordBottomLeftRadio,
-                coord_custom_radio=self.coordCustomRadio,
-                coord_top_left_origin_label=self.coordTopLeftOriginLabel,
-                coord_bottom_left_origin_label=self.coordBottomLeftOriginLabel,
-                coord_custom_origin_label=self.coordCustomOriginLabel,
-                set_origin_button=self.setOriginButton,
-                show_origin_checkbox=self.showOriginCheckBox,
-                cursor_pos_labels_px=cursor_labels_px,
-                cursor_pos_labels_m=cursor_labels_m,
-                parent=self
+                coord_transformer=self.coord_transformer, image_view=self.imageView,
+                scale_manager=self.scale_manager, coord_system_group=self.coordSystemGroup,
+                coord_top_left_radio=self.coordTopLeftRadio, coord_bottom_left_radio=self.coordBottomLeftRadio,
+                coord_custom_radio=self.coordCustomRadio, coord_top_left_origin_label=self.coordTopLeftOriginLabel,
+                coord_bottom_left_origin_label=self.coordBottomLeftOriginLabel, coord_custom_origin_label=self.coordCustomOriginLabel,
+                set_origin_button=self.setOriginButton, show_origin_checkbox=self.showOriginCheckBox,
+                cursor_pos_labels_px=cursor_labels_px, cursor_pos_labels_m=cursor_labels_m, parent=self
             )
             logger.debug("CoordinatePanelController initialized.")
+    
+        # Instantiate TableDataViewController
+        if all(hasattr(self, attr) for attr in [
+            'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'track_manager', 
+            'video_handler', 'scale_manager', 'coord_transformer'
+        ]):
+            self.table_data_controller = TrackDataViewController(
+                main_window_ref=self,
+                track_manager=self.track_manager,
+                video_handler=self.video_handler,
+                scale_manager=self.scale_manager,
+                coord_transformer=self.coord_transformer,
+                tracks_table_widget=self.tracksTableWidget,
+                points_table_widget=self.pointsTableWidget,
+                points_tab_label=self.pointsTabLabel,
+                parent=self
+            )
+            logger.debug("TrackDataViewController initialized.")
         else:
-            logger.error("Coordinate panel UI elements not found for CoordinatePanelController.")
-            self.coord_panel_controller = None
+            logger.error("Table UI elements or core components not found for TrackDataViewController.")
+            self.table_data_controller = None
     
     
         self.statusBar = self.statusBar()
@@ -233,41 +236,55 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
             self.imageView.modifiedClick.connect(self._handle_modified_click)
-            if self.coord_panel_controller: # Connect to CoordinatePanelController
+            if self.coord_panel_controller:
                 self.imageView.originSetRequest.connect(self.coord_panel_controller._on_set_custom_origin)
                 self.imageView.sceneMouseMoved.connect(self.coord_panel_controller._on_handle_mouse_moved)
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
     
-        self.track_manager.trackListChanged.connect(self._update_tracks_table)
-        self.track_manager.activeTrackDataChanged.connect(self._update_points_table)
-        self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
+        # TrackManager signals -> TrackDataViewController and MainWindow
+        if self.table_data_controller:
+            self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
+            self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
+        self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay) # MainWindow still handles redraw
     
+        # ScaleManager signals
         if self.scale_panel_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
-        self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table) # Keep for MainWindow's point table
-        if self.coord_panel_controller: # Connect scale change to coord controller for cursor labels
+        if self.table_data_controller: # Points table in new controller needs this
+            self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
+        if self.coord_panel_controller:
              self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
-        else: # Fallback if coord_panel_controller is not yet ready (should not happen with correct init order)
-             self.scale_manager.scaleOrUnitChanged.connect(self._trigger_cursor_label_update)
     
-    
-        # Connections for CoordinatePanelController's outgoing signals
+        # CoordinatePanelController outgoing signals
         if self.coord_panel_controller:
             self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
-            self.coord_panel_controller.pointsTableNeedsUpdate.connect(self._update_points_table)
+            if self.table_data_controller: # Points table needs update on coord change
+                 self.coord_panel_controller.pointsTableNeedsUpdate.connect(self.table_data_controller.update_points_table_ui)
             self.coord_panel_controller.statusBarMessage.connect(self.statusBar.showMessage)
     
-        # UI Element Signals (excluding those handled by panel controllers)
-        if hasattr(self, 'tracksTableWidget'):
-            self.tracksTableWidget.itemSelectionChanged.connect(self._track_selection_changed)
-            self.tracksTableWidget.cellClicked.connect(self._on_tracks_table_cell_clicked)
-        if hasattr(self, 'pointsTableWidget'):
-            self.pointsTableWidget.cellClicked.connect(self._on_points_table_cell_clicked)
+        # TrackDataViewController outgoing signals and necessary incoming connections
+        if self.table_data_controller:
+            self.table_data_controller.seekVideoToFrame.connect(self.video_handler.seek_frame)
+            self.table_data_controller.updateMainWindowUIState.connect(self._update_ui_state)
+            if hasattr(self, 'statusBar'): # Check if statusBar exists
+                self.table_data_controller.statusBarMessage.connect(self.statusBar.showMessage)
+            if hasattr(self.tracksTableWidget, 'horizontalHeader') and \
+               hasattr(self.tracksTableWidget.horizontalHeader(), 'sectionClicked'):
+                 self.tracksTableWidget.horizontalHeader().sectionClicked.connect(
+                     self.table_data_controller.handle_visibility_header_clicked
+                 )
+            else:
+                logger.error("Could not connect tracksTableWidget header click: header or signal missing.")
+    
+    
+        # UI Element Signals (excluding those handled by panel/table controllers)
+        # TracksTableWidget and PointsTableWidget connections are now in TrackDataViewController
         if hasattr(self, 'frameSlider'):
             self.frameSlider.valueChanged.connect(self._slider_value_changed)
         if hasattr(self, 'playPauseButton'):
             self.playPauseButton.clicked.connect(self._toggle_playback)
+        # ... (other existing MainWindow connections for non-table, non-panel widgets)
         if hasattr(self, 'prevFrameButton'):
             self.prevFrameButton.clicked.connect(self._show_previous_frame)
         if hasattr(self, 'nextFrameButton'):
@@ -276,9 +293,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled)
         if hasattr(self, 'autoAdvanceSpinBox'):
             self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed)
-    
-        # Connections for coordSystemGroup, setOriginButton, showOriginCheckBox are now in CoordinatePanelController
-    
         if hasattr(self, 'videoInfoAction'):
             self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
         if hasattr(self, 'preferencesAction'):
@@ -286,14 +300,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'newTrackAction'):
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-            self.newTrackAction.triggered.connect(self._create_new_track)
+            self.newTrackAction.triggered.connect(self._create_new_track) # This remains in MainWindow
     
+        # Initial UI updates
         self._update_ui_state()
-        self._update_tracks_table()
-        self._update_points_table()
-        if self.coord_panel_controller: # Initial UI update for coord panel
+        if self.table_data_controller: # Initial table updates
+            self.table_data_controller.update_tracks_table_ui()
+            self.table_data_controller.update_points_table_ui()
+        if self.coord_panel_controller:
             self.coord_panel_controller.update_ui_display()
-        if self.scale_panel_controller: # Initial UI update for scale panel
+        if self.scale_panel_controller:
             self.scale_panel_controller.update_ui_from_manager()
     
         logger.info("MainWindow initialization complete.")
@@ -369,12 +385,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageView.setPixmap(QtGui.QPixmap())
             self.imageView.resetInitialLoadFlag()
             self.imageView.set_scale_bar_visibility(False)
-            self.imageView.set_interaction_mode(InteractionMode.NORMAL) # Ensure normal mode
+            self.imageView.set_interaction_mode(InteractionMode.NORMAL)
     
-        if hasattr(self, 'coord_transformer'): # Re-create for a clean state
+        if hasattr(self, 'coord_transformer'):
             self.coord_transformer = CoordinateTransformer() 
-            if self.coord_panel_controller: # Pass new transformer to existing controller if it exists
-                self.coord_panel_controller._coord_transformer = self.coord_transformer
+            if self.coord_panel_controller:
+                self.coord_panel_controller._coord_transformer = self.coord_transformer # Update controller's ref
     
         self.scale_manager.reset()
     
@@ -382,7 +398,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.scale_panel_controller.set_video_loaded_status(False)
         if self.coord_panel_controller:
             self.coord_panel_controller.set_video_loaded_status(False)
-            # The controller's update_ui_display will handle its widget states
+        if self.table_data_controller: # <-- ADD THIS
+            self.table_data_controller.set_video_loaded_status(False)
     
         self._update_ui_state()
 
@@ -405,6 +422,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.playPauseButton.setToolTip("Stop Video (Space)" if self.is_playing else "Play Video (Space)")
     
         if hasattr(self, 'loadTracksAction'): self.loadTracksAction.setEnabled(is_video_loaded)
+        # This part remains, as it depends directly on track_manager's state
         can_save: bool = is_video_loaded and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
         if hasattr(self, 'saveTracksAction'): self.saveTracksAction.setEnabled(can_save)
         if hasattr(self, 'videoInfoAction'): self.videoInfoAction.setEnabled(is_video_loaded)
@@ -414,7 +432,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
         if self.coord_panel_controller:
             self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
-            # The controller's update_ui_display method will handle its specific widget states.
+        if self.table_data_controller: # <-- ADD THIS
+            self.table_data_controller.set_video_loaded_status(is_video_loaded, self.total_frames if is_video_loaded else 0)
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
         """Updates UI elements displaying current frame number and time."""
@@ -475,8 +494,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'video_handler'):
             self.video_handler.release_video()
 
-        # Clear internal UI state related to tracks
-        self._clear_visibility_button_groups()
+        # The TrackDataViewController now manages its own button groups.
+        # They are cleared and recreated during table updates.
+        # Explicit cleanup here is no longer needed for this specific dictionary.
+        # If table_data_controller had other resources needing explicit release,
+        # we might call a cleanup method on it here.
+        # For example:
+        # if hasattr(self, 'table_data_controller') and self.table_data_controller:
+        #     self.table_data_controller.cleanup_resources() # If such a method existed
 
         # Reset MainWindow's video state variables
         self.video_loaded = False
@@ -496,10 +521,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track_manager.reset()
             logger.debug("TrackManager reset complete.")
 
-        self.scale_manager.reset()
+        if hasattr(self, 'scale_manager'): # Ensure scale_manager exists
+            self.scale_manager.reset()
         
         # Reset UI elements to initial state (clears image, labels, tables etc.)
-        self._reset_ui_after_video_close()
+        self._reset_ui_after_video_close() # This will inform controllers to update their UI
         logger.info("Video release and associated reset complete.")
 
     @QtCore.Slot()
@@ -598,11 +624,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_height = video_info.get('height', 0)
         self.is_playing = False
     
-        if hasattr(self, 'coord_transformer'): # Ensure transformer exists before setting height
+        if hasattr(self, 'coord_transformer'): 
             self.coord_transformer.set_video_height(self.frame_height)
-            if self.coord_panel_controller: # Also update controller if it exists
+            if self.coord_panel_controller: 
                 self.coord_panel_controller.set_video_height(self.frame_height)
-    
     
         filename = video_info.get('filename', 'N/A')
         filepath = video_info.get('filepath', '')
@@ -625,18 +650,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.scale_panel_controller.set_video_loaded_status(True)
         if self.coord_panel_controller:
             self.coord_panel_controller.set_video_loaded_status(True)
-            # The controller's update_ui_display will be called by set_video_loaded_status
-            # or can be called explicitly here if needed for immediate refresh based on new video height.
             self.coord_panel_controller.update_ui_display()
+        if self.table_data_controller: # <-- ADD THIS
+            self.table_data_controller.set_video_loaded_status(True, self.total_frames)
     
     
-        self._update_ui_state() # General UI state update
+        self._update_ui_state() 
     
         status_msg = (f"Loaded '{filename}' ({self.total_frames} frames, "
                       f"{self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
         if hasattr(self, 'statusBar'): self.statusBar.showMessage(status_msg, 5000)
         logger.info(f"Video loaded successfully handled: {status_msg}")
-
 
     @QtCore.Slot(str)
     def _handle_video_load_failed(self, error_msg: str) -> None:
@@ -742,44 +766,36 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.video_loaded or not hasattr(self, 'track_manager') or not hasattr(self, 'video_handler'):
             if hasattr(self, 'statusBar'): self.statusBar.showMessage("Cannot interact: Video/components not ready.", 3000)
             return
-
+    
         logger.debug(f"ImageView modified click at ({x:.2f}, {y:.2f}) with modifiers: {modifiers}")
-
-        # Find the specific track point clicked on (if any)
         result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
-
         if result is None:
             if hasattr(self, 'statusBar'): self.statusBar.showMessage("No track marker found near click.", 3000)
             return
-
+    
         found_track_index, point_data = result
         found_track_id = found_track_index + 1
-        clicked_frame_index = point_data[0] # Frame index of the clicked marker
-
-        # --- Ctrl+Click Logic: Select Track ---
+        clicked_frame_index = point_data[0]
+    
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
             logger.info(f"Ctrl+Click: Selecting Track {found_track_id}")
             if self.track_manager.active_track_index != found_track_index:
                 self.track_manager.set_active_track(found_track_index)
-            # Update table selection (deferred)
-            QtCore.QTimer.singleShot(0, lambda: self._select_track_row_by_id(found_track_id))
+            if self.table_data_controller: # <-- MODIFIED
+                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(found_track_id))
             if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Selected Track {found_track_id}.", 3000)
-
-        # --- Shift+Click Logic: Select Track and Jump to Frame ---
+    
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
             logger.info(f"Shift+Click: Selecting Track {found_track_id}, jumping to Frame {clicked_frame_index + 1}")
             if self.track_manager.active_track_index != found_track_index:
                 self.track_manager.set_active_track(found_track_index)
-            # Update table selection (deferred)
-            QtCore.QTimer.singleShot(0, lambda: self._select_track_row_by_id(found_track_id))
-            # Seek to the frame of the clicked marker
+            if self.table_data_controller: # <-- MODIFIED
+                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(found_track_id))
             if self.current_frame_index != clicked_frame_index:
                 self.video_handler.seek_frame(clicked_frame_index)
             if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Selected Track {found_track_id}, jumped to Frame {clicked_frame_index + 1}.", 3000)
-
         else:
             logger.debug(f"Ignoring modified click with unhandled modifier combination: {modifiers}")
-
 
     # --- Auto-Advance UI Slots ---
 
@@ -806,347 +822,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         logger.info("Create new track requested.")
         if not hasattr(self, 'track_manager'): return
-
+    
         new_track_id: int = self.track_manager.create_new_track()
         if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Created Track {new_track_id}. It is now active.", 3000)
-        # Select the new row in the tracks table (deferred for reliability)
-        QtCore.QTimer.singleShot(0, lambda: self._select_track_row_by_id(new_track_id))
-        # Switch focus to the tracks tab
+        if self.table_data_controller: # <-- MODIFIED
+            QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(new_track_id))
         if hasattr(self, 'dataTabsWidget'): self.dataTabsWidget.setCurrentIndex(0)
-        self._update_ui_state() # Update save action enabled state
-
-    @QtCore.Slot()
-    def _track_selection_changed(self) -> None:
-        """Handles selection changes initiated *by the user* in the tracks table."""
-        if not hasattr(self, 'tracksTableWidget') or not hasattr(self, 'track_manager'): return
-
-        selected_items = self.tracksTableWidget.selectedItems()
-        if not selected_items:
-            # Potentially deactivate track if selection is cleared by user interaction
-            # self.track_manager.set_active_track(-1)
-            return
-
-        selected_row = self.tracksTableWidget.row(selected_items[0])
-        id_item = self.tracksTableWidget.item(selected_row, config.COL_TRACK_ID)
-        if id_item:
-            track_id = id_item.data(QtCore.Qt.ItemDataRole.UserRole)
-            if track_id is not None and isinstance(track_id, int):
-                track_index = track_id - 1
-                # Set the active track in the manager *only if it changed*
-                if self.track_manager.active_track_index != track_index:
-                    logger.debug(f"Tracks table selection changed by user to row {selected_row}, track ID {track_id}.")
-                    self.track_manager.set_active_track(track_index)
-                    # TrackManager signals will update points table and visuals
-
-    @QtCore.Slot(int, int)
-    def _on_tracks_table_cell_clicked(self, row: int, column: int) -> None:
-        """Handles clicks on specific cells in the tracks table (e.g., frame links)."""
-        if not self.video_loaded or not hasattr(self, 'tracksTableWidget') or not hasattr(self, 'track_manager'): return
-
-        # Check if Start or End Frame column was clicked
-        if column == config.COL_TRACK_START_FRAME or column == config.COL_TRACK_END_FRAME:
-            item = self.tracksTableWidget.item(row, column)
-            id_item = self.tracksTableWidget.item(row, config.COL_TRACK_ID) # Get track ID item
-            if item and id_item:
-                frame_text = item.text()
-                track_id = id_item.data(QtCore.Qt.ItemDataRole.UserRole) # Get stored track ID
-                try:
-                    target_frame_0based = int(frame_text) - 1 # Display is 1-based
-                    # Validate frame index and track ID
-                    if 0 <= target_frame_0based < self.total_frames and isinstance(track_id, int):
-                        track_index = track_id - 1
-                        # Select the track if not already selected
-                        if self.track_manager.active_track_index != track_index:
-                           self.track_manager.set_active_track(track_index)
-                           # Manually update table selection visually without emitting signals
-                           self._select_track_row_by_id(track_id)
-                        # Seek to the target frame
-                        logger.debug(f"Track table frame link clicked: Seeking to frame {target_frame_0based + 1}")
-                        self.video_handler.seek_frame(target_frame_0based)
-                except (ValueError, TypeError):
-                    # Ignore if cell content is not a valid integer (e.g., "N/A")
-                    pass
-
-    @QtCore.Slot(int, int)
-    def _on_points_table_cell_clicked(self, row: int, column: int) -> None:
-        """Handles clicks on specific cells in the points table (e.g., frame links)."""
-        if not self.video_loaded or not hasattr(self, 'pointsTableWidget'): return
-
-        # Check if Frame column was clicked
-        if column == config.COL_POINT_FRAME:
-            item = self.pointsTableWidget.item(row, column)
-            if item:
-                try:
-                    target_frame_0based = int(item.text()) - 1 # Display is 1-based
-                    # Validate frame index
-                    if 0 <= target_frame_0based < self.total_frames:
-                        # Seek to the target frame
-                        logger.debug(f"Points table frame link clicked: Seeking to frame {target_frame_0based + 1}")
-                        self.video_handler.seek_frame(target_frame_0based)
-                        # Reselect the row to give visual feedback (no signal loop expected here)
-                        self.pointsTableWidget.selectRow(row)
-                except ValueError:
-                    # Ignore if cell content is not a valid integer
-                    pass
-
-
-    # --- TrackManager Signal Handler Slots ---
-
-    @QtCore.Slot()
-    def _update_tracks_table(self) -> None:
-        """
-        Updates the tracks table based on data from TrackManager.
-        Includes data rows and a final row with a 'New Track' button.
-        """
-        if not hasattr(self, 'tracksTableWidget') or not hasattr(self, 'track_manager'): return
-        logger.debug("Updating tracks table...")
-
-        current_active_id = self.track_manager.get_active_track_id()
-        selected_row_to_restore = -1
-
-        self.tracksTableWidget.blockSignals(True) # Prevent selection signals during update
-        self._clear_visibility_button_groups() # Disconnect old button groups
-
-        track_summary = self.track_manager.get_track_summary()
-        num_data_rows = len(track_summary)
-        total_rows = num_data_rows + 1 # Add 1 for the button row
-        self.tracksTableWidget.setRowCount(total_rows)
-
-        link_color = QtGui.QColor("blue")
-        link_tooltip = "Click to jump to this frame"
-        style = self.style() # For standard icons
-
-        # --- Populate Data Rows ---
-        for row in range(num_data_rows):
-            self.tracksTableWidget.setSpan(row, 0, 1, 1) # Ensure first col span is reset
-            summary_data = track_summary[row]
-            track_id, num_points, start_frame, end_frame = summary_data
-            track_index = track_id - 1
-
-            # Col 0: Delete Button
-            delete_button = QtWidgets.QPushButton(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_TrashIcon), "")
-            delete_button.setToolTip(f"Delete Track {track_id}"); delete_button.setFlat(True); delete_button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-            delete_button.setProperty("track_index", track_index) # Store index for lambda
-            delete_button.clicked.connect(lambda checked=False, t_idx=track_index: self._on_delete_track_button_clicked(t_idx))
-            self.tracksTableWidget.setCellWidget(row, config.COL_DELETE, self._create_centered_cell_widget(delete_button))
-
-            # Col 1: Track ID
-            id_item = QtWidgets.QTableWidgetItem(str(track_id))
-            id_item.setData(QtCore.Qt.ItemDataRole.UserRole, track_id) # Store ID for retrieval
-            id_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            id_item.setFlags(id_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.tracksTableWidget.setItem(row, config.COL_TRACK_ID, id_item)
-
-            # Col 2: Points Count
-            points_item = QtWidgets.QTableWidgetItem(str(num_points))
-            points_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            points_item.setFlags(points_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.tracksTableWidget.setItem(row, config.COL_TRACK_POINTS, points_item)
-
-            # Col 3: Start Frame (1-based)
-            start_frame_str = str(start_frame + 1) if start_frame != -1 else "N/A"
-            start_item = QtWidgets.QTableWidgetItem(start_frame_str)
-            start_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            start_item.setFlags(start_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            if start_frame != -1: start_item.setForeground(link_color); start_item.setToolTip(link_tooltip)
-            self.tracksTableWidget.setItem(row, config.COL_TRACK_START_FRAME, start_item)
-
-            # Col 4: End Frame (1-based)
-            end_frame_str = str(end_frame + 1) if end_frame != -1 else "N/A"
-            end_item = QtWidgets.QTableWidgetItem(end_frame_str)
-            end_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            end_item.setFlags(end_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            if end_frame != -1: end_item.setForeground(link_color); end_item.setToolTip(link_tooltip)
-            self.tracksTableWidget.setItem(row, config.COL_TRACK_END_FRAME, end_item)
-
-            # Col 5, 6, 7: Visibility Radio Buttons
-            current_mode = self.track_manager.get_track_visibility_mode(track_index)
-            rb_hidden = QtWidgets.QRadioButton(); rb_incremental = QtWidgets.QRadioButton(); rb_always = QtWidgets.QRadioButton()
-            rb_hidden.setProperty("visibility_mode", TrackVisibilityMode.HIDDEN); rb_hidden.setProperty("track_index", track_index)
-            rb_incremental.setProperty("visibility_mode", TrackVisibilityMode.INCREMENTAL); rb_incremental.setProperty("track_index", track_index)
-            rb_always.setProperty("visibility_mode", TrackVisibilityMode.ALWAYS_VISIBLE); rb_always.setProperty("track_index", track_index)
-            button_group = QtWidgets.QButtonGroup(self) # Parent to main window
-            button_group.addButton(rb_hidden); button_group.addButton(rb_incremental); button_group.addButton(rb_always)
-            button_group.setExclusive(True)
-            self.track_visibility_button_groups[track_id] = button_group # Store group
-            button_group.blockSignals(True) # Block during programmatic check
-            if current_mode == TrackVisibilityMode.HIDDEN: rb_hidden.setChecked(True)
-            elif current_mode == TrackVisibilityMode.INCREMENTAL: rb_incremental.setChecked(True)
-            else: rb_always.setChecked(True)
-            button_group.blockSignals(False) # Unblock
-            self.tracksTableWidget.setCellWidget(row, config.COL_VIS_HIDDEN, self._create_centered_cell_widget(rb_hidden))
-            self.tracksTableWidget.setCellWidget(row, config.COL_VIS_INCREMENTAL, self._create_centered_cell_widget(rb_incremental))
-            self.tracksTableWidget.setCellWidget(row, config.COL_VIS_ALWAYS, self._create_centered_cell_widget(rb_always))
-            button_group.buttonToggled.connect(self._on_visibility_changed)
-
-            # Check if this row corresponds to the currently active track
-            if track_id == current_active_id:
-                selected_row_to_restore = row
-
-        # --- Add the 'New Track' Button Row ---
-        # Note: A new button instance is created each time the table updates.
-        button_row_index = num_data_rows
-        new_track_button_in_table = QtWidgets.QPushButton("New Track")
-        new_track_button_in_table.setToolTip("Start a new track for marking points (Ctrl+N)")
-        new_track_button_in_table.clicked.connect(self._create_new_track)
-        new_track_button_in_table.setEnabled(self.video_loaded) # Enable based on video state
-        self.tracksTableWidget.setCellWidget(button_row_index, 0, new_track_button_in_table)
-        self.tracksTableWidget.setSpan(button_row_index, 0, 1, config.TOTAL_TRACK_COLUMNS) # Span across all columns
-        self.tracksTableWidget.setRowHeight(button_row_index, new_track_button_in_table.sizeHint().height() + 4) # Adjust height
-
-        # Restore selection if an active track existed
-        if selected_row_to_restore != -1:
-            self.tracksTableWidget.selectRow(selected_row_to_restore)
-
-        self.tracksTableWidget.blockSignals(False) # Re-enable signals
-
-        # Update overall UI state (e.g., save button enablement)
         self._update_ui_state()
-
-    @QtCore.Slot()
-    def _on_delete_track_button_clicked(self, track_index: int) -> None:
-        """Handles the click signal from a track's delete button."""
-        if not hasattr(self, 'track_manager'): return
-        track_id = track_index + 1 # 1-based ID for user message
-        reply = QtWidgets.QMessageBox.question(self, "Confirm Delete", f"Delete Track {track_id}?",
-                                             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
-                                             QtWidgets.QMessageBox.StandardButton.Cancel)
-        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            logger.info(f"User confirmed deletion for track index {track_index} (ID: {track_id}).")
-            success = self.track_manager.delete_track(track_index)
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Deleted Track {track_id}" if success else f"Failed to delete Track {track_id}", 3000)
-            if not success:
-                logger.error(f"TrackManager failed to delete track index {track_index}.")
-                QtWidgets.QMessageBox.warning(self, "Delete Error", f"Could not delete track {track_id}.")
-            # Note: TrackManager signals trigger table updates.
-
-    @QtCore.Slot(QtWidgets.QAbstractButton, bool)
-    def _on_visibility_changed(self, button: QtWidgets.QAbstractButton, checked: bool) -> None:
-        """Handles the buttonToggled signal from visibility radio button groups."""
-        if checked and hasattr(self, 'track_manager'): # Only act when checked
-            mode = button.property("visibility_mode")
-            track_index = button.property("track_index")
-            if isinstance(mode, TrackVisibilityMode) and isinstance(track_index, int):
-                logger.debug(f"Visibility changed for track index {track_index} to {mode.name}")
-                self.track_manager.set_track_visibility_mode(track_index, mode)
-                # Note: TrackManager's visualsNeedUpdate signal triggers redraw.
-
-    @QtCore.Slot(int)
-    def _on_visibility_header_clicked(self, logical_index: int) -> None:
-        """Handles clicks on the visibility column headers to set mode for all tracks."""
-        if not hasattr(self, 'track_manager') or not self.track_manager.tracks: return
-
-        target_mode: Optional[TrackVisibilityMode] = None
-        if logical_index == config.COL_VIS_HIDDEN: target_mode = TrackVisibilityMode.HIDDEN
-        elif logical_index == config.COL_VIS_INCREMENTAL: target_mode = TrackVisibilityMode.INCREMENTAL
-        elif logical_index == config.COL_VIS_ALWAYS: target_mode = TrackVisibilityMode.ALWAYS_VISIBLE
-
-        if target_mode:
-            logger.info(f"Setting all tracks visibility to {target_mode.name} via header click.")
-            self.track_manager.set_all_tracks_visibility(target_mode)
-            # Note: TrackManager signals trigger table/visual updates.
-
-    def _clear_visibility_button_groups(self) -> None:
-        """Disconnects signals and clears the stored visibility button groups."""
-        if not hasattr(self, 'track_visibility_button_groups'): return
-        for group in self.track_visibility_button_groups.values():
-            try: # Disconnect safely
-                group.buttonToggled.disconnect(self._on_visibility_changed)
-            except (TypeError, RuntimeError): pass
-        self.track_visibility_button_groups.clear()
-
-    def _select_track_row_by_id(self, track_id_to_select: int) -> None:
-         """Selects the row in the tracks table corresponding to the given track ID."""
-         if not hasattr(self, 'tracksTableWidget'): return
-         if track_id_to_select == -1: # Handle case where no track is active
-              self.tracksTableWidget.clearSelection()
-              return
-
-         # Find row with matching track ID in UserRole data
-         found_row = -1
-         for row in range(self.tracksTableWidget.rowCount() -1 ): # Exclude button row
-              item = self.tracksTableWidget.item(row, config.COL_TRACK_ID)
-              if item and item.data(QtCore.Qt.ItemDataRole.UserRole) == track_id_to_select:
-                  found_row = row
-                  break
-
-         if found_row != -1:
-             self.tracksTableWidget.blockSignals(True) # Prevent selection signal loop
-             self.tracksTableWidget.selectRow(found_row)
-             self.tracksTableWidget.blockSignals(False)
-             # Ensure the selected row is visible
-             if item: # Ensure item exists before scrolling
-                 self.tracksTableWidget.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.EnsureVisible)
-         else:
-             logger.warning(f"Could not find row for track ID {track_id_to_select} in tracks table.")
-
-
-    def _create_centered_cell_widget(self, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
-        """Helper to create a container widget to center another widget within a table cell."""
-        cell_widget = QtWidgets.QWidget()
-        layout = QtWidgets.QHBoxLayout(cell_widget)
-        layout.addWidget(widget)
-        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.setContentsMargins(0, 0, 0, 0) # No extra margins
-        return cell_widget
-
-    @QtCore.Slot()
-    def _update_points_table(self) -> None:
-        """Updates the points table based on the currently active track."""
-        if not all(hasattr(self, attr) for attr in ['pointsTableWidget', 'track_manager', 'pointsTabLabel', 'coord_transformer', 'scale_manager']): # Added scale_manager
-             logger.debug("_update_points_table skipped: Essential components not ready.")
-             return
-        logger.debug("Updating points table...")
-
-        active_track_id = self.track_manager.get_active_track_id()
-        self.pointsTabLabel.setText(f"Points for Track: {active_track_id}" if active_track_id != -1 else "Points for Track: -")
-        self.pointsTableWidget.setRowCount(0) # Clear existing rows
-        active_points = self.track_manager.get_active_track_points_for_table()
-
-        link_color = QtGui.QColor("blue")
-        link_tooltip = "Click to jump to this frame"
-
-        # Get current display unit from ScaleManager for headers
-        display_unit_short = self.scale_manager.get_display_unit_short()
-        x_header_text = f"X [{display_unit_short}]"
-        y_header_text = f"Y [{display_unit_short}]"
-
-        pointsHeader = self.pointsTableWidget.horizontalHeader()
-        pointsHeader.model().setHeaderData(config.COL_POINT_X, QtCore.Qt.Orientation.Horizontal, x_header_text)
-        pointsHeader.model().setHeaderData(config.COL_POINT_Y, QtCore.Qt.Orientation.Horizontal, y_header_text)
-
-        self.pointsTableWidget.setRowCount(len(active_points))
-        for row, point_data in enumerate(active_points):
-            frame_idx, time_ms, x_internal_px, y_internal_px = point_data
-
-            frame_item = QtWidgets.QTableWidgetItem(str(frame_idx + 1))
-            frame_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            frame_item.setForeground(link_color); frame_item.setToolTip(link_tooltip)
-            frame_item.setFlags(frame_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.pointsTableWidget.setItem(row, config.COL_POINT_FRAME, frame_item)
-
-            time_sec_str = f"{(time_ms / 1000.0):.3f}" if time_ms >= 0 else "--.---"
-            time_item = QtWidgets.QTableWidgetItem(time_sec_str)
-            time_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            time_item.setFlags(time_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.pointsTableWidget.setItem(row, config.COL_POINT_TIME, time_item)
-
-            # 1. Transform for coordinate system (origin, Y-axis) - result is still in pixels
-            x_coord_sys_px, y_coord_sys_px = self.coord_transformer.transform_point_for_display(x_internal_px, y_internal_px)
-
-            # 2. Transform for scale (pixels to meters if applicable) using ScaleManager
-            x_display, y_display, _ = self.scale_manager.get_transformed_coordinates_for_display(x_coord_sys_px, y_coord_sys_px)
-
-            # Use the precision from ScaleManager's transformation
-            x_item = QtWidgets.QTableWidgetItem(f"{x_display}") 
-            x_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.pointsTableWidget.setItem(row, config.COL_POINT_X, x_item)
-
-            y_item = QtWidgets.QTableWidgetItem(f"{y_display}")
-            y_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-            y_item.setFlags(y_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self.pointsTableWidget.setItem(row, config.COL_POINT_Y, y_item)
 
     # --- Drawing ---
 

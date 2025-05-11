@@ -410,6 +410,8 @@ class CoordinatePanelController(QtCore.QObject):
         
         # Update cursor labels (as origin might have changed)
         self._on_handle_mouse_moved(self._last_scene_mouse_x, self._last_scene_mouse_y)
+        logger.debug("CoordinatePanelController.update_ui_display emitting pointsTableNeedsUpdate.")
+        self.pointsTableNeedsUpdate.emit()
 
 
     @QtCore.Slot(float, float)
