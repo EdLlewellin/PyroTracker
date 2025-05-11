@@ -18,6 +18,7 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 import settings_manager
 from preferences_dialog import PreferencesDialog
 from scale_manager import ScaleManager
+from panel_controllers import ScalePanelController
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -166,23 +167,18 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.debug("CoordinateTransformer initialized.")
         self.scale_manager = ScaleManager(self)
         logger.debug("ScaleManager initialized.")
+        self.scale_panel_controller: Optional[ScalePanelController] = None # Initialize attribute
 
         # Initialize Coordinate System State
         self._is_setting_origin = False
-        # Default origin marker state (checkbox default is usually checked in ui_setup)
         self._show_origin_marker = True
         logger.debug(f"Initial origin marker visibility state: {self._show_origin_marker}")
-        self._block_scale_signals: bool = False
         self._last_scene_mouse_x: float = -1.0
         self._last_scene_mouse_y: float = -1.0
 
-        # Dictionary to keep track of button groups for track visibility
         self.track_visibility_button_groups = {}
-
-        # Setup Pens for drawing track visuals based on settings
         self._setup_pens()
 
-        # Set initial window size based on screen geometry
         screen_geometry: QtCore.QRect = QtGui.QGuiApplication.primaryScreen().availableGeometry()
         initial_width: int = int(screen_geometry.width() * 0.8)
         initial_height: int = int(screen_geometry.height() * 0.8)
@@ -190,62 +186,64 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(800, 600)
         logger.debug(f"Window geometry set: initial size {initial_width}x{initial_height}, minimum 800x600")
 
-        # Delegate UI Setup to the ui_setup module
         logger.debug("Setting up UI via ui_setup module...")
-        ui_setup.setup_main_window_ui(self) # This creates self.imageView, tables, buttons, etc.
+        ui_setup.setup_main_window_ui(self)
 
-        # Setup status bar (must be done after UI setup assigns self.setStatusBar)
-        # Note: ui_setup should call self.setStatusBar(QtWidgets.QStatusBar())
-        # We just need to get a reference to it.
-        self.statusBar = self.statusBar() # Retrieve the status bar set by ui_setup
+        # Instantiate Panel Controllers AFTER ui_setup has created the widgets
+        if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input: # Check if UI elements are ready
+            self.scale_panel_controller = ScalePanelController(
+                scale_manager=self.scale_manager,
+                image_view=self.imageView,
+                scale_m_per_px_input=self.scale_m_per_px_input,
+                scale_px_per_m_input=self.scale_px_per_m_input,
+                scale_reset_button=self.scale_reset_button,
+                scale_display_meters_checkbox=self.scale_display_meters_checkbox,
+                show_scale_bar_checkbox=self.showScaleBarCheckBox,
+                parent=self
+            )
+            logger.debug("ScalePanelController initialized.")
+        else:
+            logger.error("Scale panel UI elements not found for ScalePanelController.")
+            self.scale_panel_controller = None
+
+
+        self.statusBar = self.statusBar()
         if self.statusBar:
             self.statusBar.showMessage("Ready. Load a video via File -> Open Video...")
             logger.debug("Status bar initialized.")
         else:
             logger.error("Status bar not created during UI setup!")
 
-
-        # --- Connect Signals --- (Must happen *after* UI setup creates the widgets)
-
-        # VideoHandler Signals -> MainWindow Slots
+        # --- Connect Signals ---
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
-        logger.debug("VideoHandler signals connected.")
 
-        # InteractiveImageView Signals -> MainWindow Slots
         if hasattr(self, 'imageView') and self.imageView:
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
             self.imageView.modifiedClick.connect(self._handle_modified_click)
             self.imageView.originSetRequest.connect(self._set_custom_origin)
             self.imageView.sceneMouseMoved.connect(self._handle_mouse_moved)
-            logger.debug("ImageView signals connected.")
-        else:
-            logger.error("ImageView not initialized after UI setup! Cannot connect signals.")
+            if self.scale_panel_controller: # Connect imageView to ScalePanelController
+                self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
+            else: # Fallback if controller failed (should not happen ideally)
+                # self.imageView.viewTransformChanged.connect(self._on_view_transform_changed) # Old connection
+                logger.error("Cannot connect imageView.viewTransformChanged to ScalePanelController as it's not initialized.")
 
-        # TrackManager Signals -> MainWindow Slots
         self.track_manager.trackListChanged.connect(self._update_tracks_table)
         self.track_manager.activeTrackDataChanged.connect(self._update_points_table)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
-        logger.debug("TrackManager signals connected.")
-        
-        # Connect ScaleManager signal
-        self.scale_manager.scaleOrUnitChanged.connect(self._update_scale_ui_from_manager)
+
+        # Connect ScaleManager signals
+        if self.scale_panel_controller:
+            self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
+        # Keep connections for parts of MainWindow still needing this signal
         self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table)
         self.scale_manager.scaleOrUnitChanged.connect(self._trigger_cursor_label_update)
-        if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input:
-            self.scale_m_per_px_input.editingFinished.connect(self._on_scale_m_per_px_editing_finished)
-        if hasattr(self, 'scale_px_per_m_input') and self.scale_px_per_m_input:
-            self.scale_px_per_m_input.editingFinished.connect(self._on_scale_px_per_m_editing_finished)
-        if hasattr(self, 'scale_reset_button') and self.scale_reset_button:
-            self.scale_reset_button.clicked.connect(self._on_scale_reset_clicked)
-        if hasattr(self, 'scale_display_meters_checkbox') and self.scale_display_meters_checkbox:
-            self.scale_display_meters_checkbox.toggled.connect(self._on_display_units_toggled)
-        
 
-        # UI Element Signals -> MainWindow Slots (Check elements exist first)
+        # UI Element Signals (excluding those handled by ScalePanelController)
         if hasattr(self, 'tracksTableWidget'):
             self.tracksTableWidget.itemSelectionChanged.connect(self._track_selection_changed)
             self.tracksTableWidget.cellClicked.connect(self._on_tracks_table_cell_clicked)
@@ -269,39 +267,29 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setOriginButton.clicked.connect(self._enter_set_origin_mode)
         if hasattr(self, 'showOriginCheckBox'):
             self.showOriginCheckBox.stateChanged.connect(self._toggle_show_origin)
-        if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox:
-            self.showScaleBarCheckBox.toggled.connect(self._on_show_scale_bar_toggled)
-        if hasattr(self, 'imageView') and self.imageView:
-            self.imageView.viewTransformChanged.connect(self._on_view_transform_changed)
+        # Connections for scale_m_per_px_input, scale_px_per_m_input, scale_reset_button,
+        # scale_display_meters_checkbox, and showScaleBarCheckBox are now in ScalePanelController
+
         if hasattr(self, 'videoInfoAction'):
             self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
         if hasattr(self, 'preferencesAction'):
             self.preferencesAction.triggered.connect(self._show_preferences_dialog)
-        logger.debug("UI element signals connected.")
 
-
-        # Action for creating a new track via shortcut (Ctrl+N)
-        # Assuming self.newTrackAction is created in ui_setup and added to a menu
         if hasattr(self, 'newTrackAction'):
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
-            # No need to addAction(self.newTrackAction) if it's already in a menu
-            logger.debug("Ctrl+N shortcut linked to New Track action.")
         else:
              logger.warning("newTrackAction not found after UI setup. Ctrl+N shortcut not enabled.")
 
-
-        # Set initial enabled/disabled state of UI controls
         self._update_ui_state()
-        # Initialize table contents (will be empty initially)
         self._update_tracks_table()
         self._update_points_table()
-        # Set initial label text and radio state for coordinates
-        self._update_coordinate_ui_display()
-        self._update_scale_ui_from_manager()
+        self._update_coordinate_ui_display() # Call this before scale panel controller update
+        if self.scale_panel_controller:
+            self.scale_panel_controller.update_ui_from_manager() # Initial update for scale panel
+        
         logger.info("MainWindow initialization complete.")
-
 
     def _setup_pens(self) -> None:
         """
@@ -360,31 +348,28 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'statusBar'): self.statusBar.clearMessage()
         if hasattr(self, 'frameLabel'): self.frameLabel.setText("Frame: - / -")
         if hasattr(self, 'timeLabel'): self.timeLabel.setText("Time: --:--.--- / --:--.---")
-        if hasattr(self, 'fpsLabel'): self.fpsLabel.setText("FPS: ---.--") # Reset FPS label
+        if hasattr(self, 'fpsLabel'): self.fpsLabel.setText("FPS: ---.--")
         if hasattr(self, 'filenameLabel'):
              self.filenameLabel.setText("File: -")
              self.filenameLabel.setToolTip("No video loaded")
         if hasattr(self, 'frameSlider'):
-            self.frameSlider.blockSignals(True) # Prevent signals during reset
+            self.frameSlider.blockSignals(True)
             self.frameSlider.setValue(0)
             self.frameSlider.setMaximum(0)
             self.frameSlider.blockSignals(False)
         if hasattr(self, 'imageView'):
-            # Clear any previous graphics overlay and the main pixmap
             self.imageView.clearOverlay()
-            self.imageView.setPixmap(QtGui.QPixmap()) # Set empty pixmap
-            # Ensure the next loaded video fits the view initially
+            self.imageView.setPixmap(QtGui.QPixmap())
             self.imageView.resetInitialLoadFlag()
-        # Reset coordinate system state and UI
-        if hasattr(self, 'coord_transformer'):
-            self.coord_transformer = CoordinateTransformer() # Create a fresh instance
-        self._is_setting_origin = False
-        # Reset checkbox to default checked and sync internal state
-        self._show_origin_marker = True # Sync internal state with default
-        if hasattr(self, 'showOriginCheckBox'):
-            self.showOriginCheckBox.setChecked(True) # Visually reset checkbox
+            self.imageView.set_scale_bar_visibility(False) # Ensure scale bar is hidden
 
-        # Reset coordinate labels
+        if hasattr(self, 'coord_transformer'):
+            self.coord_transformer = CoordinateTransformer()
+        self._is_setting_origin = False
+        self._show_origin_marker = True
+        if hasattr(self, 'showOriginCheckBox'):
+            self.showOriginCheckBox.setChecked(True)
+
         placeholder = "(--, --)"
         if hasattr(self, 'cursorPosLabelTL'): self.cursorPosLabelTL.setText(placeholder)
         if hasattr(self, 'cursorPosLabelBL'): self.cursorPosLabelBL.setText(placeholder)
@@ -393,27 +378,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'cursorPosLabelBL_m'): self.cursorPosLabelBL_m.setText(placeholder)
         if hasattr(self, 'cursorPosLabelCustom_m'): self.cursorPosLabelCustom_m.setText(placeholder)
 
-        # Update coordinate UI (radio buttons, origin labels) to reflect reset state
-        self._update_coordinate_ui_display()
-        # Update general UI enabled/disabled states
-        self.scale_manager.reset()
-        if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox:
-            self.showScaleBarCheckBox.setChecked(False)
-            self.showScaleBarCheckBox.setEnabled(False)
-            if hasattr(self, 'imageView'):
-                self.imageView.set_scale_bar_visibility(False)
-        self._update_ui_state()
-
+        self.scale_manager.reset() # Reset scale manager state
+        
+        # Update controller about video loaded status (which will trigger its UI update)
+        if self.scale_panel_controller:
+            self.scale_panel_controller.set_video_loaded_status(False)
+        
+        self._update_coordinate_ui_display() # Call this after resetting coord_transformer
+        self._update_ui_state() # This will also inform controllers if necessary
 
     def _update_ui_state(self) -> None:
         """Updates the enabled/disabled state and appearance of UI elements based on application state."""
-        is_video_loaded: bool = self.video_loaded # Cache for clarity
+        is_video_loaded: bool = self.video_loaded
 
-        # --- Standard Video Controls ---
         if hasattr(self, 'frameSlider'): self.frameSlider.setEnabled(is_video_loaded)
         if hasattr(self, 'prevFrameButton'): self.prevFrameButton.setEnabled(is_video_loaded)
         if hasattr(self, 'nextFrameButton'): self.nextFrameButton.setEnabled(is_video_loaded)
-        if hasattr(self, 'newTrackAction'): self.newTrackAction.setEnabled(is_video_loaded) # Enable shortcut
+        if hasattr(self, 'newTrackAction'): self.newTrackAction.setEnabled(is_video_loaded)
         if hasattr(self, 'autoAdvanceCheckBox'): self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
         if hasattr(self, 'autoAdvanceSpinBox'): self.autoAdvanceSpinBox.setEnabled(is_video_loaded)
 
@@ -421,72 +402,25 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'playPauseButton'): self.playPauseButton.setEnabled(can_play)
 
         if hasattr(self, 'playPauseButton') and hasattr(self, 'stop_icon') and hasattr(self, 'play_icon'):
-            if self.is_playing:
-                self.playPauseButton.setIcon(self.stop_icon)
-                self.playPauseButton.setToolTip("Stop Video (Space)")
-            else:
-                self.playPauseButton.setIcon(self.play_icon)
-                self.playPauseButton.setToolTip("Play Video (Space)")
+            self.playPauseButton.setIcon(self.stop_icon if self.is_playing else self.play_icon)
+            self.playPauseButton.setToolTip("Stop Video (Space)" if self.is_playing else "Play Video (Space)")
 
-        # --- File Menu Actions ---
         if hasattr(self, 'loadTracksAction'): self.loadTracksAction.setEnabled(is_video_loaded)
         can_save: bool = is_video_loaded and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
         if hasattr(self, 'saveTracksAction'): self.saveTracksAction.setEnabled(can_save)
         if hasattr(self, 'videoInfoAction'): self.videoInfoAction.setEnabled(is_video_loaded)
 
-        # --- Coordinate System Panel ---
         if hasattr(self, 'coordTopLeftRadio'): self.coordTopLeftRadio.setEnabled(is_video_loaded)
         if hasattr(self, 'coordBottomLeftRadio'): self.coordBottomLeftRadio.setEnabled(is_video_loaded)
         if hasattr(self, 'coordCustomRadio'): self.coordCustomRadio.setEnabled(is_video_loaded)
         if hasattr(self, 'setOriginButton'): self.setOriginButton.setEnabled(is_video_loaded)
         if hasattr(self, 'showOriginCheckBox'): self.showOriginCheckBox.setEnabled(is_video_loaded)
 
-        # --- Scale Configuration Panel ---
-        scale_panel_widgets_exist = hasattr(self, 'scale_m_per_px_input') # Check one, assume all exist
-
-        if scale_panel_widgets_exist:
-            self.scale_m_per_px_input.setEnabled(is_video_loaded)
-            self.scale_px_per_m_input.setEnabled(is_video_loaded)
-
-            scale_is_set_internally = self.scale_manager.get_scale_m_per_px() is not None
-
-            if is_video_loaded:
-                # This will correctly set the reset button and "Display in meters" checkbox states
-                self._update_scale_ui_from_manager() # Handles scale_display_meters_checkbox
-
-                # --- Manage "Show Scale Bar" Checkbox ---
-                if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox:
-                    self.showScaleBarCheckBox.setEnabled(scale_is_set_internally)
-                    if scale_is_set_internally:
-                        # Default to checked if scale is set, unless user has manually unchecked it this session
-                        # For now, we'll just ensure it's checked if scale is set and it's enabled.
-                        # The actual visibility is controlled by _on_show_scale_bar_toggled based on checkbox state.
-                        # If checkbox was already interactively changed, its state should be preserved by Qt.
-                        # If loading a video makes scale_is_set_internally true, we want to default to checked.
-                        # A more robust way might involve storing a flag if user explicitly unchecked it.
-                        # For now: If scale is set, default checkbox to checked.
-                        self.showScaleBarCheckBox.setChecked(True)
-                        if hasattr(self, 'imageView'): # Ensure imageView exists
-                            self.imageView.set_scale_bar_visibility(True) # Show it by default
-                            self.imageView.update_scale_bar_dimensions(self.scale_manager.get_scale_m_per_px())
-                    else:
-                        self.showScaleBarCheckBox.setChecked(False)
-                        if hasattr(self, 'imageView'): # Ensure imageView exists
-                             self.imageView.set_scale_bar_visibility(False)
-                # --- END Manage "Show Scale Bar" Checkbox ---
-
-            else: # Not video_loaded
-                # Explicitly disable if no video loaded
-                if hasattr(self, 'scale_reset_button'): self.scale_reset_button.setEnabled(False)
-                if hasattr(self, 'scale_display_meters_checkbox'):
-                    self.scale_display_meters_checkbox.setEnabled(False)
-                    self.scale_display_meters_checkbox.setChecked(False)
-                if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox: # Also for scale bar
-                    self.showScaleBarCheckBox.setEnabled(False)
-                    self.showScaleBarCheckBox.setChecked(False)
-                    if hasattr(self, 'imageView'): # Ensure imageView exists
-                        self.imageView.set_scale_bar_visibility(False)
-
+        # Inform ScalePanelController about the video loaded state.
+        # Its update_ui_from_manager method (called by set_video_loaded_status if state changed)
+        # will handle the detailed enabling/disabling of its managed widgets.
+        if self.scale_panel_controller:
+            self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
         """Updates UI elements displaying current frame number and time."""
@@ -573,201 +507,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # Reset UI elements to initial state (clears image, labels, tables etc.)
         self._reset_ui_after_video_close()
         logger.info("Video release and associated reset complete.")
-
-    # Slot for m/px input editing finished
-    @QtCore.Slot()
-    def _on_scale_m_per_px_editing_finished(self) -> None:
-        """Handles editingFinished signal from the m/px input."""
-        if self._block_scale_signals:
-            return
-        if not hasattr(self, 'scale_m_per_px_input') or not self.scale_m_per_px_input:
-            return
-
-        text = self.scale_m_per_px_input.text()
-        try:
-            # If text is empty (placeholder was shown), it means no value / reset for this field.
-            if not text: # Empty string after placeholder is cleared by user interaction
-                # If the other field is also effectively empty, then truly reset.
-                other_text_empty = True
-                if hasattr(self, 'scale_px_per_m_input') and self.scale_px_per_m_input:
-                    if self.scale_px_per_m_input.text(): # Not empty
-                        other_text_empty = False
-                
-                if other_text_empty:
-                    self.scale_manager.set_scale(None)
-                # If only this field is cleared, but other has value, let scaleOrUnitChanged re-evaluate.
-                # Forcing set_scale(None) if this field was the source of truth and now cleared.
-                elif self.scale_manager.get_scale_m_per_px() is not None:
-                     self.scale_manager.set_scale(None)
-                return # UI will update from scaleOrUnitChanged
-
-            value = float(text) # Try to convert non-empty text
-            if value > 0.0:
-                self.scale_manager.set_scale(value)
-            elif value == 0.0:
-                self.scale_manager.set_scale(None) # Treat 0 as unsetting
-            else: # Negative value, invalid
-                logger.warning(f"Invalid (negative) scale input for m/px: '{text}'. Reverting UI.")
-                self._update_scale_ui_from_manager() # Revert to last valid state
-        except ValueError:
-            # Invalid float input that wasn't caught by validator (e.g., "--" or multiple dots)
-            logger.warning(f"Invalid float conversion for m/px: '{text}'. Reverting UI.")
-            self._update_scale_ui_from_manager()
-
-
-    @QtCore.Slot()
-    def _on_scale_px_per_m_editing_finished(self) -> None:
-        """Handles editingFinished signal from the px/m input."""
-        if self._block_scale_signals:
-            return
-        if not hasattr(self, 'scale_px_per_m_input') or not self.scale_px_per_m_input:
-            return
-
-        text = self.scale_px_per_m_input.text()
-        try:
-            if not text: # Empty string
-                other_text_empty = True
-                if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input:
-                    if self.scale_m_per_px_input.text():
-                        other_text_empty = False
-                
-                if other_text_empty:
-                    self.scale_manager.set_scale(None)
-                elif self.scale_manager.get_scale_m_per_px() is not None:
-                     self.scale_manager.set_scale(None)
-                return
-
-            value = float(text)
-            if value > 0.0:
-                m_per_px = 1.0 / value
-                self.scale_manager.set_scale(m_per_px)
-            elif value == 0.0:
-                self.scale_manager.set_scale(None)
-            else: # Negative
-                logger.warning(f"Invalid (negative) scale input for px/m: '{text}'. Reverting UI.")
-                self._update_scale_ui_from_manager()
-        except ValueError:
-            logger.warning(f"Invalid float conversion for px/m: '{text}'. Reverting UI.")
-            self._update_scale_ui_from_manager()
-
-    @QtCore.Slot()
-    def _on_scale_reset_clicked(self) -> None:
-        """Handles the scale reset button click."""
-        logger.debug("Scale reset button clicked.")
-        self.scale_manager.reset()
-
-    @QtCore.Slot(bool)
-    def _on_display_units_toggled(self, checked: bool) -> None:
-        """Handles the 'Display in meters' checkbox toggle."""
-        if hasattr(self, 'scale_display_meters_checkbox') and self.scale_display_meters_checkbox:
-            # Only proceed if the checkbox is enabled (i.e., a scale is set)
-            if self.scale_display_meters_checkbox.isEnabled():
-                self.scale_manager.set_display_in_meters(checked)
-            else: # Should not happen if UI logic is correct, but good to handle
-                logger.warning("Display units toggled while checkbox was disabled. Forcing manager state.")
-                self.scale_manager.set_display_in_meters(False) # Force to pixels if scale not set
-                # UI will update via scaleOrUnitChanged signal
-
-
-    @QtCore.Slot()
-    def _update_scale_ui_from_manager(self) -> None:
-        """Updates the scale panel UI elements based on ScaleManager's state, including the scale bar."""
-        required_attrs = [
-            'scale_m_per_px_input', 'scale_px_per_m_input',
-            'scale_display_meters_checkbox', 'scale_reset_button', 'scale_manager',
-            'showScaleBarCheckBox', 'imageView' # Add new dependencies
-        ]
-        if not all(hasattr(self, attr) and getattr(self, attr) is not None for attr in required_attrs):
-            logger.debug("_update_scale_ui_from_manager skipped: UI elements or manager not ready.")
-            return
-
-        logger.debug("Updating scale UI from ScaleManager state (including scale bar).")
-        self._block_scale_signals = True
-
-        current_m_per_px = self.scale_manager.get_scale_m_per_px()
-        current_reciprocal_px_m = self.scale_manager.get_reciprocal_scale_px_per_m()
-        display_in_meters_state = self.scale_manager.display_in_meters()
-        scale_is_set = current_m_per_px is not None
-        video_is_loaded_flag = self.video_loaded # Use consistent naming
-
-        # Update QLineEdits
-        self.scale_m_per_px_input.setText(f"{current_m_per_px:.6g}" if current_m_per_px is not None else "")
-        self.scale_px_per_m_input.setText(f"{current_reciprocal_px_m:.6g}" if current_reciprocal_px_m is not None else "")
-
-        if video_is_loaded_flag:
-            # "Display in meters" checkbox
-            self.scale_display_meters_checkbox.setEnabled(scale_is_set)
-            self.scale_display_meters_checkbox.setChecked(display_in_meters_state if scale_is_set else False)
-
-            # Scale reset button
-            self.scale_reset_button.setEnabled(scale_is_set)
-
-            # "Show Scale Bar" checkbox
-            self.showScaleBarCheckBox.setEnabled(scale_is_set)
-            if scale_is_set:
-                # If scale becomes set, default checkbox to True (checked)
-                # User can then uncheck it for the session.
-                # The actual visibility is triggered by the checkbox's toggled signal or here directly.
-                self.showScaleBarCheckBox.setChecked(True) # Default to show if scale is set
-                self.imageView.set_scale_bar_visibility(True)
-                self.imageView.update_scale_bar_dimensions(current_m_per_px)
-            else:
-                self.showScaleBarCheckBox.setChecked(False)
-                self.imageView.set_scale_bar_visibility(False)
-        else: # No video loaded
-            self.scale_display_meters_checkbox.setEnabled(False)
-            self.scale_display_meters_checkbox.setChecked(False)
-            self.scale_reset_button.setEnabled(False)
-            self.showScaleBarCheckBox.setEnabled(False)
-            self.showScaleBarCheckBox.setChecked(False)
-            self.imageView.set_scale_bar_visibility(False)
-
-        self._block_scale_signals = False
-        logger.debug(f"Scale UI update complete. Scale bar visible: {self.imageView._scale_bar_widget.isVisible() if hasattr(self.imageView, '_scale_bar_widget') else 'N/A'}")
-
-    # --- Scale Bar Control Slots ---
-
-    @QtCore.Slot(bool)
-    def _on_show_scale_bar_toggled(self, checked: bool) -> None:
-        """Handles the 'Show Scale Bar' checkbox toggle."""
-        if not all(hasattr(self, attr) for attr in ['imageView', 'scale_manager', 'showScaleBarCheckBox']):
-            logger.warning("_on_show_scale_bar_toggled skipped: Components not ready.")
-            return
-
-        logger.debug(f"'Show Scale Bar' checkbox toggled to: {checked}")
-        scale_is_set = self.scale_manager.get_scale_m_per_px() is not None
-
-        if self.showScaleBarCheckBox.isEnabled() and scale_is_set: # Checkbox must be enabled and scale set
-            self.imageView.set_scale_bar_visibility(checked)
-            if checked:
-                # Ensure its dimensions are updated if it's being made visible
-                self.imageView.update_scale_bar_dimensions(self.scale_manager.get_scale_m_per_px())
-        elif not scale_is_set: # If scale is not set, ensure bar is hidden
-            self.imageView.set_scale_bar_visibility(False)
-            self.showScaleBarCheckBox.setChecked(False) # Ensure checkbox reflects this
-            self.showScaleBarCheckBox.setEnabled(False)
-
-
-    @QtCore.Slot()
-    def _on_view_transform_changed(self) -> None:
-        """
-        Handles the viewTransformChanged signal from InteractiveImageView.
-        Updates the scale bar dimensions if it's visible and a scale is set.
-        """
-        if not all(hasattr(self, attr) for attr in ['imageView', 'scale_manager', 'showScaleBarCheckBox']):
-            logger.debug("_on_view_transform_changed skipped: Components not ready.")
-            return
-
-        scale_is_set = self.scale_manager.get_scale_m_per_px() is not None
-        scale_bar_should_be_visible = self.showScaleBarCheckBox.isChecked()
-
-        if self.video_loaded and scale_is_set and scale_bar_should_be_visible:
-            logger.debug("View transform changed, updating scale bar dimensions.")
-            self.imageView.update_scale_bar_dimensions(self.scale_manager.get_scale_m_per_px())
-        elif self.imageView._scale_bar_widget.isVisible() and (not scale_is_set or not scale_bar_should_be_visible):
-            # If scale bar is currently visible but shouldn't be (e.g. scale removed or checkbox unchecked)
-            logger.debug("View transform changed, but scale bar should be hidden. Hiding.")
-            self.imageView.set_scale_bar_visibility(False)
 
     @QtCore.Slot()
     def _trigger_save_tracks(self) -> None:
@@ -856,7 +595,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _handle_video_loaded(self, video_info: Dict[str, Any]) -> None:
         """Handles the successful loading of a video."""
         logger.info(f"Received videoLoaded signal: {video_info.get('filename', 'N/A')}")
-        # Update MainWindow's state variables
         self.total_frames = video_info.get('total_frames', 0)
         self.video_loaded = True
         self.fps = video_info.get('fps', 0.0)
@@ -864,46 +602,45 @@ class MainWindow(QtWidgets.QMainWindow):
         self.video_filepath = video_info.get('filepath', '')
         self.frame_width = video_info.get('width', 0)
         self.frame_height = video_info.get('height', 0)
-        self.is_playing = False # Ensure playback state is initially false
+        self.is_playing = False
 
-        # Update coordinate transformer with video height (needed for BL/Custom)
         if hasattr(self, 'coord_transformer'):
             self.coord_transformer.set_video_height(self.frame_height)
 
-        # Update UI Labels
         filename = video_info.get('filename', 'N/A')
         filepath = video_info.get('filepath', '')
         if hasattr(self, 'filenameLabel'):
             self.filenameLabel.setText(f"File: {filename}")
-            self.filenameLabel.setToolTip(filepath) # Show full path in tooltip
+            self.filenameLabel.setToolTip(filepath)
         if hasattr(self, 'fpsLabel'):
             fps_str = f"{self.fps:.2f}" if self.fps > 0 else "N/A"
             self.fpsLabel.setText(f"FPS: {fps_str}")
 
         logger.debug("Resetting TrackManager for new video.")
-        if hasattr(self, 'track_manager'): self.track_manager.reset() # Clear old tracks
+        if hasattr(self, 'track_manager'): self.track_manager.reset()
 
         logger.debug("Updating UI controls for loaded video...")
-        # Update frame slider range
         if hasattr(self, 'frameSlider'):
             self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0)
-            self.frameSlider.setValue(0) # Go to first frame
+            self.frameSlider.setValue(0)
 
-        # Reset image view's initial load flag for proper fitting
         if hasattr(self, 'imageView'): self.imageView.resetInitialLoadFlag()
+        
+        self.scale_manager.reset() # Reset scale manager for new video
 
-        self.scale_manager.reset() # +++ NEW: Reset scale for new video
+        # Update ScalePanelController about video loaded status
+        if self.scale_panel_controller:
+            self.scale_panel_controller.set_video_loaded_status(True)
+            # The controller will update its UI via update_ui_from_manager,
+            # which can be called internally by set_video_loaded_status or explicitly if needed.
 
-        # Update general UI enabled/disabled state and coordinate display
-        self._update_ui_state()
-        self._update_coordinate_ui_display()
+        self._update_ui_state() # General UI state update
+        self._update_coordinate_ui_display() # Update coordinate specific UI
 
-        # Update status bar message
         status_msg = (f"Loaded '{filename}' ({self.total_frames} frames, "
                       f"{self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
         if hasattr(self, 'statusBar'): self.statusBar.showMessage(status_msg, 5000)
         logger.info(f"Video loaded successfully handled: {status_msg}")
-        # Note: VideoHandler emits frameChanged for the first frame separately.
 
     @QtCore.Slot(str)
     def _handle_video_load_failed(self, error_msg: str) -> None:
