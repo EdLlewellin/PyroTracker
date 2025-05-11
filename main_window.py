@@ -18,7 +18,7 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 import settings_manager
 from preferences_dialog import PreferencesDialog
 from scale_manager import ScaleManager
-from panel_controllers import ScalePanelController
+from panel_controllers import ScalePanelController, CoordinatePanelController
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -132,16 +132,10 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         logger.info("Initializing MainWindow...")
         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}")
-
-        # Set Application Icon
+    
         if os.path.exists(ICON_PATH):
-            app_icon = QtGui.QIcon(ICON_PATH)
-            self.setWindowIcon(app_icon)
-            logger.debug(f"Application icon set from: {ICON_PATH}")
-        else:
-            logger.warning(f"Application icon file not found at: {ICON_PATH}")
-
-        # Initialize video state variables
+            self.setWindowIcon(QtGui.QIcon(ICON_PATH))
+    
         self.total_frames = 0
         self.current_frame_index = -1
         self.video_loaded = False
@@ -151,46 +145,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.video_filepath = ""
         self.frame_width = 0
         self.frame_height = 0
-        logger.debug("Video state variables initialized.")
-
-        # Initialize Auto-Advance State
         self._auto_advance_enabled = False
         self._auto_advance_frames = 1
-        logger.debug("Auto-advance state variables initialized.")
-
-        # Initialize Core Components
+    
         self.video_handler = VideoHandler(self)
-        logger.debug("VideoHandler initialized.")
         self.track_manager = TrackManager(self)
-        logger.debug("TrackManager initialized.")
         self.coord_transformer = CoordinateTransformer()
-        logger.debug("CoordinateTransformer initialized.")
         self.scale_manager = ScaleManager(self)
-        logger.debug("ScaleManager initialized.")
-        self.scale_panel_controller: Optional[ScalePanelController] = None # Initialize attribute
-
-        # Initialize Coordinate System State
-        self._is_setting_origin = False
-        self._show_origin_marker = True
-        logger.debug(f"Initial origin marker visibility state: {self._show_origin_marker}")
-        self._last_scene_mouse_x: float = -1.0
-        self._last_scene_mouse_y: float = -1.0
-
+    
+        self.scale_panel_controller: Optional[ScalePanelController] = None
+        self.coord_panel_controller: Optional[CoordinatePanelController] = None # New controller
+    
         self.track_visibility_button_groups = {}
         self._setup_pens()
-
-        screen_geometry: QtCore.QRect = QtGui.QGuiApplication.primaryScreen().availableGeometry()
-        initial_width: int = int(screen_geometry.width() * 0.8)
-        initial_height: int = int(screen_geometry.height() * 0.8)
-        self.setGeometry(50, 50, initial_width, initial_height)
+    
+        screen_geometry = QtGui.QGuiApplication.primaryScreen().availableGeometry()
+        self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
-        logger.debug(f"Window geometry set: initial size {initial_width}x{initial_height}, minimum 800x600")
-
-        logger.debug("Setting up UI via ui_setup module...")
+    
         ui_setup.setup_main_window_ui(self)
-
-        # Instantiate Panel Controllers AFTER ui_setup has created the widgets
-        if hasattr(self, 'scale_m_per_px_input') and self.scale_m_per_px_input: # Check if UI elements are ready
+    
+        # Instantiate Panel Controllers
+        if hasattr(self, 'scale_m_per_px_input'):
             self.scale_panel_controller = ScalePanelController(
                 scale_manager=self.scale_manager,
                 image_view=self.imageView,
@@ -205,45 +181,84 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             logger.error("Scale panel UI elements not found for ScalePanelController.")
             self.scale_panel_controller = None
-
-
+    
+        # Instantiate CoordinatePanelController
+        if all(hasattr(self, attr) for attr in [
+            'coordSystemGroup', 'coordTopLeftRadio', 'coordBottomLeftRadio', 'coordCustomRadio',
+            'coordTopLeftOriginLabel', 'coordBottomLeftOriginLabel', 'coordCustomOriginLabel',
+            'setOriginButton', 'showOriginCheckBox', 'cursorPosLabelTL', 'cursorPosLabelBL',
+            'cursorPosLabelCustom', 'cursorPosLabelTL_m', 'cursorPosLabelBL_m', 'cursorPosLabelCustom_m',
+            'imageView', 'scale_manager' # Ensure scale_manager is available
+        ]):
+            cursor_labels_px = {
+                "TL": self.cursorPosLabelTL, "BL": self.cursorPosLabelBL, "Custom": self.cursorPosLabelCustom
+            }
+            cursor_labels_m = {
+                "TL": self.cursorPosLabelTL_m, "BL": self.cursorPosLabelBL_m, "Custom": self.cursorPosLabelCustom_m
+            }
+            self.coord_panel_controller = CoordinatePanelController(
+                coord_transformer=self.coord_transformer,
+                image_view=self.imageView,
+                scale_manager=self.scale_manager,
+                coord_system_group=self.coordSystemGroup,
+                coord_top_left_radio=self.coordTopLeftRadio,
+                coord_bottom_left_radio=self.coordBottomLeftRadio,
+                coord_custom_radio=self.coordCustomRadio,
+                coord_top_left_origin_label=self.coordTopLeftOriginLabel,
+                coord_bottom_left_origin_label=self.coordBottomLeftOriginLabel,
+                coord_custom_origin_label=self.coordCustomOriginLabel,
+                set_origin_button=self.setOriginButton,
+                show_origin_checkbox=self.showOriginCheckBox,
+                cursor_pos_labels_px=cursor_labels_px,
+                cursor_pos_labels_m=cursor_labels_m,
+                parent=self
+            )
+            logger.debug("CoordinatePanelController initialized.")
+        else:
+            logger.error("Coordinate panel UI elements not found for CoordinatePanelController.")
+            self.coord_panel_controller = None
+    
+    
         self.statusBar = self.statusBar()
         if self.statusBar:
             self.statusBar.showMessage("Ready. Load a video via File -> Open Video...")
-            logger.debug("Status bar initialized.")
-        else:
-            logger.error("Status bar not created during UI setup!")
-
+    
         # --- Connect Signals ---
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
-
+    
         if hasattr(self, 'imageView') and self.imageView:
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
             self.imageView.modifiedClick.connect(self._handle_modified_click)
-            self.imageView.originSetRequest.connect(self._set_custom_origin)
-            self.imageView.sceneMouseMoved.connect(self._handle_mouse_moved)
-            if self.scale_panel_controller: # Connect imageView to ScalePanelController
+            if self.coord_panel_controller: # Connect to CoordinatePanelController
+                self.imageView.originSetRequest.connect(self.coord_panel_controller._on_set_custom_origin)
+                self.imageView.sceneMouseMoved.connect(self.coord_panel_controller._on_handle_mouse_moved)
+            if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
-            else: # Fallback if controller failed (should not happen ideally)
-                # self.imageView.viewTransformChanged.connect(self._on_view_transform_changed) # Old connection
-                logger.error("Cannot connect imageView.viewTransformChanged to ScalePanelController as it's not initialized.")
-
+    
         self.track_manager.trackListChanged.connect(self._update_tracks_table)
         self.track_manager.activeTrackDataChanged.connect(self._update_points_table)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
-
-        # Connect ScaleManager signals
+    
         if self.scale_panel_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
-        # Keep connections for parts of MainWindow still needing this signal
-        self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table)
-        self.scale_manager.scaleOrUnitChanged.connect(self._trigger_cursor_label_update)
-
-        # UI Element Signals (excluding those handled by ScalePanelController)
+        self.scale_manager.scaleOrUnitChanged.connect(self._update_points_table) # Keep for MainWindow's point table
+        if self.coord_panel_controller: # Connect scale change to coord controller for cursor labels
+             self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
+        else: # Fallback if coord_panel_controller is not yet ready (should not happen with correct init order)
+             self.scale_manager.scaleOrUnitChanged.connect(self._trigger_cursor_label_update)
+    
+    
+        # Connections for CoordinatePanelController's outgoing signals
+        if self.coord_panel_controller:
+            self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
+            self.coord_panel_controller.pointsTableNeedsUpdate.connect(self._update_points_table)
+            self.coord_panel_controller.statusBarMessage.connect(self.statusBar.showMessage)
+    
+        # UI Element Signals (excluding those handled by panel controllers)
         if hasattr(self, 'tracksTableWidget'):
             self.tracksTableWidget.itemSelectionChanged.connect(self._track_selection_changed)
             self.tracksTableWidget.cellClicked.connect(self._on_tracks_table_cell_clicked)
@@ -261,34 +276,26 @@ class MainWindow(QtWidgets.QMainWindow):
             self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled)
         if hasattr(self, 'autoAdvanceSpinBox'):
             self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed)
-        if hasattr(self, 'coordSystemGroup'):
-            self.coordSystemGroup.buttonToggled.connect(self._coordinate_mode_changed)
-        if hasattr(self, 'setOriginButton'):
-            self.setOriginButton.clicked.connect(self._enter_set_origin_mode)
-        if hasattr(self, 'showOriginCheckBox'):
-            self.showOriginCheckBox.stateChanged.connect(self._toggle_show_origin)
-        # Connections for scale_m_per_px_input, scale_px_per_m_input, scale_reset_button,
-        # scale_display_meters_checkbox, and showScaleBarCheckBox are now in ScalePanelController
-
+    
+        # Connections for coordSystemGroup, setOriginButton, showOriginCheckBox are now in CoordinatePanelController
+    
         if hasattr(self, 'videoInfoAction'):
             self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
         if hasattr(self, 'preferencesAction'):
             self.preferencesAction.triggered.connect(self._show_preferences_dialog)
-
         if hasattr(self, 'newTrackAction'):
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
-        else:
-             logger.warning("newTrackAction not found after UI setup. Ctrl+N shortcut not enabled.")
-
+    
         self._update_ui_state()
         self._update_tracks_table()
         self._update_points_table()
-        self._update_coordinate_ui_display() # Call this before scale panel controller update
-        if self.scale_panel_controller:
-            self.scale_panel_controller.update_ui_from_manager() # Initial update for scale panel
-        
+        if self.coord_panel_controller: # Initial UI update for coord panel
+            self.coord_panel_controller.update_ui_display()
+        if self.scale_panel_controller: # Initial UI update for scale panel
+            self.scale_panel_controller.update_ui_from_manager()
+    
         logger.info("MainWindow initialization complete.")
 
     def _setup_pens(self) -> None:
@@ -361,66 +368,53 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageView.clearOverlay()
             self.imageView.setPixmap(QtGui.QPixmap())
             self.imageView.resetInitialLoadFlag()
-            self.imageView.set_scale_bar_visibility(False) # Ensure scale bar is hidden
-
-        if hasattr(self, 'coord_transformer'):
-            self.coord_transformer = CoordinateTransformer()
-        self._is_setting_origin = False
-        self._show_origin_marker = True
-        if hasattr(self, 'showOriginCheckBox'):
-            self.showOriginCheckBox.setChecked(True)
-
-        placeholder = "(--, --)"
-        if hasattr(self, 'cursorPosLabelTL'): self.cursorPosLabelTL.setText(placeholder)
-        if hasattr(self, 'cursorPosLabelBL'): self.cursorPosLabelBL.setText(placeholder)
-        if hasattr(self, 'cursorPosLabelCustom'): self.cursorPosLabelCustom.setText(placeholder)
-        if hasattr(self, 'cursorPosLabelTL_m'): self.cursorPosLabelTL_m.setText(placeholder)
-        if hasattr(self, 'cursorPosLabelBL_m'): self.cursorPosLabelBL_m.setText(placeholder)
-        if hasattr(self, 'cursorPosLabelCustom_m'): self.cursorPosLabelCustom_m.setText(placeholder)
-
-        self.scale_manager.reset() # Reset scale manager state
-        
-        # Update controller about video loaded status (which will trigger its UI update)
+            self.imageView.set_scale_bar_visibility(False)
+            self.imageView.set_interaction_mode(InteractionMode.NORMAL) # Ensure normal mode
+    
+        if hasattr(self, 'coord_transformer'): # Re-create for a clean state
+            self.coord_transformer = CoordinateTransformer() 
+            if self.coord_panel_controller: # Pass new transformer to existing controller if it exists
+                self.coord_panel_controller._coord_transformer = self.coord_transformer
+    
+        self.scale_manager.reset()
+    
         if self.scale_panel_controller:
             self.scale_panel_controller.set_video_loaded_status(False)
-        
-        self._update_coordinate_ui_display() # Call this after resetting coord_transformer
-        self._update_ui_state() # This will also inform controllers if necessary
+        if self.coord_panel_controller:
+            self.coord_panel_controller.set_video_loaded_status(False)
+            # The controller's update_ui_display will handle its widget states
+    
+        self._update_ui_state()
 
     def _update_ui_state(self) -> None:
         """Updates the enabled/disabled state and appearance of UI elements based on application state."""
         is_video_loaded: bool = self.video_loaded
-
+    
         if hasattr(self, 'frameSlider'): self.frameSlider.setEnabled(is_video_loaded)
         if hasattr(self, 'prevFrameButton'): self.prevFrameButton.setEnabled(is_video_loaded)
         if hasattr(self, 'nextFrameButton'): self.nextFrameButton.setEnabled(is_video_loaded)
         if hasattr(self, 'newTrackAction'): self.newTrackAction.setEnabled(is_video_loaded)
         if hasattr(self, 'autoAdvanceCheckBox'): self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
         if hasattr(self, 'autoAdvanceSpinBox'): self.autoAdvanceSpinBox.setEnabled(is_video_loaded)
-
+    
         can_play: bool = is_video_loaded and self.fps > 0
         if hasattr(self, 'playPauseButton'): self.playPauseButton.setEnabled(can_play)
-
+    
         if hasattr(self, 'playPauseButton') and hasattr(self, 'stop_icon') and hasattr(self, 'play_icon'):
             self.playPauseButton.setIcon(self.stop_icon if self.is_playing else self.play_icon)
             self.playPauseButton.setToolTip("Stop Video (Space)" if self.is_playing else "Play Video (Space)")
-
+    
         if hasattr(self, 'loadTracksAction'): self.loadTracksAction.setEnabled(is_video_loaded)
         can_save: bool = is_video_loaded and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
         if hasattr(self, 'saveTracksAction'): self.saveTracksAction.setEnabled(can_save)
         if hasattr(self, 'videoInfoAction'): self.videoInfoAction.setEnabled(is_video_loaded)
-
-        if hasattr(self, 'coordTopLeftRadio'): self.coordTopLeftRadio.setEnabled(is_video_loaded)
-        if hasattr(self, 'coordBottomLeftRadio'): self.coordBottomLeftRadio.setEnabled(is_video_loaded)
-        if hasattr(self, 'coordCustomRadio'): self.coordCustomRadio.setEnabled(is_video_loaded)
-        if hasattr(self, 'setOriginButton'): self.setOriginButton.setEnabled(is_video_loaded)
-        if hasattr(self, 'showOriginCheckBox'): self.showOriginCheckBox.setEnabled(is_video_loaded)
-
-        # Inform ScalePanelController about the video loaded state.
-        # Its update_ui_from_manager method (called by set_video_loaded_status if state changed)
-        # will handle the detailed enabling/disabling of its managed widgets.
+    
+        # Inform Panel Controllers about the video loaded state
         if self.scale_panel_controller:
             self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
+        if self.coord_panel_controller:
+            self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
+            # The controller's update_ui_display method will handle its specific widget states.
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
         """Updates UI elements displaying current frame number and time."""
@@ -603,10 +597,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_width = video_info.get('width', 0)
         self.frame_height = video_info.get('height', 0)
         self.is_playing = False
-
-        if hasattr(self, 'coord_transformer'):
+    
+        if hasattr(self, 'coord_transformer'): # Ensure transformer exists before setting height
             self.coord_transformer.set_video_height(self.frame_height)
-
+            if self.coord_panel_controller: # Also update controller if it exists
+                self.coord_panel_controller.set_video_height(self.frame_height)
+    
+    
         filename = video_info.get('filename', 'N/A')
         filepath = video_info.get('filepath', '')
         if hasattr(self, 'filenameLabel'):
@@ -615,32 +612,31 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'fpsLabel'):
             fps_str = f"{self.fps:.2f}" if self.fps > 0 else "N/A"
             self.fpsLabel.setText(f"FPS: {fps_str}")
-
-        logger.debug("Resetting TrackManager for new video.")
+    
         if hasattr(self, 'track_manager'): self.track_manager.reset()
-
-        logger.debug("Updating UI controls for loaded video...")
         if hasattr(self, 'frameSlider'):
             self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0)
             self.frameSlider.setValue(0)
-
         if hasattr(self, 'imageView'): self.imageView.resetInitialLoadFlag()
-        
-        self.scale_manager.reset() # Reset scale manager for new video
-
-        # Update ScalePanelController about video loaded status
+    
+        self.scale_manager.reset() 
+    
         if self.scale_panel_controller:
             self.scale_panel_controller.set_video_loaded_status(True)
-            # The controller will update its UI via update_ui_from_manager,
-            # which can be called internally by set_video_loaded_status or explicitly if needed.
-
+        if self.coord_panel_controller:
+            self.coord_panel_controller.set_video_loaded_status(True)
+            # The controller's update_ui_display will be called by set_video_loaded_status
+            # or can be called explicitly here if needed for immediate refresh based on new video height.
+            self.coord_panel_controller.update_ui_display()
+    
+    
         self._update_ui_state() # General UI state update
-        self._update_coordinate_ui_display() # Update coordinate specific UI
-
+    
         status_msg = (f"Loaded '{filename}' ({self.total_frames} frames, "
                       f"{self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
         if hasattr(self, 'statusBar'): self.statusBar.showMessage(status_msg, 5000)
         logger.info(f"Video loaded successfully handled: {status_msg}")
+
 
     @QtCore.Slot(str)
     def _handle_video_load_failed(self, error_msg: str) -> None:
@@ -701,41 +697,37 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(float, float)
     def _handle_add_point_click(self, x: float, y: float) -> None:
         """Handles a standard (unmodified) click in the image view to add/update a point."""
-        # Ignore clicks if currently in the 'Set Origin' mode
-        if self._is_setting_origin:
-            logger.debug("Standard click ignored while in 'Set Custom Origin' mode.")
+        # Check with CoordinatePanelController if in 'Set Origin' mode
+        if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode():
+            logger.debug("Standard click ignored while in 'Set Custom Origin' mode (checked via controller).")
             return
-
+    
+        # ... (rest of the method remains the same)
         if not self.video_loaded:
             if hasattr(self, 'statusBar'): self.statusBar.showMessage("Cannot add point: No video loaded.", 3000)
             return
         if not hasattr(self, 'imageView') or not self.imageView._scene: return
-
+    
         logger.debug(f"ImageView standard click at scene coordinates ({x:.3f}, {y:.3f}) for adding point.")
-
-        # --- Add/Update Point Logic ---
+    
         if not hasattr(self, 'track_manager') or self.track_manager.active_track_index == -1:
             if hasattr(self, 'statusBar'): self.statusBar.showMessage("Cannot add point: No track selected.", 3000)
             return
-
-        # Calculate time_ms for the point
+    
         time_ms: float = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
-        # Tell TrackManager to add/update the point (uses internal TL coords)
         success: bool = self.track_manager.add_point(self.current_frame_index, time_ms, x, y)
-
+    
         if success:
             active_track_id = self.track_manager.get_active_track_id()
-            # Display coordinates in current system for user feedback
             x_disp, y_disp = self.coord_transformer.transform_point_for_display(x, y)
             message = (f"Point for Track {active_track_id} on Frame {self.current_frame_index + 1}: "
                        f"({x_disp:.1f}, {y_disp:.1f})")
             if hasattr(self, 'statusBar'): self.statusBar.showMessage(message, 3000)
             logger.info(message)
-
-            # --- Auto-Advance Logic ---
+    
             if self._auto_advance_enabled and self._auto_advance_frames > 0:
                 target_frame = self.current_frame_index + self._auto_advance_frames
-                target_frame = min(target_frame, self.total_frames - 1) # Clamp to end
+                target_frame = min(target_frame, self.total_frames - 1) 
                 if target_frame > self.current_frame_index:
                     logger.info(f"Auto-advancing by {self._auto_advance_frames} frame(s) to frame {target_frame + 1}")
                     self.video_handler.seek_frame(target_frame)
@@ -743,7 +735,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     logger.debug(f"Auto-advance skipped: Already at or past target frame {target_frame + 1}.")
         else:
             if hasattr(self, 'statusBar'): self.statusBar.showMessage("Failed to add point (see log).", 3000)
-        # Note: TrackManager signals trigger table/visual updates.
 
     @QtCore.Slot(float, float, QtCore.Qt.KeyboardModifiers)
     def _handle_modified_click(self, x: float, y: float, modifiers: QtCore.Qt.KeyboardModifiers) -> None:
@@ -1162,6 +1153,7 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
         """Clears and redraws all track markers/lines and origin marker on the image view."""
+        # ... (initial checks remain the same)
         if not all(hasattr(self, attr) for attr in ['imageView', 'track_manager', 'coord_transformer']) or \
            not self.imageView or not self.imageView._scene:
              logger.debug("_redraw_scene_overlay skipped: Components not ready.")
@@ -1170,23 +1162,19 @@ class MainWindow(QtWidgets.QMainWindow):
              if hasattr(self, 'imageView'): self.imageView.clearOverlay()
              logger.debug("_redraw_scene_overlay skipped: No video loaded or invalid frame.")
              return
-
+    
         logger.debug(f"Redrawing scene overlay for frame {self.current_frame_index}")
         scene = self.imageView._scene
-        self.imageView.clearOverlay() # Clear previous overlay items
-
+        self.imageView.clearOverlay() 
+    
         try:
-            # --- Get current sizes from settings ---
-            # Retrieve marker/origin sizes dynamically for drawing
+            # ... (track marker and line drawing logic remains the same) ...
             try: track_marker_size = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
             except (ValueError, TypeError): track_marker_size = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_MARKER_SIZE]
             try: origin_marker_size = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
             except (ValueError, TypeError): origin_marker_size = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ORIGIN_MARKER_SIZE]
-
-            # Get visual elements (markers, lines) from TrackManager for the current frame
+    
             visual_elements: List[VisualElement] = self.track_manager.get_visual_elements(self.current_frame_index)
-
-            # Map style identifiers to pre-configured QPen objects (using self.pen_*)
             pen_map: Dict[str, QtGui.QPen] = {
                 config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
                 config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
@@ -1195,13 +1183,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 config.STYLE_LINE_ACTIVE: self.pen_line_active,
                 config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
             }
-
-            # Create QGraphicsItems for each visual element
             for element in visual_elements:
                 pen = pen_map.get(element.get('style'))
-                if not pen: continue # Skip if style unknown
-
-                # Draw Markers (crosses using the retrieved size)
+                if not pen: continue 
                 if element.get('type') == 'marker' and element.get('pos'):
                     x, y = element['pos']; r = track_marker_size / 2.0
                     path = QtGui.QPainterPath()
@@ -1209,41 +1193,38 @@ class MainWindow(QtWidgets.QMainWindow):
                     path.moveTo(x, y - r); path.lineTo(x, y + r)
                     item = QtWidgets.QGraphicsPathItem(path)
                     item.setPen(pen)
-                    item.setZValue(10) # Ensure markers are above lines
+                    item.setZValue(10) 
                     scene.addItem(item)
-
-                # Draw Lines
                 elif element.get('type') == 'line' and element.get('p1') and element.get('p2'):
                     p1, p2 = element['p1'], element['p2']
                     item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1])
                     item.setPen(pen)
-                    item.setZValue(9) # Draw lines below markers
+                    item.setZValue(9) 
                     scene.addItem(item)
-
-            # Draw Origin Marker if enabled
-            if self._show_origin_marker:
+    
+            # Get origin marker status from controller
+            show_origin = False
+            if self.coord_panel_controller:
+                show_origin = self.coord_panel_controller.get_show_origin_marker_status()
+    
+            if show_origin: # <-- MODIFIED THIS CONDITION
                 origin_x_tl, origin_y_tl = self.coord_transformer.get_current_origin_tl()
-                radius = origin_marker_size / 2.0 # Use retrieved size
+                radius = origin_marker_size / 2.0
                 origin_item = QtWidgets.QGraphicsEllipseItem(
-                    origin_x_tl - radius, origin_y_tl - radius, # top-left x, y
-                    origin_marker_size, origin_marker_size # width, height
+                    origin_x_tl - radius, origin_y_tl - radius,
+                    origin_marker_size, origin_marker_size
                 )
                 origin_item.setPen(self.pen_origin_marker)
-                # Fill the origin marker with its pen color for visibility
                 origin_item.setBrush(QtGui.QBrush(self.pen_origin_marker.color()))
-                origin_item.setZValue(11) # Ensure origin is above tracks
+                origin_item.setZValue(11)
                 scene.addItem(origin_item)
                 logger.debug(f"Drew origin marker at TL: ({origin_x_tl:.1f}, {origin_y_tl:.1f}) with size {origin_marker_size}")
-
-            # Explicitly request the viewport to repaint (might not be strictly necessary but ensures update)
+    
             if self.imageView and self.imageView.viewport():
                 self.imageView.viewport().update()
-
         except Exception as e:
-            # Log any errors during drawing and clear overlay to avoid partial state
             logger.exception(f"Error during _redraw_scene_overlay: {e}")
             if hasattr(self, 'imageView'): self.imageView.clearOverlay()
-
 
     # --- Event Handlers ---
 
@@ -1283,200 +1264,6 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # Otherwise, pass the event to the base class implementation
             super().keyPressEvent(event)
-
-
-    # --- Coordinate System Slots ---
-
-    @QtCore.Slot(QtWidgets.QAbstractButton, bool)
-    def _coordinate_mode_changed(self, button: QtWidgets.QAbstractButton, checked: bool) -> None:
-        """Handles changes in the coordinate system radio buttons."""
-        if not checked or not hasattr(self, 'coord_transformer'):
-             return # Only react when a button is checked
-
-        new_mode = CoordinateSystem.TOP_LEFT # Default assumption
-        if button == self.coordBottomLeftRadio: new_mode = CoordinateSystem.BOTTOM_LEFT
-        elif button == self.coordCustomRadio: new_mode = CoordinateSystem.CUSTOM
-
-        if self.coord_transformer.mode != new_mode:
-            self.coord_transformer.set_mode(new_mode)
-            logger.info(f"Coordinate system mode changed to: {new_mode.name}")
-            # Update UI labels, points table, and visuals
-            self._update_coordinate_ui_display() # Updates radio buttons & labels
-            self._update_points_table()          # Updates displayed coordinates
-            if self._show_origin_marker:         # Redraw if origin marker is visible
-                 self._redraw_scene_overlay()
-        # Ensure general UI state (button enablements) is correct
-        self._update_ui_state()
-
-    @QtCore.Slot()
-    def _enter_set_origin_mode(self) -> None:
-        """Enters the mode where the next click sets the custom origin."""
-        if not self.video_loaded:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Load a video first to set origin.", 3000)
-            return
-        self._is_setting_origin = True
-        if hasattr(self, 'imageView'):
-            self.imageView.set_interaction_mode(InteractionMode.SET_ORIGIN)
-        if hasattr(self, 'statusBar'): self.statusBar.showMessage("Click on the image to set the custom origin.", 0) # Persistent message
-        logger.info("Entered 'Set Custom Origin' mode.")
-
-    @QtCore.Slot(float, float)
-    def _set_custom_origin(self, scene_x: float, scene_y: float) -> None:
-        """Sets the custom origin based on a click signal from the image view."""
-        if not hasattr(self, 'coord_transformer') or not hasattr(self, 'imageView'): return
-
-        # Exit the setting mode and revert cursor/interaction
-        self._is_setting_origin = False
-        self.imageView.set_interaction_mode(InteractionMode.NORMAL)
-
-        # Update the transformer (this automatically sets mode to CUSTOM)
-        self.coord_transformer.set_custom_origin(scene_x, scene_y)
-
-        # Update UI (Labels, radio button check)
-        self._update_coordinate_ui_display()
-
-        # Update points table display and redraw overlay
-        self._update_points_table()
-        self._redraw_scene_overlay() # Redraw needed to show new origin position if visible
-
-        # Update status bar
-        origin_meta = self.coord_transformer.get_metadata()
-        cust_x = origin_meta.get('origin_x_tl', 0.0)
-        cust_y = origin_meta.get('origin_y_tl', 0.0)
-        if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Custom origin set at (TL): ({cust_x:.1f}, {cust_y:.1f})", 5000)
-        logger.info(f"Custom origin set via click at scene coordinates ({scene_x:.1f}, {scene_y:.1f})")
-
-    @QtCore.Slot(int)
-    def _toggle_show_origin(self, state: int) -> None:
-        """Toggles the visibility of the origin marker based on checkbox state."""
-        self._show_origin_marker = (state == QtCore.Qt.CheckState.Checked.value)
-        logger.info(f"Origin marker visibility set to: {self._show_origin_marker}")
-        # Trigger redraw to show/hide the marker
-        self._redraw_scene_overlay()
-
-
-    # --- UI Update Helpers ---
-
-    def _update_coordinate_ui_display(self) -> None:
-        """Updates the coordinate system radio buttons, origin labels, and checkbox state."""
-        required_attrs = [
-            'coord_transformer', 'coordSystemGroup', 'coordTopLeftRadio',
-            'coordBottomLeftRadio', 'coordCustomRadio', 'coordTopLeftOriginLabel',
-            'coordBottomLeftOriginLabel', 'coordCustomOriginLabel',
-            'showOriginCheckBox'
-        ]
-        if not all(hasattr(self, attr) for attr in required_attrs):
-            logger.warning("_update_coordinate_ui_display skipped: UI elements or transformer not ready.")
-            return
-
-        current_mode = self.coord_transformer.mode
-        origin_meta = self.coord_transformer.get_metadata()
-        video_h = self.coord_transformer.video_height
-
-        # --- Update Origin Labels ---
-        self.coordTopLeftOriginLabel.setText("(0.0, 0.0)")
-        bl_origin_y_str = f"{video_h:.1f}" if video_h > 0 else "-"
-        self.coordBottomLeftOriginLabel.setText(f"(0.0, {bl_origin_y_str})")
-        cust_x = origin_meta.get('origin_x_tl', 0.0)
-        cust_y = origin_meta.get('origin_y_tl', 0.0)
-        self.coordCustomOriginLabel.setText(f"({cust_x:.1f}, {cust_y:.1f})")
-
-        # --- Update Radio Button Selection ---
-        self.coordSystemGroup.blockSignals(True)
-        if current_mode == CoordinateSystem.TOP_LEFT: self.coordTopLeftRadio.setChecked(True)
-        elif current_mode == CoordinateSystem.BOTTOM_LEFT: self.coordBottomLeftRadio.setChecked(True)
-        elif current_mode == CoordinateSystem.CUSTOM:
-             # Ensure custom radio is enabled if video loaded (handled in _update_ui_state)
-             self.coordCustomRadio.setChecked(True)
-        self.coordSystemGroup.blockSignals(False)
-
-        # --- Sync Show Origin Checkbox State ---
-        # Match checkbox visual state to internal state (_show_origin_marker)
-        if hasattr(self, 'showOriginCheckBox'):
-            self.showOriginCheckBox.blockSignals(True)
-            self.showOriginCheckBox.setChecked(self._show_origin_marker)
-            self.showOriginCheckBox.blockSignals(False)
-
-        # Note: _update_ui_state() handles general enablement based on video loaded.
-
-    @QtCore.Slot(float, float)
-    def _handle_mouse_moved(self, scene_x_px: float, scene_y_px: float) -> None:
-        self._last_scene_mouse_x = scene_x_px
-        self._last_scene_mouse_y = scene_y_px
-
-        required_labels_px = ['cursorPosLabelTL', 'cursorPosLabelBL', 'cursorPosLabelCustom']
-        required_labels_m = ['cursorPosLabelTL_m', 'cursorPosLabelBL_m', 'cursorPosLabelCustom_m']
-        
-        if not all(hasattr(self, attr) for attr in required_labels_px + required_labels_m + ['coord_transformer', 'scale_manager']):
-            return
-
-        placeholder = "(--, --)"
-        scale_is_set = self.scale_manager.get_scale_m_per_px() is not None
-
-        if not self.video_loaded or scene_x_px == -1.0:
-            for label_name in required_labels_px + required_labels_m:
-                if hasattr(self, label_name):
-                    getattr(self, label_name).setText(placeholder)
-            return
-
-        # --- PIXEL DISPLAY (Always calculated and shown) ---
-        # 1. Top-Left [px]
-        self.cursorPosLabelTL.setText(f"({scene_x_px:.1f}, {scene_y_px:.1f})")
-
-        # 2. Bottom-Left [px]
-        video_h_px = self.coord_transformer.video_height
-        if video_h_px > 0:
-            bl_x_equivalent_px = scene_x_px
-            bl_y_equivalent_px = -(scene_y_px - float(video_h_px))
-            self.cursorPosLabelBL.setText(f"({bl_x_equivalent_px:.1f}, {bl_y_equivalent_px:.1f})")
-        else:
-            self.cursorPosLabelBL.setText(placeholder)
-
-        # 3. Custom [px]
-        origin_meta = self.coord_transformer.get_metadata()
-        cust_origin_x_tl_px = origin_meta.get('origin_x_tl', 0.0)
-        cust_origin_y_tl_px = origin_meta.get('origin_y_tl', 0.0)
-        custom_x_equivalent_px = scene_x_px - cust_origin_x_tl_px
-        custom_y_equivalent_px = -(scene_y_px - cust_origin_y_tl_px)
-        self.cursorPosLabelCustom.setText(f"({custom_x_equivalent_px:.1f}, {custom_y_equivalent_px:.1f})")
-
-        # --- METRIC DISPLAY (Shown if scale is set) ---
-        if scale_is_set:
-            # Convert TL pixels to meters
-            tl_x_m, tl_y_m = scene_x_px * self.scale_manager.get_scale_m_per_px(), \
-                             scene_y_px * self.scale_manager.get_scale_m_per_px()
-            self.cursorPosLabelTL_m.setText(f"({tl_x_m:.1f}, {tl_y_m:.1f})")
-    
-            # Convert BL equivalent pixels to meters
-            if video_h_px > 0:
-                bl_x_m, bl_y_m = bl_x_equivalent_px * self.scale_manager.get_scale_m_per_px(), \
-                                 bl_y_equivalent_px * self.scale_manager.get_scale_m_per_px()
-                self.cursorPosLabelBL_m.setText(f"({bl_x_m:.1f}, {bl_y_m:.1f})")
-            else:
-                self.cursorPosLabelBL_m.setText(placeholder)
-    
-            # Convert Custom equivalent pixels to meters
-            custom_x_m, custom_y_m = custom_x_equivalent_px * self.scale_manager.get_scale_m_per_px(), \
-                                     custom_y_equivalent_px * self.scale_manager.get_scale_m_per_px()
-            self.cursorPosLabelCustom_m.setText(f"({custom_x_m:.1f}, {custom_y_m:.1f})")
-        else:
-            # If no scale is set, show placeholder in metric labels
-            self.cursorPosLabelTL_m.setText(placeholder)
-            self.cursorPosLabelBL_m.setText(placeholder)
-            self.cursorPosLabelCustom_m.setText(placeholder)
-
-    @QtCore.Slot()
-    def _trigger_cursor_label_update(self) -> None:
-        """
-        Forces an update of cursor position labels.
-        Called when scale or display unit changes, to reflect the change
-        even if the mouse hasn't moved.
-        """
-        if hasattr(self, '_last_scene_mouse_x') and hasattr(self, '_last_scene_mouse_y'):
-             logger.debug("Triggering cursor label update due to scale/unit change.")
-             self._handle_mouse_moved(self._last_scene_mouse_x, self._last_scene_mouse_y)
-        else:
-             logger.warning("_trigger_cursor_label_update called but last mouse position not available.")
 
     # --- Dialog Slots ---
 
