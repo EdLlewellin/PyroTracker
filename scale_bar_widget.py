@@ -4,6 +4,7 @@ Custom QWidget for displaying a dynamic scale bar on the InteractiveImageView.
 """
 import logging
 import math
+import config
 from typing import Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -17,27 +18,6 @@ SCALE_BAR_TEXT_MARGIN_BOTTOM = 2 # Space between text and top of scale bar recta
 SCALE_BAR_DEFAULT_TARGET_FRACTION_OF_VIEW_WIDTH = 0.15 # Try to make bar ~15% of view width
 SCALE_BAR_MIN_PIXEL_WIDTH = 50  # Minimum pixel width for the bar to be meaningful
 SCALE_BAR_MAX_PIXEL_WIDTH = 300 # Maximum pixel width to avoid being too intrusive
-
-# Preferred "round number" sequence for scale bar lengths (in powers of 10 of base unit)
-# e.g., for meters: 1m, 2m, 5m, 10m, 20m, 50m, 100m, etc.
-ROUND_NUMBER_SEQUENCE = [1.0, 2.0, 2.5, 5.0] # 2.5 can be useful, but 1,2,5 is common
-
-# Unit prefixes and their factor relative to meters
-# (value, singular_abbr, plural_abbr_or_none_if_same)
-# Ordered from largest to smallest for formatting preference
-UNIT_PREFIXES = [
-    (1e3, "km", None),          # Kilometer
-    (1.0, "m", None),           # Meter
-    (1e-2, "cm", None),         # Centimeter
-    (1e-3, "mm", None),         # Millimeter
-    (1e-6, "µm", None),         # Micrometer (micron)
-    (1e-9, "nm", None)          # Nanometer
-    # Add picometer (pm) etc. if truly needed, but likely overkill
-]
-# Thresholds for scientific notation
-SCIENTIFIC_NOTATION_UPPER_THRESHOLD = 1000e3 # Above 1000 km
-SCIENTIFIC_NOTATION_LOWER_THRESHOLD = 1e-9   # Below 1 nm (or 0.001 µm)
-
 
 class ScaleBarWidget(QtWidgets.QWidget):
     """
@@ -134,94 +114,72 @@ class ScaleBarWidget(QtWidgets.QWidget):
         """
         Formats a given length in meters into a human-readable string
         with appropriate units (km, m, cm, mm, µm, nm) or scientific notation.
+        Uses constants from config.py.
         """
         if length_meters == 0:
             return "0 m"
 
-        # Handle scientific notation for very large or very small numbers
-        if abs(length_meters) >= SCIENTIFIC_NOTATION_UPPER_THRESHOLD or \
-           (abs(length_meters) > 0 and abs(length_meters) <= SCIENTIFIC_NOTATION_LOWER_THRESHOLD) : # Check > 0 for lower bound
-            return f"{length_meters:.1e}" # e.g., "1.2e+04 km" or "5.0e-10 m" (adjust precision as needed)
+        if abs(length_meters) >= config.SCIENTIFIC_NOTATION_UPPER_THRESHOLD or \
+           (abs(length_meters) > 0 and abs(length_meters) <= config.SCIENTIFIC_NOTATION_LOWER_THRESHOLD) :
+            return f"{length_meters:.1e}"
 
-        for factor, singular_abbr, plural_abbr in UNIT_PREFIXES:
-            if abs(length_meters) >= factor * 0.99: # Check if number is large enough for this unit
+        for factor, singular_abbr, plural_abbr in config.UNIT_PREFIXES: # Use config.UNIT_PREFIXES
+            if abs(length_meters) >= factor * 0.99:
                 value_in_unit = length_meters / factor
-                # Determine precision: generally, more decimal places for smaller units
-                if factor >= 1.0:  # m, km
+                if factor >= 1.0:
                     precision = 2 if abs(value_in_unit) < 10 else 1 if abs(value_in_unit) < 100 else 0
-                elif factor >= 1e-3: # mm, cm
+                elif factor >= 1e-3:
                     precision = 1 if abs(value_in_unit) < 100 else 0
-                else: # µm, nm
+                else:
                     precision = 0
-
-                # Avoid ".0" for whole numbers unless very small
                 if abs(value_in_unit) >= 1 and value_in_unit == math.floor(value_in_unit) and precision > 0:
-                     if abs(value_in_unit) > 10 : precision = 0 # No decimals for e.g. 15 m
-
+                     if abs(value_in_unit) > 10 : precision = 0
                 formatted_value = f"{value_in_unit:.{precision}f}"
                 unit_to_display = plural_abbr if plural_abbr and abs(value_in_unit) != 1.0 else singular_abbr
                 return f"{formatted_value} {unit_to_display}"
-
-        # Fallback if no other format matched (should ideally not happen with above logic)
         return f"{length_meters:.2f} m"
-
 
     def _calculate_bar_length_and_label(self) -> None:
         """
         Calculates the optimal real-world length for the scale bar to represent,
         its corresponding pixel length on screen, and the text label.
         Updates _bar_pixel_length and _bar_text_label.
+        Uses ROUND_NUMBER_SEQUENCE from config.py.
         """
         if self._m_per_px_scene is None or self._view_scale_factor <= 0 or self._parent_view_width <= 0:
             self._bar_pixel_length = 0
             self._bar_text_label = ""
             return
 
-        # Meters per on-screen pixel in the current view
         m_per_view_pixel = self._m_per_px_scene / self._view_scale_factor
-
-        # Target pixel width for the scale bar (e.g., 15% of view width)
         target_bar_display_width_px = self._parent_view_width * SCALE_BAR_DEFAULT_TARGET_FRACTION_OF_VIEW_WIDTH
         target_bar_display_width_px = max(SCALE_BAR_MIN_PIXEL_WIDTH,
                                          min(target_bar_display_width_px, SCALE_BAR_MAX_PIXEL_WIDTH))
-
-        # Corresponding real-world length for this target pixel width
         target_real_world_length_m = target_bar_display_width_px * m_per_view_pixel
 
-        if target_real_world_length_m <= 0: # Should not happen if m_per_view_pixel is positive
+        if target_real_world_length_m <= 0:
             self._bar_pixel_length = 0
             self._bar_text_label = ""
             return
 
-        # Determine the "nice round number" length (e.g., 1, 2, 5, 10, 20, 50, 100...)
-        # Find the power of 10 just below or equal to the target real world length
         power_of_10 = 10.0 ** math.floor(math.log10(target_real_world_length_m))
-        chosen_real_world_length_m = power_of_10
-
-        # Iterate through the round number sequence (1x, 2x, 5x) multiplied by power_of_10
-        best_length_m = power_of_10 * ROUND_NUMBER_SEQUENCE[0] # Start with 1 * power_of_10
-        for R in ROUND_NUMBER_SEQUENCE:
+        # Use config.ROUND_NUMBER_SEQUENCE
+        best_length_m = power_of_10 * config.ROUND_NUMBER_SEQUENCE[0]
+        for R in config.ROUND_NUMBER_SEQUENCE: # Use config.ROUND_NUMBER_SEQUENCE
             current_test_length_m = power_of_10 * R
-            if current_test_length_m <= target_real_world_length_m * 1.05: # Allow slight overshoot for better fit
+            if current_test_length_m <= target_real_world_length_m * 1.05:
                 best_length_m = current_test_length_m
             else:
-                break # Numbers will only get larger, so stop
-
-        # If target is very small (e.g. less than 1*power_of_10), we might need to go down a power_of_10
-        # or use a fraction of the smallest ROUND_NUMBER_SEQUENCE
-        if target_real_world_length_m < power_of_10 * ROUND_NUMBER_SEQUENCE[0] * 0.75 and power_of_10 > 1e-9: # Avoid infinite loop for tiny scales
-            # Try one power of 10 smaller, use largest of sequence
+                break
+        # Use config.ROUND_NUMBER_SEQUENCE
+        if target_real_world_length_m < power_of_10 * config.ROUND_NUMBER_SEQUENCE[0] * 0.75 and power_of_10 > 1e-9:
              power_of_10_smaller = power_of_10 / 10.0
-             best_length_m = power_of_10_smaller * ROUND_NUMBER_SEQUENCE[-1]
-
+             best_length_m = power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1] # Use config.ROUND_NUMBER_SEQUENCE
 
         chosen_real_world_length_m = best_length_m
-
-        # Calculate the final pixel length of the bar for this chosen real-world length
         final_bar_pixel_length = chosen_real_world_length_m / m_per_view_pixel
 
-        # Ensure pixel length isn't excessively small if calculations lead to it
-        if final_bar_pixel_length < SCALE_BAR_MIN_PIXEL_WIDTH / 2.0: # Too small to be useful
+        if final_bar_pixel_length < SCALE_BAR_MIN_PIXEL_WIDTH / 2.0:
              self._bar_pixel_length = 0
              self._bar_text_label = ""
              logger.debug(f"Calculated scale bar pixel length {final_bar_pixel_length:.1f} too small, hiding bar.")
@@ -230,7 +188,6 @@ class ScaleBarWidget(QtWidgets.QWidget):
             self._bar_text_label = self._format_length_value(chosen_real_world_length_m)
             logger.debug(f"Scale bar: Real length={chosen_real_world_length_m:.3g} m, Text='{self._bar_text_label}', Pixel length={self._bar_pixel_length:.1f} px")
 
-        # Calculate text dimensions for sizing the widget
         text_rect = self.font_metrics.boundingRect(self._bar_text_label)
         self._text_width = text_rect.width()
         self._text_height = text_rect.height()

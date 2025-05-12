@@ -371,6 +371,123 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         self.viewTransformChanged.emit()
         logger.info("View reset complete.")
 
+    def draw_persistent_scale_line(self,
+                                   line_data: Tuple[float, float, float, float],
+                                   length_text: str,
+                                   color: QtGui.QColor,
+                                   pen_width: float):
+        """
+        Draws the defined scale line, end markers, and length text onto the scene.
+        The text is centered along the line's length and offset perpendicularly,
+        placed on the side of the line closer to the image center.
+        """
+        if not self._scene or not line_data:
+            logger.warning("Cannot draw persistent scale line: Scene or line_data missing.")
+            return
+        if not self.sceneRect().isValid() or self.sceneRect().isEmpty():
+            logger.warning("Cannot draw persistent scale line: SceneRect is invalid or empty.")
+            return
+
+        p1x, p1y, p2x, p2y = line_data
+        z_value = 12
+
+        line_pen = QtGui.QPen(color, pen_width)
+        line_pen.setCosmetic(True)
+        item_brush = QtGui.QBrush(color)
+
+        # 1. Draw Line and Markers
+        line_item = QtWidgets.QGraphicsLineItem(p1x, p1y, p2x, p2y)
+        line_item.setPen(line_pen); line_item.setZValue(z_value)
+        self._scene.addItem(line_item)
+        marker_radius = 3.0
+        for px, py in [(p1x, p1y), (p2x, p2y)]:
+            marker = QtWidgets.QGraphicsEllipseItem(px - marker_radius, py - marker_radius, 2 * marker_radius, 2 * marker_radius)
+            marker.setPen(line_pen); marker.setBrush(item_brush); marker.setZValue(z_value)
+            self._scene.addItem(marker)
+
+        # 2. Prepare Text Item
+        text_item = QtWidgets.QGraphicsSimpleTextItem(length_text)
+        text_item.setBrush(item_brush)
+        font = text_item.font()
+        font.setPointSize(18) # Your desired font size
+        text_item.setFont(font)
+        text_item.setZValue(z_value)
+
+        local_text_rect = text_item.boundingRect()
+        text_width = local_text_rect.width()
+        text_height = local_text_rect.height()
+
+        # Set transform origin to the center of the text for rotation
+        text_item.setTransformOriginPoint(text_width / 2, text_height / 2)
+
+        # 3. Line Properties
+        line_mid_x = (p1x + p2x) / 2
+        line_mid_y = (p1y + p2y) / 2
+        dx = p2x - p1x
+        dy = p2y - p1y
+        line_length = math.sqrt(dx*dx + dy*dy)
+        if line_length < 1e-6: return
+
+        line_angle_rad = math.atan2(dy, dx)
+        line_angle_deg = math.degrees(line_angle_rad)
+
+        # 4. Initial Position & Rotation
+        # Position the text item so its *center* (transformOriginPoint) is at the line's midpoint
+        initial_text_x = line_mid_x - (text_width / 2)
+        initial_text_y = line_mid_y - (text_height / 2)
+        text_item.setPos(initial_text_x, initial_text_y)
+
+        # Rotate the text
+        text_rotation_deg = line_angle_deg
+        if text_rotation_deg > 90: text_rotation_deg -= 180
+        elif text_rotation_deg < -90: text_rotation_deg += 180
+        text_item.setRotation(text_rotation_deg)
+
+        # 5. Calculate Perpendicular Shift
+        desired_gap_pixels = 3  # TUNABLE: Gap between line and text's unrotated bounding box edge
+        
+        # The magnitude of the shift is half the text's height (to clear the line) 
+        # plus the desired gap. We use the text_height which is its extent perpendicular
+        # to its own baseline when unrotated.
+        shift_magnitude = (text_height / 2) + desired_gap_pixels
+
+        # Determine the direction of the shift (perpendicular to the line)
+        # Unit vector perpendicular to the line: (-dy/length, dx/length) or (dy/length, -dx/length)
+        perp_dx1 = -dy / line_length
+        perp_dy1 = dx / line_length
+
+        # Test which perpendicular direction points towards image center
+        img_center = self.sceneRect().center()
+        
+        # Test point by shifting from line midpoint in direction 1
+        test_pos1_x = line_mid_x + perp_dx1 * shift_magnitude # Use full shift for test
+        test_pos1_y = line_mid_y + perp_dy1 * shift_magnitude
+        dist_sq1 = (test_pos1_x - img_center.x())**2 + (test_pos1_y - img_center.y())**2
+        
+        # Test point by shifting from line midpoint in direction 2 (-perp_dx1, -perp_dy1)
+        test_pos2_x = line_mid_x - perp_dx1 * shift_magnitude
+        test_pos2_y = line_mid_y - perp_dy1 * shift_magnitude
+        dist_sq2 = (test_pos2_x - img_center.x())**2 + (test_pos2_y - img_center.y())**2
+
+        shift_direction_dx = perp_dx1
+        shift_direction_dy = perp_dy1
+        if dist_sq2 < dist_sq1: # Second direction is closer to center
+            shift_direction_dx = -perp_dx1
+            shift_direction_dy = -perp_dy1
+            
+        # Final shift values
+        shift_x = shift_direction_dx * shift_magnitude
+        shift_y = shift_direction_dy * shift_magnitude
+
+        # 6. Apply the shift using moveBy() to the already positioned and rotated item
+        # moveBy is relative to the item's current *parent* coordinate system (scene)
+        # and is applied *after* the item's own rotation if considering its local axes.
+        # However, QGraphicsItem.moveBy() simply adds to its current scene position.
+        text_item.moveBy(shift_x, shift_y)
+        
+        self._scene.addItem(text_item)
+        logger.debug(f"Drew scale line text '{length_text}'. Final Pos: {text_item.pos()}, Shift: ({shift_x:.1f}, {shift_y:.1f})")
+
 
     def clearOverlay(self) -> None:
         if not self._scene:

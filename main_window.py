@@ -1,6 +1,7 @@
 # main_window.py
 import sys
 import os
+import math
 import logging
 from PySide6 import QtCore, QtGui, QtWidgets
 # Import necessary types from typing module
@@ -615,26 +616,53 @@ class MainWindow(QtWidgets.QMainWindow):
         if disable and status_bar:
             status_bar.showMessage("Frame navigation disabled while defining scale line.", 0)
 
+    def _format_length_value_for_line(self, length_meters: float) -> str:
+        """
+        Formats a given length in meters into a human-readable string
+        with appropriate units (km, m, cm, mm, µm, nm) or scientific notation.
+        Uses constants from config.py.
+        """
+        if length_meters == 0:
+            return "0 m"
+
+        # Handle scientific notation for very large or very small numbers
+        if abs(length_meters) >= config.SCIENTIFIC_NOTATION_UPPER_THRESHOLD or \
+           (abs(length_meters) > 0 and abs(length_meters) <= config.SCIENTIFIC_NOTATION_LOWER_THRESHOLD):
+            return f"{length_meters:.2e}" # Adjusted precision for line text
+
+        for factor, singular_abbr, plural_abbr in config.UNIT_PREFIXES:
+            if abs(length_meters) >= factor * 0.99:
+                value_in_unit = length_meters / factor
+                if factor >= 1.0:  # m, km
+                    precision = 2 if abs(value_in_unit) < 10 else 1 if abs(value_in_unit) < 100 else 0
+                elif factor >= 1e-3: # mm, cm
+                    precision = 1 if abs(value_in_unit) < 100 else 0
+                else: # µm, nm
+                    precision = 0
+                if abs(value_in_unit) >= 1 and value_in_unit == math.floor(value_in_unit) and precision > 0:
+                     if abs(value_in_unit) > 10 : precision = 0
+                formatted_value = f"{value_in_unit:.{precision}f}"
+                unit_to_display = plural_abbr if plural_abbr and abs(value_in_unit) != 1.0 else singular_abbr
+                return f"{formatted_value} {unit_to_display}"
+        return f"{length_meters:.3f} m"
+
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
-        if not (self.imageView and self.imageView._scene and self.video_loaded and self.current_frame_index >=0):
+        """
+        Coordinates the drawing of overlays by fetching data and calling
+        specific drawing methods on the InteractiveImageView.
+        """
+        if not (self.imageView and self.imageView._scene and self.video_loaded and self.current_frame_index >= 0):
             if self.imageView: self.imageView.clearOverlay()
             return
-        
+
         scene = self.imageView._scene
-        # Clear existing overlay items, EXCLUDING temporary scale definition visuals
-        # handled by InteractiveImageView itself.
-        self.imageView.clearOverlay()
+        self.imageView.clearOverlay() # Clear previous persistent overlays first
 
         try:
-            # Get marker and line sizes from settings
+            # --- Draw Tracks ---
             marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-            origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
-
-            # Get visual elements for tracks from TrackManager
             elements = self.track_manager.get_visual_elements(self.current_frame_index)
-            
-            # Prepare a dictionary of pens for quick lookup
             pens = {
                 config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
                 config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
@@ -643,90 +671,64 @@ class MainWindow(QtWidgets.QMainWindow):
                 config.STYLE_LINE_ACTIVE: self.pen_line_active,
                 config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
             }
-
-            # Draw track markers and lines
+            # (Track drawing logic remains here for now, could be refactored too)
             for el in elements:
                 pen = pens.get(el.get('style'))
-                if not pen: continue # Skip if style not found
-
+                if not pen: continue
                 if el.get('type') == 'marker' and el.get('pos'):
-                    x, y = el['pos']
-                    r = marker_sz / 2.0
-                    path = QtGui.QPainterPath()
-                    path.moveTo(x - r, y)
-                    path.lineTo(x + r, y)
-                    path.moveTo(x, y - r)
-                    path.lineTo(x, y + r)
-                    item = QtWidgets.QGraphicsPathItem(path)
-                    item.setPen(pen)
-                    item.setZValue(10) # Markers above lines
-                    scene.addItem(item)
+                    x, y = el['pos']; r = marker_sz / 2.0
+                    path = QtGui.QPainterPath(); path.moveTo(x - r, y); path.lineTo(x + r, y); path.moveTo(x, y - r); path.lineTo(x, y + r)
+                    item = QtWidgets.QGraphicsPathItem(path); item.setPen(pen); item.setZValue(10); scene.addItem(item)
                 elif el.get('type') == 'line' and el.get('p1') and el.get('p2'):
                     p1, p2 = el['p1'], el['p2']
-                    item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1])
-                    item.setPen(pen)
-                    item.setZValue(9) # Lines below markers
-                    scene.addItem(item)
+                    item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1]); item.setPen(pen); item.setZValue(9); scene.addItem(item)
 
-            # Draw the coordinate system origin marker
+            # --- Draw Origin Marker ---
             if self.coord_panel_controller and self.coord_panel_controller.get_show_origin_marker_status():
+                origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
                 ox, oy = self.coord_transformer.get_current_origin_tl()
                 r_orig = origin_sz / 2.0
                 origin_item = QtWidgets.QGraphicsEllipseItem(ox - r_orig, oy - r_orig, origin_sz, origin_sz)
-                origin_item.setPen(self.pen_origin_marker)
-                origin_item.setBrush(self.pen_origin_marker.color()) # Fill origin marker
-                origin_item.setZValue(11) # Origin marker above tracks
-                scene.addItem(origin_item)
+                origin_item.setPen(self.pen_origin_marker); origin_item.setBrush(self.pen_origin_marker.color()); origin_item.setZValue(11)
+                scene.addItem(origin_item) # (Origin drawing also still here)
 
-            # --- NEW: Draw the persistent defined scale line ---
+            # --- Draw Defined Scale Line (Coordination Part) ---
             if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
                self.scale_manager and self.scale_manager.has_defined_scale_line():
-                
-                line_data = self.scale_manager.get_defined_scale_line_data()
-                if line_data:
-                    p1x, p1y, p2x, p2y = line_data
-                    # Define a pen for the persistent scale line (e.g., magenta, solid)
-                    # Consider making this color/style configurable via settings_manager later
-                    defined_line_pen = QtGui.QPen(QtGui.QColor("magenta"), 1.5) # Magenta, width 1.5
-                    defined_line_pen.setCosmetic(True)
-                    
-                    # Draw the line
-                    line_item = QtWidgets.QGraphicsLineItem(p1x, p1y, p2x, p2y)
-                    line_item.setPen(defined_line_pen)
-                    line_item.setZValue(12) # Above tracks and origin, but below temporary scale items
-                    scene.addItem(line_item)
-                    
-                    # Optionally, draw small markers at the ends of the defined line
-                    marker_radius = 3.0 # Small radius for end markers
-                    end_marker_brush = QtGui.QBrush(QtGui.QColor("magenta"))
-                    
-                    marker1 = QtWidgets.QGraphicsEllipseItem(
-                        p1x - marker_radius, p1y - marker_radius, 
-                        2 * marker_radius, 2 * marker_radius
-                    )
-                    marker1.setPen(defined_line_pen)
-                    marker1.setBrush(end_marker_brush)
-                    marker1.setZValue(12)
-                    scene.addItem(marker1)
-                    
-                    marker2 = QtWidgets.QGraphicsEllipseItem(
-                        p2x - marker_radius, p2y - marker_radius, 
-                        2 * marker_radius, 2 * marker_radius
-                    )
-                    marker2.setPen(defined_line_pen)
-                    marker2.setBrush(end_marker_brush)
-                    marker2.setZValue(12)
-                    scene.addItem(marker2)
-                    logger.debug(f"Drew persistent defined scale line from ({p1x:.1f},{p1y:.1f}) to ({p2x:.1f},{p2y:.1f})")
 
-            # Ensure the viewport is updated to reflect the changes
+                line_data = self.scale_manager.get_defined_scale_line_data()
+                scale_m_per_px = self.scale_manager.get_scale_m_per_px()
+
+                if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
+                    # Calculate length and format text
+                    p1x, p1y, p2x, p2y = line_data
+                    dx = p2x - p1x
+                    dy = p2y - p1y
+                    pixel_length = math.sqrt(dx*dx + dy*dy)
+                    meter_length = pixel_length * scale_m_per_px
+                    length_text = self._format_length_value_for_line(meter_length)
+
+                    # Define appearance (could come from settings later)
+                    line_color = QtGui.QColor("magenta")
+                    line_pen_width = 1.5
+
+                    # Call the drawing method on InteractiveImageView
+                    self.imageView.draw_persistent_scale_line(
+                        line_data=line_data,
+                        length_text=length_text,
+                        color=line_color,
+                        pen_width=line_pen_width
+                    )
+                    logger.debug("MainWindow requested ImageView to draw persistent scale line.")
+
+            # Ensure the viewport is updated (ImageView might handle this internally, but explicit update is safe)
             if self.imageView.viewport():
                 self.imageView.viewport().update()
 
         except Exception as e:
-            logger.exception(f"Error in _redraw_scene_overlay: {e}")
+            logger.exception(f"Error during overlay coordination in _redraw_scene_overlay: {e}")
             if self.imageView:
-                self.imageView.clearOverlay() # Clear on error to prevent artifacts
+                self.imageView.clearOverlay() # Clear on error
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         key = event.key(); accepted = False

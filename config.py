@@ -88,11 +88,30 @@ STYLE_LINE_INACTIVE = "line_inactive"
 CLICK_TOLERANCE = 10.0      # Pixel distance tolerance for selecting tracks via click
 CLICK_TOLERANCE_SQ = CLICK_TOLERANCE * CLICK_TOLERANCE # Squared tolerance avoids sqrt
 
+# --- Formatting Constants for Scale Display ---
+# Unit prefixes and their factor relative to meters
+# (value, singular_abbr, plural_abbr_or_none_if_same)
+# Ordered from largest to smallest for formatting preference
+UNIT_PREFIXES = [
+    (1e3, "km", None),          # Kilometer
+    (1.0, "m", None),           # Meter
+    (1e-2, "cm", None),         # Centimeter
+    (1e-3, "mm", None),         # Millimeter
+    (1e-6, "µm", None),         # Micrometer (micron)
+    (1e-9, "nm", None)          # Nanometer
+]
+# Thresholds for scientific notation
+SCIENTIFIC_NOTATION_UPPER_THRESHOLD = 1000e3 # Above 1000 km
+SCIENTIFIC_NOTATION_LOWER_THRESHOLD = 1e-9   # Below 1 nm (or 0.001 µm)
+
+# Preferred "round number" sequence for scale bar lengths (in powers of 10 of base unit)
+# This is currently only used in scale_bar_widget.py but can live here for consistency.
+ROUND_NUMBER_SEQUENCE = [1.0, 2.0, 2.5, 5.0]
+
 # --- Interaction Constants ---
 # Shared interaction constants.
 DRAG_THRESHOLD = 5      # Pixels mouse must move to register as a drag, not a click
 MAX_ABS_SCALE = 50.0    # Absolute maximum allowed view scale factor (e.g., 50x zoom)
-
 
 # --- Application Info ---
 APP_NAME = "PyroTracker"
