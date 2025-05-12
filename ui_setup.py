@@ -233,12 +233,12 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     scale_group_layout.setContentsMargins(6, 6, 6, 6)
     scale_group_layout.setSpacing(8)
 
-    # Input Row
+    # --- Row 1: Manual Scale Input ---
     scale_input_layout = QtWidgets.QHBoxLayout()
-    scale_input_layout.setSpacing(5) # Compact spacing within the row
+    scale_input_layout.setSpacing(5)
 
-    scale_input_layout.addWidget(QtWidgets.QLabel("Set scale:")) # General label
-    scale_input_layout.addStretch(1) # Push specific inputs to the right a bit
+    scale_input_layout.addWidget(QtWidgets.QLabel("Manual scale:"))
+    scale_input_layout.addStretch(1)
 
     scale_input_layout.addWidget(QtWidgets.QLabel("m/px:"))
     main_window.scale_m_per_px_input = QtWidgets.QLineEdit()
@@ -262,12 +262,30 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.scale_reset_button.setFixedSize(main_window.scale_reset_button.iconSize() + QtCore.QSize(10,5))
     scale_input_layout.addWidget(main_window.scale_reset_button)
     scale_input_layout.addStretch(2)
-
     scale_group_layout.addLayout(scale_input_layout)
 
-    # Toggle Row (Display in meters AND Show Scale Bar)
+    # --- Row 2: Scale from Feature ---
+    scale_from_feature_layout = QtWidgets.QHBoxLayout()
+    scale_from_feature_layout.setSpacing(5)
+
+    scale_from_feature_layout.addWidget(QtWidgets.QLabel("Scale from feature:"))
+    main_window.setScaleByFeatureButton = QtWidgets.QPushButton("Set")
+    main_window.setScaleByFeatureButton.setToolTip("Define scale by clicking two points on a feature of known length")
+    main_window.setScaleByFeatureButton.setEnabled(False) # Initially disabled, enable when video loaded
+    scale_from_feature_layout.addWidget(main_window.setScaleByFeatureButton)
+
+    main_window.showScaleLineCheckBox = QtWidgets.QCheckBox("Show scale line") # Set text here
+    main_window.showScaleLineCheckBox.setToolTip("Show/hide the line used to define the scale")
+    main_window.showScaleLineCheckBox.setChecked(False)
+    main_window.showScaleLineCheckBox.setEnabled(False) # Enable when scale is set by feature
+    scale_from_feature_layout.addWidget(main_window.showScaleLineCheckBox)
+
+    scale_from_feature_layout.addStretch()
+    scale_group_layout.addLayout(scale_from_feature_layout)
+
+    # --- Row 3: Toggle Row (Display in meters AND Show Scale Bar) ---
     scale_toggle_layout = QtWidgets.QHBoxLayout()
-    scale_toggle_layout.setSpacing(10) # Add some spacing between checkboxes
+    scale_toggle_layout.setSpacing(10)
 
     main_window.scale_display_meters_checkbox = QtWidgets.QCheckBox("Display in meters")
     main_window.scale_display_meters_checkbox.setToolTip("Convert displayed values to meters (only if scale is set)")
@@ -275,15 +293,13 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.scale_display_meters_checkbox.setEnabled(False)
     scale_toggle_layout.addWidget(main_window.scale_display_meters_checkbox)
 
-    # --- NEW: Add "Show Scale Bar" Checkbox ---
     main_window.showScaleBarCheckBox = QtWidgets.QCheckBox("Show Scale Bar")
     main_window.showScaleBarCheckBox.setToolTip("Toggle visibility of the scale bar on the image (only if scale is set)")
-    main_window.showScaleBarCheckBox.setChecked(False) # Default to unchecked (will be checked if scale is set)
-    main_window.showScaleBarCheckBox.setEnabled(False) # Initially disabled
+    main_window.showScaleBarCheckBox.setChecked(False)
+    main_window.showScaleBarCheckBox.setEnabled(False)
     scale_toggle_layout.addWidget(main_window.showScaleBarCheckBox)
-    # --- END NEW ---
 
-    scale_toggle_layout.addStretch() # Align checkboxes to the left
+    scale_toggle_layout.addStretch()
     scale_group_layout.addLayout(scale_toggle_layout)
 
     rightPanelLayout.addWidget(scale_config_group)

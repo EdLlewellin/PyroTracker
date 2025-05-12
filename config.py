@@ -22,13 +22,19 @@ META_COORD_ORIGIN_X_TL = "Coordinate Origin X (TL)"
 META_COORD_ORIGIN_Y_TL = "Coordinate Origin Y (TL)"
 META_APP_NAME = "Application Name"
 META_APP_VERSION = "Application Version"
+META_SCALE_LINE_P1X = "Scale Line P1 X (Scene px)"
+META_SCALE_LINE_P1Y = "Scale Line P1 Y (Scene px)"
+META_SCALE_LINE_P2X = "Scale Line P2 X (Scene px)"
+META_SCALE_LINE_P2Y = "Scale Line P2 Y (Scene px)"
 
 # Metadata keys expected in CSV header for validation and writing.
 EXPECTED_METADATA_KEYS = [
     META_APP_NAME, META_APP_VERSION,
     META_FILENAME, META_WIDTH, META_HEIGHT, META_FRAMES, META_FPS, META_DURATION,
     META_COORD_SYSTEM_MODE, META_COORD_ORIGIN_X_TL, META_COORD_ORIGIN_Y_TL,
-    META_SCALE_FACTOR_M_PER_PX, META_DATA_UNITS
+    META_SCALE_FACTOR_M_PER_PX, META_DATA_UNITS,
+    META_SCALE_LINE_P1X, META_SCALE_LINE_P1Y,
+    META_SCALE_LINE_P2X, META_SCALE_LINE_P2Y,
 ]
 
 # --- Table Column Indices ---
@@ -91,4 +97,4 @@ MAX_ABS_SCALE = 50.0    # Absolute maximum allowed view scale factor (e.g., 50x 
 # --- Application Info ---
 APP_NAME = "PyroTracker"
 APP_ORGANIZATION = "Durham University"
-APP_VERSION = "2.3.0 Beta"
+APP_VERSION = "2.3.0 Beta" # Updated in source files

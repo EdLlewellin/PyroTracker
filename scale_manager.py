@@ -1,6 +1,7 @@
 # scale_manager.py
 """
 Manages scale factor, display units, and performs scale transformations.
+Also stores information about a user-defined scale line, if set.
 """
 import logging
 from typing import Optional, Tuple
@@ -10,23 +11,33 @@ logger = logging.getLogger(__name__)
 
 class ScaleManager(QtCore.QObject):
     """
-    Manages the current scale factor (meters per pixel) and preferred display units.
-    Provides methods to set the scale, get the scale, and (eventually) transform values.
+    Manages the current scale factor (meters per pixel), preferred display units,
+    and the data for a user-defined scale line.
+    Provides methods to set the scale, get the scale, and transform values.
     """
-    # Signal to notify when the scale or display unit changes,
-    # prompting UI updates for displayed values.
+    # Signal to notify when the scale, display unit, or defined scale line state changes,
+    # prompting UI updates.
     scaleOrUnitChanged = QtCore.Signal()
 
     def __init__(self, parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
         self._scale_m_per_px: Optional[float] = None
         self._display_in_meters: bool = False
+        # --- NEW: Store defined scale line points (scene coordinates) ---
+        # Format: (p1x, p1y, p2x, p2y) or None if not set
+        self._defined_scale_line_data: Optional[Tuple[float, float, float, float]] = None
         logger.debug("ScaleManager initialized.")
 
-    def set_scale(self, m_per_px: Optional[float]) -> None:
+    def set_scale(self, m_per_px: Optional[float], called_from_line_definition: bool = False) -> None:
         """
         Sets the scale factor in meters per pixel.
         If None, scale is considered unset.
+        Optionally clears defined scale line data if not called from line definition process.
+
+        Args:
+            m_per_px: The scale factor, or None to clear.
+            called_from_line_definition: Internal flag to prevent clearing the defined
+                                          line when setting scale *from* that line.
         """
         if m_per_px is not None and m_per_px <= 0:
             logger.warning(f"Attempted to set invalid scale: {m_per_px}. Scale not set.")
@@ -34,13 +45,38 @@ class ScaleManager(QtCore.QObject):
         else:
             new_scale = m_per_px
 
-        if self._scale_m_per_px != new_scale:
+        scale_changed = (self._scale_m_per_px != new_scale)
+
+        if scale_changed:
             self._scale_m_per_px = new_scale
-            logger.info(f"Scale set to: {self._scale_m_per_px} m/px.")
-            if self._scale_m_per_px is None:
-                # If scale is removed, force display back to pixels
+            logger.info(f"Scale factor set to: {self._scale_m_per_px} m/px.") # Existing log
+
+            if self._scale_m_per_px is None: # Scale is being cleared
+                # These methods will emit scaleOrUnitChanged if they cause a relevant state change.
                 self.set_display_in_meters(False)
+                self.clear_defined_scale_line()
+            else: # Scale is being set to a new valid value
+                if not called_from_line_definition:
+                    # If setting scale manually, and not as part of defining a line,
+                    # any previously defined line (which might now be inconsistent) should be cleared.
+                    # clear_defined_scale_line() will emit if it actually removes a defined line.
+                    self.clear_defined_scale_line()
+                # If called_from_line_definition is True, set_defined_scale_line() would be called
+                # elsewhere and would handle its own emission if the line data changed.
+
+            # Explicitly emit the signal if the core scale value has changed.
+            # This ensures that listeners are notified of the scale change itself,
+            # even if helper methods like clear_defined_scale_line didn't emit
+            # (e.g., because there was no line to clear).
             self.scaleOrUnitChanged.emit()
+            logger.debug("Emitted scaleOrUnitChanged due to scale_changed=True in set_scale.")
+
+        # No 'else' needed; if scale_changed is False, no action or signal is necessary from here.
+
+    # --- Convenience overload for setting scale internally ---
+    def _set_scale_from_line_definition(self, m_per_px: Optional[float]) -> None:
+        """Internal method to set scale factor when defined by line, avoids clearing line data."""
+        self.set_scale(m_per_px, called_from_line_definition=True)
 
     def get_scale_m_per_px(self) -> Optional[float]:
         """Returns the current scale in meters per pixel, or None if not set."""
@@ -70,6 +106,46 @@ class ScaleManager(QtCore.QObject):
             return 1.0 / self._scale_m_per_px
         return None
 
+    # --- NEW: Methods for managing the defined scale line ---
+
+    def set_defined_scale_line(self, p1x: float, p1y: float, p2x: float, p2y: float) -> None:
+        """
+        Stores the coordinates of the line used to define the scale.
+        Rounds coordinates for storage. Emits scaleOrUnitChanged if the
+        presence state changes (from None to having data).
+        """
+        # Round coordinates to maintain reasonable precision for storage/comparison
+        new_data = (round(p1x, 3), round(p1y, 3), round(p2x, 3), round(p2y, 3))
+        if self._defined_scale_line_data != new_data:
+            was_none = self._defined_scale_line_data is None
+            self._defined_scale_line_data = new_data
+            logger.info(f"Stored defined scale line data: {self._defined_scale_line_data}")
+            # Emit only if state changed from None to having data, as this affects the checkbox availability
+            if was_none:
+                self.scaleOrUnitChanged.emit()
+
+    def clear_defined_scale_line(self) -> None:
+        """
+        Clears the stored defined scale line data.
+        Emits scaleOrUnitChanged if the state changes (from having data to None).
+        """
+        if self._defined_scale_line_data is not None:
+            logger.info("Clearing defined scale line data.")
+            self._defined_scale_line_data = None
+            # Emit signal because the state relevant to the 'Show scale line' checkbox changed
+            self.scaleOrUnitChanged.emit()
+
+    def has_defined_scale_line(self) -> bool:
+        """Returns True if a scale line has been defined and stored."""
+        return self._defined_scale_line_data is not None
+
+    def get_defined_scale_line_data(self) -> Optional[Tuple[float, float, float, float]]:
+        """Returns the stored scale line points (p1x, p1y, p2x, p2y), or None."""
+        # Tuple is immutable, so no need to return a copy
+        return self._defined_scale_line_data
+
+    # --- End NEW Methods ---
+
     def transform_value_for_display(self, value_px: float) -> Tuple[float, str]:
         """
         Transforms a pixel value to the current display unit (px or m).
@@ -87,7 +163,7 @@ class ScaleManager(QtCore.QObject):
                 # Fallback to pixels
                 transformed_value = value_px
                 unit_str = "px"
-        
+
         # Apply rounding based on unit
         if unit_str == "m":
             # For meters, 4 decimal places (0.1 mm precision) seems reasonable
@@ -104,9 +180,9 @@ class ScaleManager(QtCore.QObject):
         unit_str = "px"
         display_x = x_px
         display_y = y_px
-    
+
         should_convert_to_meters = (self._display_in_meters or force_meters)
-    
+
         if should_convert_to_meters and self._scale_m_per_px is not None and self._scale_m_per_px > 0:
             try:
                 display_x = x_px * self._scale_m_per_px
@@ -117,7 +193,7 @@ class ScaleManager(QtCore.QObject):
                 display_x = x_px # Fallback
                 display_y = y_px # Fallback
                 unit_str = "px"
-    
+
         # Apply rounding based on actual unit of display_x, display_y
         if unit_str == "m":
             return round(display_x, 3), round(display_y, 3), unit_str # Adjusted precision for example
@@ -129,10 +205,21 @@ class ScaleManager(QtCore.QObject):
         return "m" if self._display_in_meters and self._scale_m_per_px is not None else "px"
 
     def reset(self) -> None:
-        """Resets the scale and display unit to defaults."""
+        """Resets the scale, display unit, and defined scale line to defaults."""
         logger.debug("Resetting ScaleManager.")
-        changed = self._scale_m_per_px is not None or self._display_in_meters
+        # Check if *any* state that affects UI is changing before emitting signal
+        scale_was_set = self._scale_m_per_px is not None
+        was_displaying_meters = self._display_in_meters
+        line_was_defined = self.has_defined_scale_line()
+
+        state_changed = scale_was_set or was_displaying_meters or line_was_defined
+
         self._scale_m_per_px = None
         self._display_in_meters = False # Default to pixels
-        if changed:
-            self.scaleOrUnitChanged.emit()
+        # Don't call clear_defined_scale_line directly here to avoid double signal emission
+        # if state_changed is True anyway. Just set the attribute.
+        self._defined_scale_line_data = None
+
+        # Emit signal only if scale, units, or line state *actually* changed
+        if state_changed:
+             self.scaleOrUnitChanged.emit()

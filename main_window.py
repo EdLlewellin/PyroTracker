@@ -45,6 +45,11 @@ class MainWindow(QtWidgets.QMainWindow):
     imageView: InteractiveImageView # Assigned by ui_setup
     video_handler: VideoHandler
     coord_transformer: CoordinateTransformer
+    scale_manager: ScaleManager # Added
+    scale_panel_controller: Optional[ScalePanelController] # Added
+    coord_panel_controller: Optional[CoordinatePanelController] # Added
+    table_data_controller: Optional[TrackDataViewController] # Added
+
 
     # Video State (Mirrored from VideoHandler for easier UI updates)
     total_frames: int
@@ -61,20 +66,6 @@ class MainWindow(QtWidgets.QMainWindow):
     _auto_advance_enabled: bool
     _auto_advance_frames: int
 
-    # Coordinate System State
-    _is_setting_origin: bool
-    _show_origin_marker: bool
-    
-    # Add type hints for scale panel widgets
-    scale_m_per_px_input: Optional[QtWidgets.QLineEdit] = None
-    scale_px_per_m_input: Optional[QtWidgets.QLineEdit] = None
-    scale_reset_button: Optional[QtWidgets.QPushButton] = None
-    scale_display_meters_checkbox: Optional[QtWidgets.QCheckBox] = None
-    showScaleBarCheckBox: Optional[QtWidgets.QCheckBox] = None
-    cursorPosLabelTL_m: Optional[QtWidgets.QLabel] = None
-    cursorPosLabelBL_m: Optional[QtWidgets.QLabel] = None
-    cursorPosLabelCustom_m: Optional[QtWidgets.QLabel] = None
-
     # UI Elements (These are assigned by ui_setup.setup_main_window_ui)
     # Add type hints for elements accessed directly in MainWindow methods
     mainSplitter: QtWidgets.QSplitter
@@ -86,13 +77,13 @@ class MainWindow(QtWidgets.QMainWindow):
     nextFrameButton: QtWidgets.QPushButton
     frameLabel: QtWidgets.QLabel
     timeLabel: QtWidgets.QLabel
-    fpsLabel: QtWidgets.QLabel # Assuming fpsLabel is created in ui_setup
+    fpsLabel: QtWidgets.QLabel
     filenameLabel: QtWidgets.QLabel
     dataTabsWidget: QtWidgets.QTabWidget
     tracksTableWidget: QtWidgets.QTableWidget
     pointsTabLabel: QtWidgets.QLabel
     pointsTableWidget: QtWidgets.QTableWidget
-    statusBar: QtWidgets.QStatusBar
+    # statusBar: QtWidgets.QStatusBar # Provided by QMainWindow via self.statusBar()
     autoAdvanceCheckBox: QtWidgets.QCheckBox
     autoAdvanceSpinBox: QtWidgets.QSpinBox
     coordSystemGroup: QtWidgets.QButtonGroup
@@ -114,10 +105,19 @@ class MainWindow(QtWidgets.QMainWindow):
     newTrackAction: QtGui.QAction # Shortcut action
     videoInfoAction: QtGui.QAction
     preferencesAction: QtGui.QAction
-    scale_manager: ScaleManager
 
-    # UI Element Collections / State
-    track_visibility_button_groups: Dict[int, QtWidgets.QButtonGroup]
+    # Add type hints for scale panel widgets (from ui_setup.py)
+    scale_m_per_px_input: Optional[QtWidgets.QLineEdit] = None
+    scale_px_per_m_input: Optional[QtWidgets.QLineEdit] = None
+    setScaleByFeatureButton: Optional[QtWidgets.QPushButton] = None
+    showScaleLineCheckBox: Optional[QtWidgets.QCheckBox] = None
+    scale_reset_button: Optional[QtWidgets.QPushButton] = None
+    scale_display_meters_checkbox: Optional[QtWidgets.QCheckBox] = None
+    showScaleBarCheckBox: Optional[QtWidgets.QCheckBox] = None
+    cursorPosLabelTL_m: Optional[QtWidgets.QLabel] = None
+    cursorPosLabelBL_m: Optional[QtWidgets.QLabel] = None
+    cursorPosLabelCustom_m: Optional[QtWidgets.QLabel] = None
+
 
     # Drawing Pens (Configured based on settings)
     pen_origin_marker: QtGui.QPen
@@ -133,10 +133,17 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
         logger.info("Initializing MainWindow...")
         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}")
-    
+
         if os.path.exists(ICON_PATH):
             self.setWindowIcon(QtGui.QIcon(ICON_PATH))
-    
+
+        # Initialize core components
+        self.video_handler = VideoHandler(self)
+        self.track_manager = TrackManager(self)
+        self.coord_transformer = CoordinateTransformer()
+        self.scale_manager = ScaleManager(self) # Initialize ScaleManager
+
+        # Initialize video state variables
         self.total_frames = 0
         self.current_frame_index = -1
         self.video_loaded = False
@@ -146,41 +153,54 @@ class MainWindow(QtWidgets.QMainWindow):
         self.video_filepath = ""
         self.frame_width = 0
         self.frame_height = 0
+
+        # Initialize Auto-Advance State
         self._auto_advance_enabled = False
         self._auto_advance_frames = 1
-    
-        self.video_handler = VideoHandler(self)
-        self.track_manager = TrackManager(self)
-        self.coord_transformer = CoordinateTransformer()
-        self.scale_manager = ScaleManager(self)
-    
-        self.scale_panel_controller: Optional[ScalePanelController] = None
-        self.coord_panel_controller: Optional[CoordinatePanelController] = None
-        self.table_data_controller: Optional[TrackDataViewController] = None # New controller
-    
+
+        # Initialize pens (styles depend on settings)
         self._setup_pens()
-    
+
+        # Set initial window size and minimum size
         screen_geometry = QtGui.QGuiApplication.primaryScreen().availableGeometry()
         self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
-    
-        ui_setup.setup_main_window_ui(self) # This creates self.tracksTableWidget, self.pointsTableWidget etc.
-    
-        # Instantiate Panel Controllers
-        if hasattr(self, 'scale_m_per_px_input'): # Check if UI elements are ready
+
+        # Delegate UI creation to ui_setup module
+        # This will assign widgets like self.imageView, self.tracksTableWidget etc.
+        ui_setup.setup_main_window_ui(self) # This also creates self.statusBar()
+
+        # --- Instantiate Panel Controllers (after UI elements are created) ---
+        # ScalePanelController
+        if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
+            'scale_m_per_px_input', 'scale_px_per_m_input', 'scale_reset_button',
+            'scale_display_meters_checkbox', 'showScaleBarCheckBox',
+            'setScaleByFeatureButton', 'showScaleLineCheckBox',
+            'imageView', 'scale_manager'
+        ]):
             self.scale_panel_controller = ScalePanelController(
                 scale_manager=self.scale_manager,
                 image_view=self.imageView,
+                main_window_ref=self,
                 scale_m_per_px_input=self.scale_m_per_px_input,
                 scale_px_per_m_input=self.scale_px_per_m_input,
+                set_scale_by_feature_button=self.setScaleByFeatureButton,
+                show_scale_line_checkbox=self.showScaleLineCheckBox,
                 scale_reset_button=self.scale_reset_button,
                 scale_display_meters_checkbox=self.scale_display_meters_checkbox,
                 show_scale_bar_checkbox=self.showScaleBarCheckBox,
                 parent=self
             )
-            logger.debug("ScalePanelController initialized.")
-    
-        if all(hasattr(self, attr) for attr in [
+            if self.statusBar():
+                 self.scale_panel_controller.statusBarMessage.connect(self.statusBar().showMessage)
+            self.scale_panel_controller.requestFrameNavigationControlsDisabled.connect(self._handle_disable_frame_navigation)
+            logger.debug("ScalePanelController initialized and signals connected.")
+        else:
+            logger.error("Scale panel UI elements or core components not found for ScalePanelController.")
+            self.scale_panel_controller = None
+
+        # CoordinatePanelController
+        if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'coordSystemGroup', 'coordTopLeftRadio', 'coordBottomLeftRadio', 'coordCustomRadio',
             'coordTopLeftOriginLabel', 'coordBottomLeftOriginLabel', 'coordCustomOriginLabel',
             'setOriginButton', 'showOriginCheckBox', 'cursorPosLabelTL', 'cursorPosLabelBL',
@@ -199,10 +219,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 cursor_pos_labels_px=cursor_labels_px, cursor_pos_labels_m=cursor_labels_m, parent=self
             )
             logger.debug("CoordinatePanelController initialized.")
-    
-        # Instantiate TableDataViewController
-        if all(hasattr(self, attr) for attr in [
-            'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'track_manager', 
+        else:
+            logger.error("Coordinate panel UI elements or core components not found for CoordinatePanelController.")
+            self.coord_panel_controller = None
+
+        # TrackDataViewController
+        if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
+            'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'track_manager',
             'video_handler', 'scale_manager', 'coord_transformer'
         ]):
             self.table_data_controller = TrackDataViewController(
@@ -220,19 +243,19 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             logger.error("Table UI elements or core components not found for TrackDataViewController.")
             self.table_data_controller = None
-    
-    
-        self.statusBar = self.statusBar()
-        if self.statusBar:
-            self.statusBar.showMessage("Ready. Load a video via File -> Open Video...")
-    
+
+        # Initial status bar message
+        status_bar_instance = self.statusBar()
+        if status_bar_instance:
+            status_bar_instance.showMessage("Ready. Load a video via File -> Open Video...")
+
         # --- Connect Signals ---
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
-    
-        if hasattr(self, 'imageView') and self.imageView:
+
+        if self.imageView: # Ensure imageView exists
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
             self.imageView.modifiedClick.connect(self._handle_modified_click)
@@ -241,88 +264,63 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.sceneMouseMoved.connect(self.coord_panel_controller._on_handle_mouse_moved)
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
-    
-        # TrackManager signals -> TrackDataViewController and MainWindow
+
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
-        self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay) # MainWindow still handles redraw
-    
-        # ScaleManager signals
+        self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
+
         if self.scale_panel_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
-        if self.table_data_controller: # Points table in new controller needs this
+        if self.table_data_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
         if self.coord_panel_controller:
              self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
-    
-        # CoordinatePanelController outgoing signals
+
         if self.coord_panel_controller:
             self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
-            if self.table_data_controller: # Points table needs update on coord change
+            if self.table_data_controller:
                  self.coord_panel_controller.pointsTableNeedsUpdate.connect(self.table_data_controller.update_points_table_ui)
-            self.coord_panel_controller.statusBarMessage.connect(self.statusBar.showMessage)
-    
-        # TrackDataViewController outgoing signals and necessary incoming connections
+            if status_bar_instance:
+                self.coord_panel_controller.statusBarMessage.connect(status_bar_instance.showMessage)
+
         if self.table_data_controller:
             self.table_data_controller.seekVideoToFrame.connect(self.video_handler.seek_frame)
             self.table_data_controller.updateMainWindowUIState.connect(self._update_ui_state)
-            if hasattr(self, 'statusBar'): # Check if statusBar exists
-                self.table_data_controller.statusBarMessage.connect(self.statusBar.showMessage)
+            if status_bar_instance:
+                self.table_data_controller.statusBarMessage.connect(status_bar_instance.showMessage)
             if hasattr(self.tracksTableWidget, 'horizontalHeader') and \
                hasattr(self.tracksTableWidget.horizontalHeader(), 'sectionClicked'):
                  self.tracksTableWidget.horizontalHeader().sectionClicked.connect(
                      self.table_data_controller.handle_visibility_header_clicked
                  )
-            else:
-                logger.error("Could not connect tracksTableWidget header click: header or signal missing.")
-    
-    
-        # UI Element Signals (excluding those handled by panel/table controllers)
-        # TracksTableWidget and PointsTableWidget connections are now in TrackDataViewController
-        if hasattr(self, 'frameSlider'):
-            self.frameSlider.valueChanged.connect(self._slider_value_changed)
-        if hasattr(self, 'playPauseButton'):
-            self.playPauseButton.clicked.connect(self._toggle_playback)
-        # ... (other existing MainWindow connections for non-table, non-panel widgets)
-        if hasattr(self, 'prevFrameButton'):
-            self.prevFrameButton.clicked.connect(self._show_previous_frame)
-        if hasattr(self, 'nextFrameButton'):
-            self.nextFrameButton.clicked.connect(self._show_next_frame)
-        if hasattr(self, 'autoAdvanceCheckBox'):
-            self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled)
-        if hasattr(self, 'autoAdvanceSpinBox'):
-            self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed)
-        if hasattr(self, 'videoInfoAction'):
-            self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
-        if hasattr(self, 'preferencesAction'):
-            self.preferencesAction.triggered.connect(self._show_preferences_dialog)
-        if hasattr(self, 'newTrackAction'):
+
+        # UI Element Signals
+        if self.frameSlider: self.frameSlider.valueChanged.connect(self._slider_value_changed)
+        if self.playPauseButton: self.playPauseButton.clicked.connect(self._toggle_playback)
+        if self.prevFrameButton: self.prevFrameButton.clicked.connect(self._show_previous_frame)
+        if self.nextFrameButton: self.nextFrameButton.clicked.connect(self._show_next_frame)
+        if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled)
+        if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed)
+        if self.videoInfoAction: self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
+        if self.preferencesAction: self.preferencesAction.triggered.connect(self._show_preferences_dialog)
+        if self.newTrackAction:
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
-            self.newTrackAction.triggered.connect(self._create_new_track) # This remains in MainWindow
-    
+            self.newTrackAction.triggered.connect(self._create_new_track)
+
         # Initial UI updates
         self._update_ui_state()
-        if self.table_data_controller: # Initial table updates
+        if self.table_data_controller:
             self.table_data_controller.update_tracks_table_ui()
             self.table_data_controller.update_points_table_ui()
-        if self.coord_panel_controller:
-            self.coord_panel_controller.update_ui_display()
-        if self.scale_panel_controller:
-            self.scale_panel_controller.update_ui_from_manager()
-    
+        if self.coord_panel_controller: self.coord_panel_controller.update_ui_display()
+        if self.scale_panel_controller: self.scale_panel_controller.update_ui_from_manager()
+
         logger.info("MainWindow initialization complete.")
 
     def _setup_pens(self) -> None:
-        """
-        Creates and configures QPen objects for drawing using current settings
-        from SettingsManager. Also updates dynamic size values (marker/origin).
-        """
         logger.debug("Setting up QPen objects using current settings...")
-
-        # --- Retrieve Colors from Settings ---
-        # Provide defaults from settings_manager itself as fallbacks
         color_active_marker = settings_manager.get_setting(settings_manager.KEY_ACTIVE_MARKER_COLOR)
         color_active_line = settings_manager.get_setting(settings_manager.KEY_ACTIVE_LINE_COLOR)
         color_active_current_marker = settings_manager.get_setting(settings_manager.KEY_ACTIVE_CURRENT_MARKER_COLOR)
@@ -330,32 +328,21 @@ class MainWindow(QtWidgets.QMainWindow):
         color_inactive_line = settings_manager.get_setting(settings_manager.KEY_INACTIVE_LINE_COLOR)
         color_inactive_current_marker = settings_manager.get_setting(settings_manager.KEY_INACTIVE_CURRENT_MARKER_COLOR)
         color_origin_marker = settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_COLOR)
-
-        # --- Retrieve Sizes/Widths from Settings ---
         try:
             line_width = float(settings_manager.get_setting(settings_manager.KEY_LINE_WIDTH))
-            # Marker pen width is kept thin for clarity, not user-configurable currently.
             marker_pen_width = 1.0
-            # Origin marker pen width uses default from config for now.
             origin_pen_width = config.DEFAULT_ORIGIN_MARKER_PEN_WIDTH
         except (TypeError, ValueError):
              logger.warning("Invalid size/width setting found, using defaults.")
              line_width = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_LINE_WIDTH]
              marker_pen_width = 1.0
              origin_pen_width = config.DEFAULT_ORIGIN_MARKER_PEN_WIDTH
-
-        # --- Helper to Create Pens (Handles Invalid Colors) ---
         def _create_pen(color_val: Any, width: float, default_color: QtGui.QColor) -> QtGui.QPen:
-            """Creates a cosmetic QPen, falling back to default_color if color_val is invalid."""
             color = color_val if isinstance(color_val, QtGui.QColor) else QtGui.QColor(str(color_val))
             if not color.isValid():
                 logger.warning(f"Invalid color '{color_val}' retrieved, using default {default_color.name()}.")
                 color = default_color
-            pen = QtGui.QPen(color, width)
-            pen.setCosmetic(True) # Ensures consistent width regardless of zoom
-            return pen
-
-        # --- Create Pens for Drawing ---
+            pen = QtGui.QPen(color, width); pen.setCosmetic(True); return pen
         self.pen_marker_active_current = _create_pen(color_active_current_marker, marker_pen_width, settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ACTIVE_CURRENT_MARKER_COLOR])
         self.pen_marker_active_other = _create_pen(color_active_marker, marker_pen_width, settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ACTIVE_MARKER_COLOR])
         self.pen_line_active = _create_pen(color_active_line, line_width, settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ACTIVE_LINE_COLOR])
@@ -366,498 +353,289 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.debug("QPen setup complete using settings.")
 
     def _reset_ui_after_video_close(self) -> None:
-        """Resets UI elements to their state when no video is loaded."""
         logger.debug("Resetting UI elements for no video loaded state.")
-        if hasattr(self, 'statusBar'): self.statusBar.clearMessage()
-        if hasattr(self, 'frameLabel'): self.frameLabel.setText("Frame: - / -")
-        if hasattr(self, 'timeLabel'): self.timeLabel.setText("Time: --:--.--- / --:--.---")
-        if hasattr(self, 'fpsLabel'): self.fpsLabel.setText("FPS: ---.--")
-        if hasattr(self, 'filenameLabel'):
+        status_bar = self.statusBar()
+        if status_bar: status_bar.clearMessage()
+        if self.frameLabel: self.frameLabel.setText("Frame: - / -")
+        if self.timeLabel: self.timeLabel.setText("Time: --:--.--- / --:--.---")
+        if self.fpsLabel: self.fpsLabel.setText("FPS: ---.--")
+        if self.filenameLabel:
              self.filenameLabel.setText("File: -")
              self.filenameLabel.setToolTip("No video loaded")
-        if hasattr(self, 'frameSlider'):
+        if self.frameSlider:
             self.frameSlider.blockSignals(True)
             self.frameSlider.setValue(0)
             self.frameSlider.setMaximum(0)
             self.frameSlider.blockSignals(False)
-        if hasattr(self, 'imageView'):
+        if self.imageView:
             self.imageView.clearOverlay()
             self.imageView.setPixmap(QtGui.QPixmap())
             self.imageView.resetInitialLoadFlag()
             self.imageView.set_scale_bar_visibility(False)
             self.imageView.set_interaction_mode(InteractionMode.NORMAL)
-    
-        if hasattr(self, 'coord_transformer'):
-            self.coord_transformer = CoordinateTransformer() 
-            if self.coord_panel_controller:
-                self.coord_panel_controller._coord_transformer = self.coord_transformer # Update controller's ref
-    
-        self.scale_manager.reset()
-    
-        if self.scale_panel_controller:
-            self.scale_panel_controller.set_video_loaded_status(False)
+        self.coord_transformer = CoordinateTransformer()
         if self.coord_panel_controller:
-            self.coord_panel_controller.set_video_loaded_status(False)
-        if self.table_data_controller: # <-- ADD THIS
-            self.table_data_controller.set_video_loaded_status(False)
-    
+            self.coord_panel_controller._coord_transformer = self.coord_transformer
+        self.scale_manager.reset()
+        if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(False)
+        if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(False)
+        if self.table_data_controller: self.table_data_controller.set_video_loaded_status(False)
         self._update_ui_state()
 
     def _update_ui_state(self) -> None:
-        """Updates the enabled/disabled state and appearance of UI elements based on application state."""
         is_video_loaded: bool = self.video_loaded
-    
-        if hasattr(self, 'frameSlider'): self.frameSlider.setEnabled(is_video_loaded)
-        if hasattr(self, 'prevFrameButton'): self.prevFrameButton.setEnabled(is_video_loaded)
-        if hasattr(self, 'nextFrameButton'): self.nextFrameButton.setEnabled(is_video_loaded)
-        if hasattr(self, 'newTrackAction'): self.newTrackAction.setEnabled(is_video_loaded)
-        if hasattr(self, 'autoAdvanceCheckBox'): self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
-        if hasattr(self, 'autoAdvanceSpinBox'): self.autoAdvanceSpinBox.setEnabled(is_video_loaded)
-    
-        can_play: bool = is_video_loaded and self.fps > 0
-        if hasattr(self, 'playPauseButton'): self.playPauseButton.setEnabled(can_play)
-    
-        if hasattr(self, 'playPauseButton') and hasattr(self, 'stop_icon') and hasattr(self, 'play_icon'):
+        is_setting_scale_by_line = False
+        if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line'):
+            is_setting_scale_by_line = self.scale_panel_controller._is_setting_scale_by_line
+        if not is_setting_scale_by_line:
+            if self.frameSlider: self.frameSlider.setEnabled(is_video_loaded)
+            if self.prevFrameButton: self.prevFrameButton.setEnabled(is_video_loaded)
+            if self.nextFrameButton: self.nextFrameButton.setEnabled(is_video_loaded)
+            can_play: bool = is_video_loaded and self.fps > 0
+            if self.playPauseButton: self.playPauseButton.setEnabled(can_play)
+        if self.newTrackAction: self.newTrackAction.setEnabled(is_video_loaded)
+        if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
+        if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.setEnabled(is_video_loaded)
+        if self.playPauseButton and self.stop_icon and self.play_icon:
             self.playPauseButton.setIcon(self.stop_icon if self.is_playing else self.play_icon)
             self.playPauseButton.setToolTip("Stop Video (Space)" if self.is_playing else "Play Video (Space)")
-    
-        if hasattr(self, 'loadTracksAction'): self.loadTracksAction.setEnabled(is_video_loaded)
-        # This part remains, as it depends directly on track_manager's state
+        if self.loadTracksAction: self.loadTracksAction.setEnabled(is_video_loaded)
         can_save: bool = is_video_loaded and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
-        if hasattr(self, 'saveTracksAction'): self.saveTracksAction.setEnabled(can_save)
-        if hasattr(self, 'videoInfoAction'): self.videoInfoAction.setEnabled(is_video_loaded)
-    
-        # Inform Panel Controllers about the video loaded state
-        if self.scale_panel_controller:
-            self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
-        if self.coord_panel_controller:
-            self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
-        if self.table_data_controller: # <-- ADD THIS
-            self.table_data_controller.set_video_loaded_status(is_video_loaded, self.total_frames if is_video_loaded else 0)
+        if self.saveTracksAction: self.saveTracksAction.setEnabled(can_save)
+        if self.videoInfoAction: self.videoInfoAction.setEnabled(is_video_loaded)
+        if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
+        if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
+        if self.table_data_controller: self.table_data_controller.set_video_loaded_status(is_video_loaded, self.total_frames if is_video_loaded else 0)
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
-        """Updates UI elements displaying current frame number and time."""
         if not self.video_loaded: return
-
-        # Update slider position (block signals to avoid loop)
-        if hasattr(self, 'frameSlider'):
-            self.frameSlider.blockSignals(True)
-            self.frameSlider.setValue(frame_index)
-            self.frameSlider.blockSignals(False)
-
-        # Update frame label
-        if hasattr(self, 'frameLabel'):
-            self.frameLabel.setText(f"Frame: {frame_index + 1} / {self.total_frames}")
-
-        # Update time label
-        if hasattr(self, 'timeLabel'):
-            if self.fps > 0 and self.total_duration_ms >= 0:
-                current_ms = (frame_index / self.fps) * 1000
-                current_t_str = self._format_time(current_ms)
-                total_t_str = self._format_time(self.total_duration_ms)
-                self.timeLabel.setText(f"Time: {current_t_str} / {total_t_str}")
-            else:
-                self.timeLabel.setText("Time: --:--.--- / --:--.---") # Fallback if FPS invalid
-
-
-    # --- File Menu Action Slots ---
+        if self.frameSlider:
+            self.frameSlider.blockSignals(True); self.frameSlider.setValue(frame_index); self.frameSlider.blockSignals(False)
+        if self.frameLabel: self.frameLabel.setText(f"Frame: {frame_index + 1} / {self.total_frames}")
+        if self.timeLabel:
+            current_ms = (frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
+            self.timeLabel.setText(f"Time: {self._format_time(current_ms)} / {self._format_time(self.total_duration_ms)}")
 
     @QtCore.Slot()
     def open_video(self) -> None:
-        """Handles the File -> Open Video action."""
         logger.info("Open Video action triggered.")
-        # If a video is already loaded, release it first to ensure clean state
-        if self.video_loaded:
-            logger.info("Releasing previously loaded video before opening new one.")
-            self._release_video()
-
-        # Open file dialog
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self, "Open Video File", "",
-            "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)"
-        )
+        if self.video_loaded: self._release_video()
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open Video File", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if not file_path:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Video loading cancelled.", 3000)
-            logger.info("Video loading cancelled by user.")
+            status_bar = self.statusBar()
+            if status_bar: status_bar.showMessage("Video loading cancelled.", 3000)
             return
-
-        # Request VideoHandler to load the file
-        logger.info(f"Requesting VideoHandler to load: {file_path}")
-        if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Opening video: {os.path.basename(file_path)}...", 0)
-        QtWidgets.QApplication.processEvents() # Ensure message updates immediately
-        # VideoHandler will emit videoLoaded or videoLoadFailed signal upon completion
+        status_bar = self.statusBar()
+        if status_bar: status_bar.showMessage(f"Opening video: {os.path.basename(file_path)}...", 0)
+        QtWidgets.QApplication.processEvents()
         self.video_handler.open_video(file_path)
 
     def _release_video(self) -> None:
-        """Releases video resources via VideoHandler and resets related state and UI."""
         logger.info("Releasing video resources and resetting state...")
-        if hasattr(self, 'video_handler'):
-            self.video_handler.release_video()
-
-        # The TrackDataViewController now manages its own button groups.
-        # They are cleared and recreated during table updates.
-        # Explicit cleanup here is no longer needed for this specific dictionary.
-        # If table_data_controller had other resources needing explicit release,
-        # we might call a cleanup method on it here.
-        # For example:
-        # if hasattr(self, 'table_data_controller') and self.table_data_controller:
-        #     self.table_data_controller.cleanup_resources() # If such a method existed
-
-        # Reset MainWindow's video state variables
-        self.video_loaded = False
-        self.total_frames = 0
-        self.current_frame_index = -1
-        self.fps = 0.0
-        self.total_duration_ms = 0.0
-        self.video_filepath = ""
-        self.frame_width = 0
-        self.frame_height = 0
-        self.is_playing = False # Ensure playback state is reset
-        logger.debug("MainWindow video state variables reset.")
-
-        # Reset the TrackManager's data
-        if hasattr(self, 'track_manager'):
-            logger.debug("Resetting TrackManager...")
-            self.track_manager.reset()
-            logger.debug("TrackManager reset complete.")
-
-        if hasattr(self, 'scale_manager'): # Ensure scale_manager exists
-            self.scale_manager.reset()
-        
-        # Reset UI elements to initial state (clears image, labels, tables etc.)
-        self._reset_ui_after_video_close() # This will inform controllers to update their UI
+        self.video_handler.release_video()
+        self.video_loaded = False; self.total_frames = 0; self.current_frame_index = -1; self.fps = 0.0
+        self.total_duration_ms = 0.0; self.video_filepath = ""; self.frame_width = 0; self.frame_height = 0
+        self.is_playing = False
+        self.track_manager.reset()
+        self.scale_manager.reset()
+        self._reset_ui_after_video_close()
         logger.info("Video release and associated reset complete.")
 
     @QtCore.Slot()
     def _trigger_save_tracks(self) -> None:
-        if hasattr(self, 'track_manager') and hasattr(self, 'coord_transformer') and hasattr(self, 'scale_manager'): # Added scale_manager check
-            file_io.save_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager) # Pass scale_manager
-        else:   
-            logger.error("Cannot save tracks: TrackManager or CoordinateTransformer not available.")
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Save Error: Components missing.", 3000)
+        if self.video_loaded and self.track_manager and self.coord_transformer and self.scale_manager:
+            file_io.save_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager)
+        else:
+            status_bar = self.statusBar()
+            if status_bar: status_bar.showMessage("Save Error: Components missing or video not loaded.", 3000)
 
     @QtCore.Slot()
     def _trigger_load_tracks(self) -> None:
-        if hasattr(self, 'track_manager') and hasattr(self, 'coord_transformer') and hasattr(self, 'scale_manager'): # Added scale_manager check
-            file_io.load_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager) # Pass scale_manager
+        if self.video_loaded and self.track_manager and self.coord_transformer and self.scale_manager:
+            file_io.load_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager)
         else:
-             logger.error("Cannot load tracks: TrackManager or CoordinateTransformer not available.")
-             if hasattr(self, 'statusBar'): self.statusBar.showMessage("Load Error: Components missing.", 3000)
+            status_bar = self.statusBar()
+            if status_bar: status_bar.showMessage("Load Error: Components missing or video not loaded.", 3000)
 
-
-    # --- Preferences Dialog Slots ---
     @QtCore.Slot()
     def _show_preferences_dialog(self) -> None:
-        """Shows the preferences dialog."""
-        logger.debug("Showing Preferences dialog.")
-        dialog = PreferencesDialog(self) # Parent to main window
-        # Connect the dialog's applied signal to update visuals immediately if Apply is clicked
+        dialog = PreferencesDialog(self)
         dialog.settingsApplied.connect(self._handle_settings_applied)
-        dialog.exec() # Show modal dialog (blocks until closed)
-        # Note: If user clicks OK, accept() applies settings and emits settingsApplied too.
+        dialog.exec()
 
     @QtCore.Slot()
     def _handle_settings_applied(self) -> None:
-        """Updates the application visuals after settings have been applied/saved."""
-        logger.info("Settings applied in preferences dialog. Updating visuals.")
-        # Re-create pens based on the newly saved settings
         self._setup_pens()
-        # Trigger a redraw of the overlay to use the new pens/sizes
         self._redraw_scene_overlay()
-
-
-    # --- Video Navigation/Playback Slots ---
 
     @QtCore.Slot(int)
     def _slider_value_changed(self, value: int) -> None:
-        """Handles the frame slider's valueChanged signal (user interaction)."""
-        # Only seek if the value actually changed and video is loaded
         if self.video_loaded and self.current_frame_index != value:
-            logger.debug(f"Slider value changed to {value}, requesting seek via VideoHandler.")
             self.video_handler.seek_frame(value)
 
     @QtCore.Slot(int)
     def _handle_frame_step(self, step: int) -> None:
-        """Handles the frameStepRequested signal from the image view (mouse wheel)."""
-        if not self.video_loaded: return
-        logger.debug(f"Frame step requested: {step}. Delegating to VideoHandler.")
-        # Delegate to VideoHandler's next/previous frame methods
-        if step > 0: # Step = +1 (Scroll Down) -> Next Frame
-            self.video_handler.next_frame()
-        elif step < 0: # Step = -1 (Scroll Up) -> Previous Frame
-            self.video_handler.previous_frame()
+        if self.video_loaded: self.video_handler.next_frame() if step > 0 else self.video_handler.previous_frame()
 
     @QtCore.Slot()
     def _show_previous_frame(self) -> None:
-        """Handles the 'Previous Frame' button click."""
-        if self.video_loaded:
-            logger.debug("Previous frame button clicked. Delegating to VideoHandler.")
-            self.video_handler.previous_frame()
+        if self.video_loaded: self.video_handler.previous_frame()
 
     @QtCore.Slot()
     def _show_next_frame(self) -> None:
-        """Handles the 'Next Frame' button click."""
-        if self.video_loaded:
-            logger.debug("Next frame button clicked. Delegating to VideoHandler.")
-            self.video_handler.next_frame()
+        if self.video_loaded: self.video_handler.next_frame()
 
     @QtCore.Slot()
     def _toggle_playback(self) -> None:
-        """Handles the Play/Pause button click or Spacebar press."""
-        if not self.video_loaded or self.fps <= 0: return # Cannot play without video/valid FPS
-        logger.debug("Play/Pause button toggled. Delegating to VideoHandler.")
-        self.video_handler.toggle_playback()
-
-
-    # --- VideoHandler Signal Handler Slots ---
+        if self.video_loaded and self.fps > 0: self.video_handler.toggle_playback()
 
     @QtCore.Slot(dict)
     def _handle_video_loaded(self, video_info: Dict[str, Any]) -> None:
-        """Handles the successful loading of a video."""
         logger.info(f"Received videoLoaded signal: {video_info.get('filename', 'N/A')}")
-        self.total_frames = video_info.get('total_frames', 0)
-        self.video_loaded = True
-        self.fps = video_info.get('fps', 0.0)
-        self.total_duration_ms = video_info.get('duration_ms', 0.0)
-        self.video_filepath = video_info.get('filepath', '')
-        self.frame_width = video_info.get('width', 0)
-        self.frame_height = video_info.get('height', 0)
-        self.is_playing = False
-    
-        if hasattr(self, 'coord_transformer'): 
-            self.coord_transformer.set_video_height(self.frame_height)
-            if self.coord_panel_controller: 
-                self.coord_panel_controller.set_video_height(self.frame_height)
-    
-        filename = video_info.get('filename', 'N/A')
-        filepath = video_info.get('filepath', '')
-        if hasattr(self, 'filenameLabel'):
-            self.filenameLabel.setText(f"File: {filename}")
-            self.filenameLabel.setToolTip(filepath)
-        if hasattr(self, 'fpsLabel'):
-            fps_str = f"{self.fps:.2f}" if self.fps > 0 else "N/A"
-            self.fpsLabel.setText(f"FPS: {fps_str}")
-    
-        if hasattr(self, 'track_manager'): self.track_manager.reset()
-        if hasattr(self, 'frameSlider'):
-            self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0)
-            self.frameSlider.setValue(0)
-        if hasattr(self, 'imageView'): self.imageView.resetInitialLoadFlag()
-    
-        self.scale_manager.reset() 
-    
-        if self.scale_panel_controller:
-            self.scale_panel_controller.set_video_loaded_status(True)
-        if self.coord_panel_controller:
-            self.coord_panel_controller.set_video_loaded_status(True)
-            self.coord_panel_controller.update_ui_display()
-        if self.table_data_controller: # <-- ADD THIS
-            self.table_data_controller.set_video_loaded_status(True, self.total_frames)
-    
-    
-        self._update_ui_state() 
-    
-        status_msg = (f"Loaded '{filename}' ({self.total_frames} frames, "
-                      f"{self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
-        if hasattr(self, 'statusBar'): self.statusBar.showMessage(status_msg, 5000)
-        logger.info(f"Video loaded successfully handled: {status_msg}")
+        self.total_frames = video_info.get('total_frames', 0); self.video_loaded = True; self.fps = video_info.get('fps', 0.0)
+        self.total_duration_ms = video_info.get('duration_ms', 0.0); self.video_filepath = video_info.get('filepath', '')
+        self.frame_width = video_info.get('width', 0); self.frame_height = video_info.get('height', 0); self.is_playing = False
+        self.coord_transformer.set_video_height(self.frame_height)
+        if self.coord_panel_controller: self.coord_panel_controller.set_video_height(self.frame_height)
+        if self.filenameLabel: self.filenameLabel.setText(f"File: {video_info.get('filename', 'N/A')}"); self.filenameLabel.setToolTip(video_info.get('filepath', ''))
+        if self.fpsLabel: self.fpsLabel.setText(f"FPS: {self.fps:.2f}" if self.fps > 0 else "FPS: N/A")
+        self.track_manager.reset()
+        if self.frameSlider: self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0); self.frameSlider.setValue(0)
+        if self.imageView: self.imageView.resetInitialLoadFlag()
+        self.scale_manager.reset()
+        if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(True)
+        if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(True); self.coord_panel_controller.update_ui_display()
+        if self.table_data_controller: self.table_data_controller.set_video_loaded_status(True, self.total_frames)
+        self._update_ui_state()
+        status_msg = (f"Loaded '{video_info.get('filename', 'N/A')}' ({self.total_frames} frames, {self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
+        status_bar = self.statusBar()
+        if status_bar: status_bar.showMessage(status_msg, 5000)
 
     @QtCore.Slot(str)
     def _handle_video_load_failed(self, error_msg: str) -> None:
-        """Handles the failure to load a video."""
-        logger.error(f"Received videoLoadFailed signal: {error_msg}")
         QtWidgets.QMessageBox.critical(self, "Video Load Error", error_msg)
-        if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Error loading video", 5000)
-        # Ensure resources are released and UI is reset
+        status_bar = self.statusBar()
+        if status_bar: status_bar.showMessage("Error loading video", 5000)
         self._release_video()
 
     @QtCore.Slot(QtGui.QPixmap, int)
     def _handle_frame_changed(self, pixmap: QtGui.QPixmap, frame_index: int) -> None:
-        """Handles the signal indicating a new frame is ready from VideoHandler."""
-        logger.debug(f"Received frameChanged signal for frame index {frame_index}.")
-        if not self.video_loaded:
-            logger.warning("frameChanged received but video not marked as loaded. Ignoring.")
-            return
-
+        if not self.video_loaded: return
         self.current_frame_index = frame_index
-        # Display the new pixmap
-        if hasattr(self, 'imageView'):
-            self.imageView.setPixmap(pixmap)
-        # Update UI elements (slider, labels)
+        if self.imageView: self.imageView.setPixmap(pixmap)
         self._update_ui_for_frame(frame_index)
-        # Redraw track overlays for the new frame
         self._redraw_scene_overlay()
-        if hasattr(self, 'imageView') and hasattr(self, 'scale_manager') and \
-           hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox.isChecked():
+        if self.imageView and self.scale_manager and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
             current_m_per_px = self.scale_manager.get_scale_m_per_px()
-            if current_m_per_px is not None:
-                self.imageView.update_scale_bar_dimensions(current_m_per_px)
-
+            if current_m_per_px is not None: self.imageView.update_scale_bar_dimensions(current_m_per_px)
 
     @QtCore.Slot(bool)
     def _handle_playback_state_changed(self, is_playing: bool) -> None:
-        """Handles the signal indicating playback has started or stopped."""
-        logger.info(f"Received playbackStateChanged signal: is_playing={is_playing}")
         self.is_playing = is_playing
-
-        # Update play/pause button appearance and status bar message
-        if hasattr(self, 'playPauseButton') and hasattr(self, 'stop_icon') and hasattr(self, 'play_icon'):
-            if self.is_playing:
-                self.playPauseButton.setIcon(self.stop_icon)
-                self.playPauseButton.setToolTip("Stop Video (Space)")
-                if hasattr(self, 'statusBar'): self.statusBar.showMessage("Playing...", 0) # Persistent
-            else:
-                self.playPauseButton.setIcon(self.play_icon)
-                self.playPauseButton.setToolTip("Play Video (Space)")
-                if hasattr(self, 'statusBar'):
-                    status = "Stopped." if self.video_loaded else "Ready."
-                    self.statusBar.showMessage(status, 3000)
-        # Update overall UI enabled states if necessary
+        status_bar = self.statusBar()
+        if self.playPauseButton and self.stop_icon and self.play_icon:
+            self.playPauseButton.setIcon(self.stop_icon if self.is_playing else self.play_icon)
+            self.playPauseButton.setToolTip("Stop Video (Space)" if self.is_playing else "Play Video (Space)")
+            if self.is_playing and status_bar: status_bar.showMessage("Playing...", 0)
+            elif status_bar: status_bar.showMessage("Stopped." if self.video_loaded else "Ready.", 3000)
         self._update_ui_state()
-
-
-    # --- ImageView Signal Handler Slots ---
 
     @QtCore.Slot(float, float)
     def _handle_add_point_click(self, x: float, y: float) -> None:
-        """Handles a standard (unmodified) click in the image view to add/update a point."""
-        # Check with CoordinatePanelController if in 'Set Origin' mode
-        if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode():
-            logger.debug("Standard click ignored while in 'Set Custom Origin' mode (checked via controller).")
-            return
-    
-        # ... (rest of the method remains the same)
+        status_bar = self.statusBar()
+        if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode(): return
+        if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
+           self.scale_panel_controller._is_setting_scale_by_line: return
         if not self.video_loaded:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Cannot add point: No video loaded.", 3000)
+            if status_bar: status_bar.showMessage("Cannot add point: No video loaded.", 3000)
             return
-        if not hasattr(self, 'imageView') or not self.imageView._scene: return
-    
-        logger.debug(f"ImageView standard click at scene coordinates ({x:.3f}, {y:.3f}) for adding point.")
-    
-        if not hasattr(self, 'track_manager') or self.track_manager.active_track_index == -1:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Cannot add point: No track selected.", 3000)
+        if self.track_manager.active_track_index == -1:
+            if status_bar: status_bar.showMessage("Cannot add point: No track selected.", 3000)
             return
-    
-        time_ms: float = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
-        success: bool = self.track_manager.add_point(self.current_frame_index, time_ms, x, y)
-    
-        if success:
-            active_track_id = self.track_manager.get_active_track_id()
-            x_disp, y_disp = self.coord_transformer.transform_point_for_display(x, y)
-            message = (f"Point for Track {active_track_id} on Frame {self.current_frame_index + 1}: "
-                       f"({x_disp:.1f}, {y_disp:.1f})")
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage(message, 3000)
-            logger.info(message)
-    
+        time_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
+        if self.track_manager.add_point(self.current_frame_index, time_ms, x, y):
+            x_d, y_d = self.coord_transformer.transform_point_for_display(x,y)
+            msg = f"Point for Track {self.track_manager.get_active_track_id()} on Frame {self.current_frame_index+1}: ({x_d:.1f}, {y_d:.1f})"
+            if status_bar: status_bar.showMessage(msg, 3000)
             if self._auto_advance_enabled and self._auto_advance_frames > 0:
-                target_frame = self.current_frame_index + self._auto_advance_frames
-                target_frame = min(target_frame, self.total_frames - 1) 
-                if target_frame > self.current_frame_index:
-                    logger.info(f"Auto-advancing by {self._auto_advance_frames} frame(s) to frame {target_frame + 1}")
-                    self.video_handler.seek_frame(target_frame)
-                else:
-                    logger.debug(f"Auto-advance skipped: Already at or past target frame {target_frame + 1}.")
-        else:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Failed to add point (see log).", 3000)
+                target = min(self.current_frame_index + self._auto_advance_frames, self.total_frames - 1)
+                if target > self.current_frame_index: self.video_handler.seek_frame(target)
+        elif status_bar: status_bar.showMessage("Failed to add point (see log).", 3000)
 
     @QtCore.Slot(float, float, QtCore.Qt.KeyboardModifiers)
     def _handle_modified_click(self, x: float, y: float, modifiers: QtCore.Qt.KeyboardModifiers) -> None:
-        """Handles modified clicks (Ctrl+Click, Shift+Click) from the image view."""
-        if not self.video_loaded or not hasattr(self, 'track_manager') or not hasattr(self, 'video_handler'):
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Cannot interact: Video/components not ready.", 3000)
+        status_bar = self.statusBar()
+        if not self.video_loaded:
+            if status_bar: status_bar.showMessage("Cannot interact: Video/components not ready.", 3000)
             return
-    
-        logger.debug(f"ImageView modified click at ({x:.2f}, {y:.2f}) with modifiers: {modifiers}")
         result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
         if result is None:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("No track marker found near click.", 3000)
+            if status_bar: status_bar.showMessage("No track marker found near click.", 3000)
             return
-    
-        found_track_index, point_data = result
-        found_track_id = found_track_index + 1
-        clicked_frame_index = point_data[0]
-    
+        track_idx, point_data = result; track_id = track_idx + 1; frame_idx = point_data[0]
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            logger.info(f"Ctrl+Click: Selecting Track {found_track_id}")
-            if self.track_manager.active_track_index != found_track_index:
-                self.track_manager.set_active_track(found_track_index)
-            if self.table_data_controller: # <-- MODIFIED
-                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(found_track_id))
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Selected Track {found_track_id}.", 3000)
-    
+            if self.track_manager.active_track_index != track_idx: self.track_manager.set_active_track(track_idx)
+            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id))
+            if status_bar: status_bar.showMessage(f"Selected Track {track_id}.", 3000)
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
-            logger.info(f"Shift+Click: Selecting Track {found_track_id}, jumping to Frame {clicked_frame_index + 1}")
-            if self.track_manager.active_track_index != found_track_index:
-                self.track_manager.set_active_track(found_track_index)
-            if self.table_data_controller: # <-- MODIFIED
-                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(found_track_id))
-            if self.current_frame_index != clicked_frame_index:
-                self.video_handler.seek_frame(clicked_frame_index)
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Selected Track {found_track_id}, jumped to Frame {clicked_frame_index + 1}.", 3000)
-        else:
-            logger.debug(f"Ignoring modified click with unhandled modifier combination: {modifiers}")
-
-    # --- Auto-Advance UI Slots ---
+            if self.track_manager.active_track_index != track_idx: self.track_manager.set_active_track(track_idx)
+            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id))
+            if self.current_frame_index != frame_idx: self.video_handler.seek_frame(frame_idx)
+            if status_bar: status_bar.showMessage(f"Selected Track {track_id}, jumped to Frame {frame_idx + 1}.", 3000)
 
     @QtCore.Slot(int)
     def _handle_auto_advance_toggled(self, state: int) -> None:
-        """Updates the auto-advance state when the checkbox is toggled."""
         self._auto_advance_enabled = (state == QtCore.Qt.CheckState.Checked.value)
-        logger.info(f"Auto-advance {'enabled' if self._auto_advance_enabled else 'disabled'}.")
 
     @QtCore.Slot(int)
     def _handle_auto_advance_frames_changed(self, value: int) -> None:
-        """Updates the auto-advance frame count when the spinbox value changes."""
         self._auto_advance_frames = value
-        logger.info(f"Auto-advance frame count set to: {self._auto_advance_frames}")
-
-
-    # --- Track Management UI Slots ---
 
     @QtCore.Slot()
     def _create_new_track(self) -> None:
-        """Handles the 'New Track' button click or Ctrl+N shortcut."""
+        status_bar = self.statusBar()
         if not self.video_loaded:
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("Load a video first to create tracks.", 3000)
+            if status_bar: status_bar.showMessage("Load a video first to create tracks.", 3000)
             return
-        logger.info("Create new track requested.")
-        if not hasattr(self, 'track_manager'): return
-    
-        new_track_id: int = self.track_manager.create_new_track()
-        if hasattr(self, 'statusBar'): self.statusBar.showMessage(f"Created Track {new_track_id}. It is now active.", 3000)
-        if self.table_data_controller: # <-- MODIFIED
-            QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(new_track_id))
-        if hasattr(self, 'dataTabsWidget'): self.dataTabsWidget.setCurrentIndex(0)
+        new_id = self.track_manager.create_new_track()
+        if status_bar: status_bar.showMessage(f"Created Track {new_id}. It is now active.", 3000)
+        if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(new_id))
+        if self.dataTabsWidget: self.dataTabsWidget.setCurrentIndex(0)
         self._update_ui_state()
 
-    # --- Drawing ---
+    @QtCore.Slot(bool)
+    def _handle_disable_frame_navigation(self, disable: bool) -> None:
+        logger.debug(f"Setting frame navigation controls disabled: {disable}")
+        enabled = not disable and self.video_loaded
+        if self.frameSlider: self.frameSlider.setEnabled(enabled)
+        if self.playPauseButton: self.playPauseButton.setEnabled(enabled and self.fps > 0)
+        if self.prevFrameButton: self.prevFrameButton.setEnabled(enabled)
+        if self.nextFrameButton: self.nextFrameButton.setEnabled(enabled)
+        status_bar = self.statusBar()
+        if disable and status_bar:
+            status_bar.showMessage("Frame navigation disabled while defining scale line.", 0)
 
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
-        """Clears and redraws all track markers/lines and origin marker on the image view."""
-        # ... (initial checks remain the same)
-        if not all(hasattr(self, attr) for attr in ['imageView', 'track_manager', 'coord_transformer']) or \
-           not self.imageView or not self.imageView._scene:
-             logger.debug("_redraw_scene_overlay skipped: Components not ready.")
-             return
-        if not self.video_loaded or self.current_frame_index < 0:
-             if hasattr(self, 'imageView'): self.imageView.clearOverlay()
-             logger.debug("_redraw_scene_overlay skipped: No video loaded or invalid frame.")
-             return
-    
-        logger.debug(f"Redrawing scene overlay for frame {self.current_frame_index}")
+        if not (self.imageView and self.imageView._scene and self.video_loaded and self.current_frame_index >=0):
+            if self.imageView: self.imageView.clearOverlay()
+            return
+        
         scene = self.imageView._scene
-        self.imageView.clearOverlay() 
-    
+        # Clear existing overlay items, EXCLUDING temporary scale definition visuals
+        # handled by InteractiveImageView itself.
+        self.imageView.clearOverlay()
+
         try:
-            # ... (track marker and line drawing logic remains the same) ...
-            try: track_marker_size = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-            except (ValueError, TypeError): track_marker_size = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_MARKER_SIZE]
-            try: origin_marker_size = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
-            except (ValueError, TypeError): origin_marker_size = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ORIGIN_MARKER_SIZE]
-    
-            visual_elements: List[VisualElement] = self.track_manager.get_visual_elements(self.current_frame_index)
-            pen_map: Dict[str, QtGui.QPen] = {
+            # Get marker and line sizes from settings
+            marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
+            origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
+
+            # Get visual elements for tracks from TrackManager
+            elements = self.track_manager.get_visual_elements(self.current_frame_index)
+            
+            # Prepare a dictionary of pens for quick lookup
+            pens = {
                 config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
                 config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
                 config.STYLE_MARKER_INACTIVE_CURRENT: self.pen_marker_inactive_current,
@@ -865,160 +643,146 @@ class MainWindow(QtWidgets.QMainWindow):
                 config.STYLE_LINE_ACTIVE: self.pen_line_active,
                 config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
             }
-            for element in visual_elements:
-                pen = pen_map.get(element.get('style'))
-                if not pen: continue 
-                if element.get('type') == 'marker' and element.get('pos'):
-                    x, y = element['pos']; r = track_marker_size / 2.0
+
+            # Draw track markers and lines
+            for el in elements:
+                pen = pens.get(el.get('style'))
+                if not pen: continue # Skip if style not found
+
+                if el.get('type') == 'marker' and el.get('pos'):
+                    x, y = el['pos']
+                    r = marker_sz / 2.0
                     path = QtGui.QPainterPath()
-                    path.moveTo(x - r, y); path.lineTo(x + r, y)
-                    path.moveTo(x, y - r); path.lineTo(x, y + r)
+                    path.moveTo(x - r, y)
+                    path.lineTo(x + r, y)
+                    path.moveTo(x, y - r)
+                    path.lineTo(x, y + r)
                     item = QtWidgets.QGraphicsPathItem(path)
                     item.setPen(pen)
-                    item.setZValue(10) 
+                    item.setZValue(10) # Markers above lines
                     scene.addItem(item)
-                elif element.get('type') == 'line' and element.get('p1') and element.get('p2'):
-                    p1, p2 = element['p1'], element['p2']
+                elif el.get('type') == 'line' and el.get('p1') and el.get('p2'):
+                    p1, p2 = el['p1'], el['p2']
                     item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1])
                     item.setPen(pen)
-                    item.setZValue(9) 
+                    item.setZValue(9) # Lines below markers
                     scene.addItem(item)
-    
-            # Get origin marker status from controller
-            show_origin = False
-            if self.coord_panel_controller:
-                show_origin = self.coord_panel_controller.get_show_origin_marker_status()
-    
-            if show_origin: # <-- MODIFIED THIS CONDITION
-                origin_x_tl, origin_y_tl = self.coord_transformer.get_current_origin_tl()
-                radius = origin_marker_size / 2.0
-                origin_item = QtWidgets.QGraphicsEllipseItem(
-                    origin_x_tl - radius, origin_y_tl - radius,
-                    origin_marker_size, origin_marker_size
-                )
-                origin_item.setPen(self.pen_origin_marker)
-                origin_item.setBrush(QtGui.QBrush(self.pen_origin_marker.color()))
-                origin_item.setZValue(11)
-                scene.addItem(origin_item)
-                logger.debug(f"Drew origin marker at TL: ({origin_x_tl:.1f}, {origin_y_tl:.1f}) with size {origin_marker_size}")
-    
-            if self.imageView and self.imageView.viewport():
-                self.imageView.viewport().update()
-        except Exception as e:
-            logger.exception(f"Error during _redraw_scene_overlay: {e}")
-            if hasattr(self, 'imageView'): self.imageView.clearOverlay()
 
-    # --- Event Handlers ---
+            # Draw the coordinate system origin marker
+            if self.coord_panel_controller and self.coord_panel_controller.get_show_origin_marker_status():
+                ox, oy = self.coord_transformer.get_current_origin_tl()
+                r_orig = origin_sz / 2.0
+                origin_item = QtWidgets.QGraphicsEllipseItem(ox - r_orig, oy - r_orig, origin_sz, origin_sz)
+                origin_item.setPen(self.pen_origin_marker)
+                origin_item.setBrush(self.pen_origin_marker.color()) # Fill origin marker
+                origin_item.setZValue(11) # Origin marker above tracks
+                scene.addItem(origin_item)
+
+            # --- NEW: Draw the persistent defined scale line ---
+            if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
+               self.scale_manager and self.scale_manager.has_defined_scale_line():
+                
+                line_data = self.scale_manager.get_defined_scale_line_data()
+                if line_data:
+                    p1x, p1y, p2x, p2y = line_data
+                    # Define a pen for the persistent scale line (e.g., magenta, solid)
+                    # Consider making this color/style configurable via settings_manager later
+                    defined_line_pen = QtGui.QPen(QtGui.QColor("magenta"), 1.5) # Magenta, width 1.5
+                    defined_line_pen.setCosmetic(True)
+                    
+                    # Draw the line
+                    line_item = QtWidgets.QGraphicsLineItem(p1x, p1y, p2x, p2y)
+                    line_item.setPen(defined_line_pen)
+                    line_item.setZValue(12) # Above tracks and origin, but below temporary scale items
+                    scene.addItem(line_item)
+                    
+                    # Optionally, draw small markers at the ends of the defined line
+                    marker_radius = 3.0 # Small radius for end markers
+                    end_marker_brush = QtGui.QBrush(QtGui.QColor("magenta"))
+                    
+                    marker1 = QtWidgets.QGraphicsEllipseItem(
+                        p1x - marker_radius, p1y - marker_radius, 
+                        2 * marker_radius, 2 * marker_radius
+                    )
+                    marker1.setPen(defined_line_pen)
+                    marker1.setBrush(end_marker_brush)
+                    marker1.setZValue(12)
+                    scene.addItem(marker1)
+                    
+                    marker2 = QtWidgets.QGraphicsEllipseItem(
+                        p2x - marker_radius, p2y - marker_radius, 
+                        2 * marker_radius, 2 * marker_radius
+                    )
+                    marker2.setPen(defined_line_pen)
+                    marker2.setBrush(end_marker_brush)
+                    marker2.setZValue(12)
+                    scene.addItem(marker2)
+                    logger.debug(f"Drew persistent defined scale line from ({p1x:.1f},{p1y:.1f}) to ({p2x:.1f},{p2y:.1f})")
+
+            # Ensure the viewport is updated to reflect the changes
+            if self.imageView.viewport():
+                self.imageView.viewport().update()
+
+        except Exception as e:
+            logger.exception(f"Error in _redraw_scene_overlay: {e}")
+            if self.imageView:
+                self.imageView.clearOverlay() # Clear on error to prevent artifacts
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        """Handles key presses for shortcuts like Space (play/pause) and Delete/Backspace (delete point)."""
-        key = event.key()
-        accepted = False # Flag to check if we handled the key press
-
-        # Spacebar: Toggle playback
-        if key == QtCore.Qt.Key.Key_Space:
-            if self.video_loaded and hasattr(self, 'playPauseButton') and self.playPauseButton.isEnabled():
-                self._toggle_playback()
+        key = event.key(); accepted = False
+        status_bar = self.statusBar()
+        if key == QtCore.Qt.Key.Key_Escape:
+            if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
+               self.scale_panel_controller._is_setting_scale_by_line:
+                self.scale_panel_controller.cancel_set_scale_by_line()
+                if status_bar: status_bar.showMessage("Set scale by line cancelled.", 3000)
                 accepted = True
-
-        # Delete or Backspace: Delete point for active track on current frame
-        elif key == QtCore.Qt.Key.Key_Delete or key == QtCore.Qt.Key.Key_Backspace:
-            if (self.video_loaded and hasattr(self, 'track_manager') and
-                self.track_manager.active_track_index != -1 and self.current_frame_index != -1):
-
-                active_track_index = self.track_manager.active_track_index
-                target_frame_index = self.current_frame_index
-                logger.info(f"Delete/Backspace key pressed. Attempting to delete point for track index {active_track_index} on frame {target_frame_index}")
-                deleted = self.track_manager.delete_point(active_track_index, target_frame_index)
-                if hasattr(self, 'statusBar'):
-                    status_msg = (f"Deleted point from Track {active_track_index+1} on Frame {target_frame_index+1}"
-                                  if deleted else "No point found to delete on this frame for the active track.")
-                    self.statusBar.showMessage(status_msg, 3000)
-                accepted = True # Indicate we handled the key, even if no point was deleted
-            elif hasattr(self, 'statusBar'):
-                 # Cannot delete (e.g., no active track)
-                self.statusBar.showMessage("Cannot delete point (no active track or invalid frame?).", 3000)
-                # Do not set accepted = True, let base class handle if needed (e.g., in a text box)
-
-        # If we handled the key press, accept the event
-        if accepted:
-            event.accept()
-        else:
-            # Otherwise, pass the event to the base class implementation
-            super().keyPressEvent(event)
-
-    # --- Dialog Slots ---
+            elif self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode():
+                self.coord_panel_controller._is_setting_origin = False
+                self.imageView.set_interaction_mode(InteractionMode.NORMAL)
+                if status_bar: status_bar.showMessage("Set origin cancelled.", 3000)
+                accepted = True
+        if not accepted and key == QtCore.Qt.Key.Key_Space:
+            if self.video_loaded and self.playPauseButton and self.playPauseButton.isEnabled():
+                nav_disabled = self.scale_panel_controller._is_setting_scale_by_line if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') else False
+                if not nav_disabled: self._toggle_playback(); accepted = True
+        elif not accepted and (key == QtCore.Qt.Key.Key_Delete or key == QtCore.Qt.Key.Key_Backspace):
+            if self.video_loaded and self.track_manager.active_track_index != -1 and self.current_frame_index != -1:
+                deleted = self.track_manager.delete_point(self.track_manager.active_track_index, self.current_frame_index)
+                if status_bar: status_bar.showMessage(f"Deleted point..." if deleted else "No point to delete.", 3000)
+                accepted = True
+            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000)
+        if accepted: event.accept()
+        else: super().keyPressEvent(event)
 
     @QtCore.Slot()
     def _show_video_info_dialog(self) -> None:
-        """Handles the File -> Video Information... action."""
-        if not self.video_loaded or not hasattr(self, 'video_handler'):
-            if hasattr(self, 'statusBar'): self.statusBar.showMessage("No video loaded.", 3000)
-            logger.warning("Video Info action triggered but no video loaded.")
+        status_bar = self.statusBar()
+        if not self.video_loaded:
+            if status_bar: status_bar.showMessage("No video loaded.", 3000)
             return
-
-        logger.info("Video Info action triggered. Retrieving metadata...")
         try:
-            metadata_dict = self.video_handler.get_metadata_dictionary()
-            if not metadata_dict:
-                logger.warning("Video handler returned empty metadata dictionary.")
-                QtWidgets.QMessageBox.information(self, "Video Information", "Could not retrieve video metadata.")
-                return
-
-            dialog = MetadataDialog(metadata_dict, self)
-            dialog.exec() # Show as modal dialog
-
-        except Exception as e:
-            logger.exception("Error retrieving or displaying video metadata.")
-            QtWidgets.QMessageBox.critical(self, "Error", f"Could not display video information:\n{e}")
+            meta = self.video_handler.get_metadata_dictionary()
+            if not meta: QtWidgets.QMessageBox.information(self, "Video Information", "Could not retrieve metadata."); return
+            dialog = MetadataDialog(meta, self); dialog.exec()
+        except Exception as e: QtWidgets.QMessageBox.critical(self, "Error", f"Could not display video info:\n{e}")
 
     @QtCore.Slot()
     def _show_about_dialog(self) -> None:
-        """Displays the About dialog."""
-        app_icon = self.windowIcon() # Get the application icon
-
-        about_box = QtWidgets.QMessageBox(self)
-        about_box.setWindowTitle(f"About {config.APP_NAME}")
-        about_box.setTextFormat(QtCore.Qt.TextFormat.RichText) # Allow HTML
-        about_box.setText(
-            f"<b>{config.APP_NAME}</b><br>"
-            f"Version {config.APP_VERSION}<br><br>"
-            "Tool for tracking volcanic pyroclasts in eruption videos.<br><br>"
-            f"Using Python {sys.version.split()[0]} and PySide6 {QtCore.__version__}"
-        )
-        # Set the icon
-        if not app_icon.isNull():
-             icon_pixmap = app_icon.pixmap(QtCore.QSize(64, 64)) # Generate suitable pixmap
-             if not icon_pixmap.isNull():
-                 about_box.setIconPixmap(icon_pixmap)
-             else:
-                 about_box.setIcon(QtWidgets.QMessageBox.Icon.Information) # Fallback
-                 logger.warning("Failed to generate pixmap from application icon for About dialog.")
-        else:
-            about_box.setIcon(QtWidgets.QMessageBox.Icon.Information) # Fallback
-
-        about_box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
-        about_box.exec()
-
-
-    # --- Window Close Event ---
+        icon = self.windowIcon(); box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle(f"About {config.APP_NAME}"); box.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        box.setText(f"<b>{config.APP_NAME}</b><br>Version {config.APP_VERSION}<br><br>Tool for tracking.<br><br>Python {sys.version.split()[0]}, PySide6 {QtCore.__version__}")
+        if not icon.isNull():
+            pix = icon.pixmap(QtCore.QSize(64,64))
+            if not pix.isNull(): box.setIconPixmap(pix)
+            else: box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        else: box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok); box.exec()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        """Ensures video resources are released when the window is closed."""
-        logger.info("Close event triggered. Releasing video...")
-        self._release_video()
-        super().closeEvent(event)
+        self._release_video(); super().closeEvent(event)
 
-
-    # --- Utility Methods ---
-
-    def _format_time(self, milliseconds: float) -> str:
-        """Formats milliseconds into a MM:SS.mmm string."""
-        if milliseconds < 0: return "--:--.---"
-        try:
-            total_seconds, msecs = divmod(milliseconds, 1000)
-            minutes, seconds = divmod(int(total_seconds), 60)
-            return f"{minutes:02}:{seconds:02}.{int(msecs):03}"
-        except (ValueError, TypeError):
-            logger.warning(f"Could not format time from milliseconds: {milliseconds}", exc_info=False)
-            return "--:--.---"
+    def _format_time(self, ms: float) -> str:
+        if ms < 0: return "--:--.---"
+        try: s,mils = divmod(ms,1000); m,s = divmod(int(s),60); return f"{m:02}:{s:02}.{int(mils):03}"
+        except: return "--:--.---"
