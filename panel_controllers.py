@@ -225,23 +225,29 @@ class ScalePanelController(QtCore.QObject):
             known_distance_m = dialog.get_distance()
             if known_distance_m is not None and known_distance_m > 0:
                 m_per_px = known_distance_m / pixel_distance
-                
+
                 # Set the defined line and the scale in the manager
                 self._scale_manager.set_defined_scale_line(x1, y1, x2, y2)
-                self._scale_manager.set_scale(m_per_px, called_from_line_definition=True) 
+                self._scale_manager.set_scale(m_per_px, called_from_line_definition=True)
 
                 self.statusBarMessage.emit(f"Scale set to {m_per_px:.6g} m/px.", 5000)
                 logger.info(f"Scale set by line: {pixel_distance:.2f} px = {known_distance_m:.3f} m. Calculated m/px: {m_per_px:.6g}")
 
-                # --- NEW: Automatically check the relevant checkboxes ---
+                # --- Automatically check the relevant checkboxes ---
                 if hasattr(self._main_window_ref, 'showScaleLineCheckBox') and self._main_window_ref.showScaleLineCheckBox:
                     self._main_window_ref.showScaleLineCheckBox.setChecked(True)
                     logger.debug("Automatically checked 'Show scale line' checkbox.")
-                
+
                 if hasattr(self._main_window_ref, 'showScaleBarCheckBox') and self._main_window_ref.showScaleBarCheckBox:
                     self._main_window_ref.showScaleBarCheckBox.setChecked(True)
                     logger.debug("Automatically checked 'Show Scale Bar' checkbox.")
-                # --- END NEW ---
+
+                # --- ADDED LINE: Trigger immediate redraw ---
+                # This ensures the potentially newly visible scale line is drawn right away.
+                if hasattr(self._main_window_ref, '_redraw_scene_overlay'):
+                    logger.debug("Requesting immediate scene redraw after setting scale from line.")
+                    self._main_window_ref._redraw_scene_overlay()
+                # --- END ADDED LINE ---
 
             else: # Invalid distance or dialog cancelled by user input validation
                 self.statusBarMessage.emit("Set scale by line cancelled or invalid distance.", 3000)
@@ -259,8 +265,8 @@ class ScalePanelController(QtCore.QObject):
         # update_ui_from_manager() will be called because ScaleManager emitted scaleOrUnitChanged.
         # This will update enabled states and ensure visuals are consistent with checkbox states.
         # If the checkboxes were just programmatically set, update_ui_from_manager will see that.
-        # The _redraw_scene_overlay will also be triggered if necessary by the toggled signals
-        # or subsequent updates.
+        # The explicit redraw call above ensures the graphics update immediately.
+
 
     def cancel_set_scale_by_line(self, reset_button_text: bool = True) -> None:
         if self._is_setting_scale_by_line or self._image_view._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
