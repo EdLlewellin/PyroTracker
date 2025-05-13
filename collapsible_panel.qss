@@ -1,0 +1,53 @@
+/* collapsible_panel.qss */
+
+/* Styles for when the GroupBox is CHECKED (expanded) */
+QGroupBox[collapsible="true"]:checked {
+    font-weight: bold;
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
+    margin-top: 1.2em;
+    padding-top: 0.5em;
+    /* Add any other styles for the expanded state */
+}
+
+/* Styles for when the GroupBox is UNCHECKED (collapsed) */
+QGroupBox[collapsible="true"]:unchecked {
+    font-weight: bold; /* Keep title bold */
+    border: 1px solid transparent; /* Make border invisible */
+    border-radius: 4px; /* Keep rounded corners for consistency if it has a slight background */
+    margin-top: 1.2em; /* Keep margin for title consistency */
+    padding-top: 0em;  /* No padding above (now hidden) content */
+    padding-bottom: 0em; /* No padding below */
+    /* You might need to adjust min-height if it's still taking up space */
+}
+
+QGroupBox[collapsible="true"]::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 5px 0 20px; /* Left padding for indicator */
+    color: #333;
+}
+
+QGroupBox[collapsible="true"]::indicator {
+    width: 16px;
+    height: 16px;
+    position: absolute;
+    top: 0.05em;
+    left: 5px;
+}
+
+QGroupBox[collapsible="true"]::indicator:unchecked {
+    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_right.svg);
+}
+
+QGroupBox[collapsible="true"]::indicator:unchecked:hover {
+    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_right_hover.svg);
+}
+
+QGroupBox[collapsible="true"]::indicator:checked {
+    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_down.svg);
+}
+
+QGroupBox[collapsible="true"]::indicator:checked:hover {
+    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_down_hover.svg);
+}

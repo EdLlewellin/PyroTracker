@@ -8,6 +8,7 @@ instantiates and shows the MainWindow, and starts the Qt event loop.
 
 import sys
 import logging
+import os
 # Import necessary types from typing module
 from typing import Optional
 
@@ -30,6 +31,8 @@ logger = logging.getLogger(__name__) # Use module-specific logger for consistenc
 logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION}")
 # --------------------------
 
+# --- Determine base directory for resource loading ---
+basedir = os.path.dirname(os.path.abspath(__file__))
 
 # Standard Python entry point check
 if __name__ == "__main__":
@@ -68,6 +71,26 @@ if __name__ == "__main__":
         app.setOrganizationName(config.APP_ORGANIZATION)
         app.setApplicationVersion(config.APP_VERSION)
         logger.debug(f"Application details set: Name={config.APP_NAME}, Org={config.APP_ORGANIZATION}, Version={config.APP_VERSION}")
+
+        # --- Load External Stylesheet ---
+        # Construct path to icons directory (assuming it's a subdir of where main.py is)
+        icons_dir = os.path.join(basedir, "icons") # <--- For resolving icon paths
+
+        qss_file_path = os.path.join(basedir, "collapsible_panel.qss") # <--- Path to QSS
+        try:
+            with open(qss_file_path, "r") as f:
+                stylesheet_content = f.read()
+                # Replace placeholders in QSS content with actual icon paths
+                # This is a simple approach; Qt Resource system is more robust
+                stylesheet_content = stylesheet_content.replace(
+                    "PYTHON_PATH_TO_YOUR_ICONS_DIR", icons_dir.replace("\\", "/") # Ensure forward slashes for URLs
+                )
+                app.setStyleSheet(stylesheet_content)
+                logger.info(f"Loaded stylesheet from {qss_file_path}")
+        except FileNotFoundError:
+            logger.warning(f"Stylesheet file not found: {qss_file_path}. Using default styles for panels.")
+        except Exception as e:
+            logger.error(f"Error loading stylesheet {qss_file_path}: {e}")
 
         # Instantiate and show the main window
         logger.debug("Instantiating MainWindow...")

@@ -229,9 +229,10 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     # --- Scale Configuration Panel (Collapsible) ---
     # Assign to main_window attribute
     main_window.scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
-    main_window.scale_config_group.setCheckable(True)  # Make it checkable
-    main_window.scale_config_group.setChecked(False)   # Start hidden (collapsed) by default
+    main_window.scale_config_group.setCheckable(True)
+    main_window.scale_config_group.setChecked(False) # Start hidden
     main_window.scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+    main_window.scale_config_group.setProperty("collapsible", "true")
 
     # This is the main layout for the QGroupBox itself
     scale_group_outer_layout = QtWidgets.QVBoxLayout(main_window.scale_config_group)
@@ -322,6 +323,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.coords_group.setCheckable(True)  # Make it checkable
     main_window.coords_group.setChecked(False)    # Start expanded by default
     main_window.coords_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+    main_window.coords_group.setProperty("collapsible", "true")
 
     # This is the main layout for the QGroupBox itself
     coords_group_outer_layout = QtWidgets.QVBoxLayout(main_window.coords_group)
