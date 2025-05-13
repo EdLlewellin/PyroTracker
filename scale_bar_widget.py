@@ -4,7 +4,7 @@ Custom QWidget for displaying a dynamic scale bar on the InteractiveImageView.
 """
 import logging
 import math
-import config
+import config # For ROUND_NUMBER_SEQUENCE etc.
 from typing import Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -13,136 +13,155 @@ import settings_manager
 
 logger = logging.getLogger(__name__)
 
-# --- Constants for Scale Bar Appearance (can be moved to config.py later if desired) ---
-SCALE_BAR_RECT_HEIGHT = 4  # Height of the scale bar rectangle in pixels
-SCALE_BAR_BORDER_THICKNESS = 1 # Thickness of the border around the rectangle
+# --- Default/Fallback Constants for Scale Bar Appearance ---
+# These are used if settings are not available or as initial defaults before settings load.
+DEFAULT_SCALE_BAR_RECT_HEIGHT = 4  # Default height of the scale bar rectangle in pixels
+DEFAULT_SCALE_BAR_FONT_SIZE_PT = 10 # Default font size for the text
+FALLBACK_SCALE_BAR_BORDER_THICKNESS = 1 # Thickness of the border around the rectangle (currently not a setting)
 SCALE_BAR_TEXT_MARGIN_BOTTOM = 2 # Space between text and top of scale bar rectangle
-SCALE_BAR_DEFAULT_TARGET_FRACTION_OF_VIEW_WIDTH = 0.15 # Try to make bar ~15% of view width
-SCALE_BAR_MIN_PIXEL_WIDTH = 50  # Minimum pixel width for the bar to be meaningful
-SCALE_BAR_MAX_PIXEL_WIDTH = 300 # Maximum pixel width to avoid being too intrusive
+SCALE_BAR_DEFAULT_TARGET_FRACTION_OF_VIEW_WIDTH = 0.15
+SCALE_BAR_MIN_PIXEL_WIDTH = 50
+SCALE_BAR_MAX_PIXEL_WIDTH = 300
 
 class ScaleBarWidget(QtWidgets.QWidget):
-    """
-    A widget that draws a scale bar with a text label indicating its real-world length.
-    The bar's pixel length dynamically adjusts to view zoom, while its represented
-    real-world length aims for a "round number".
-    """
-
-    _m_per_px_scene: Optional[float] # Meters per pixel at 1x zoom (scene coordinates)
-    _view_scale_factor: float        # Current zoom factor of the InteractiveImageView
-    _parent_view_width: int          # Current width of the parent InteractiveImageView
-
-    # Calculated properties for drawing
+    _m_per_px_scene: Optional[float]
+    _view_scale_factor: float
+    _parent_view_width: int
     _bar_pixel_length: float
     _bar_text_label: str
     _text_width: int
-    _text_height: int
+    _text_height: int # Height of the text itself based on current font
+
+    # Appearance attributes driven by settings
+    _bar_color: QtGui.QColor
+    _text_color: QtGui.QColor # Typically same as bar_color
+    _border_color: QtGui.QColor # Currently fixed, could be a setting
+    _current_font_size_pt: int
+    _current_bar_rect_height: int
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents) # Pass mouse events through
-        self.setVisible(False) # Initially hidden
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setVisible(False)
 
         self._m_per_px_scene = None
         self._view_scale_factor = 1.0
-        self._parent_view_width = 0 # Needs to be updated by parent
-
+        self._parent_view_width = 0
         self._bar_pixel_length = 0.0
         self._bar_text_label = ""
         self._text_width = 0
         self._text_height = 0
+        
+        # Initialize appearance from settings
+        self._border_color = QtGui.QColor("black") # Fixed for now
+        self.update_appearance_from_settings() # Load color, font size, bar height
 
-        # Basic appearance (can be customized further if needed)
-        self.font_metrics = QtGui.QFontMetrics(self.font()) # Use default widget font for now
-        
-        # Initialize with default from settings if possible, or fallback.
-        # This initial setting will be overridden if MainWindow applies new settings later.
-        initial_bar_color_setting = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_COLOR)
-        
-        # Ensure the retrieved setting is a QColor object or can be converted to one
-        if isinstance(initial_bar_color_setting, QtGui.QColor):
-            self._bar_color = initial_bar_color_setting
-        elif isinstance(initial_bar_color_setting, str): # If color is stored as string name/hex
-            self._bar_color = QtGui.QColor(initial_bar_color_setting)
-            if not self._bar_color.isValid(): # Fallback if string was invalid
-                logger.warning(f"Invalid color string '{initial_bar_color_setting}' from settings for scale bar. Using white.")
-                self._bar_color = QtGui.QColor("white")
-        else: # Fallback for any other unexpected type
-            logger.warning(f"Unexpected type for scale bar color setting '{type(initial_bar_color_setting)}'. Using white.")
-            self._bar_color = QtGui.QColor("white")
-        
-        # For simplicity, border is usually black or contrasting, text matches bar color
-        self._border_color = QtGui.QColor("black") # Could be a setting too
-        self._text_color = self._bar_color # Text will match bar color
-
-        # Set size policy to allow it to adapt if parent uses it in a layout (though we'll position manually)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        # Initial height calculation relies on settings loaded by update_appearance_from_settings
         self.setFixedHeight(self._calculate_widget_height())
+        logger.debug(f"ScaleBarWidget initialized. Font: {self.font().family()} {self.font().pointSize()}pt, BarHeight: {self._current_bar_rect_height}px")
 
+    def update_appearance_from_settings(self) -> None:
+        """
+        Updates the scale bar's appearance (color, font size, bar height)
+        based on current values from settings_manager.
+        """
+        logger.debug("ScaleBarWidget: Updating appearance from settings.")
+        # Get Color
+        bar_color_setting = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_COLOR)
+        if isinstance(bar_color_setting, QtGui.QColor) and bar_color_setting.isValid():
+            self._bar_color = bar_color_setting
+        elif isinstance(bar_color_setting, str):
+            self._bar_color = QtGui.QColor(bar_color_setting)
+            if not self._bar_color.isValid():
+                self._bar_color = QtGui.QColor("white") # Fallback
+        else:
+            self._bar_color = QtGui.QColor("white") # Fallback
+        self._text_color = self._bar_color # Text color matches bar color
+
+        # Get Font Size
+        self._current_font_size_pt = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_TEXT_FONT_SIZE)
+        if not isinstance(self._current_font_size_pt, int) or self._current_font_size_pt <= 0:
+            logger.warning(f"Invalid font size '{self._current_font_size_pt}' from settings. Using default.")
+            self._current_font_size_pt = DEFAULT_SCALE_BAR_FONT_SIZE_PT
+        
+        current_font = self.font()
+        current_font.setPointSize(self._current_font_size_pt)
+        self.setFont(current_font) # Set widget's font
+        self.font_metrics = QtGui.QFontMetrics(current_font) # Update font metrics
+
+        # Get Bar Rectangle Height
+        self._current_bar_rect_height = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_RECT_HEIGHT)
+        if not isinstance(self._current_bar_rect_height, int) or self._current_bar_rect_height <= 0:
+            logger.warning(f"Invalid bar rect height '{self._current_bar_rect_height}' from settings. Using default.")
+            self._current_bar_rect_height = DEFAULT_SCALE_BAR_RECT_HEIGHT
+        
+        # Recalculate text dimensions and widget height as font/bar height might have changed
+        if self._bar_text_label: # Re-measure text if a label exists
+            text_rect = self.font_metrics.boundingRect(self._bar_text_label)
+            self._text_width = text_rect.width()
+            self._text_height = text_rect.height()
+
+        new_widget_height = self._calculate_widget_height()
+        if self.height() != new_widget_height:
+            self.setFixedHeight(new_widget_height)
+            logger.debug(f"ScaleBarWidget height set to {new_widget_height}px due to settings change.")
+
+        if self.isVisible():
+            self.update() # Trigger repaint
 
     def _calculate_widget_height(self) -> int:
-        """Calculates the total height needed for the widget (text + margin + bar)."""
-        text_h = self.font_metrics.height()
-        return text_h + SCALE_BAR_TEXT_MARGIN_BOTTOM + SCALE_BAR_RECT_HEIGHT + 2 * SCALE_BAR_BORDER_THICKNESS
+        """Calculates the total height needed for the widget based on current font and bar height."""
+        # self._text_height is based on current font_metrics (updated in update_appearance_from_settings)
+        # self._current_bar_rect_height is from settings
+        return self._text_height + SCALE_BAR_TEXT_MARGIN_BOTTOM + self._current_bar_rect_height + 2 * FALLBACK_SCALE_BAR_BORDER_THICKNESS
 
     def update_dimensions(self,
                           m_per_px_scene: Optional[float],
                           view_scale_factor: float,
                           parent_view_width: int) -> None:
-        """
-        Updates the scale bar's internal parameters based on the current
-        scene scale, view zoom, and parent view width.
-        This will trigger a recalculation of the bar's length and label,
-        and a repaint.
-
-        Args:
-            m_per_px_scene: The current scale in meters per physical pixel of the scene (at 1x zoom).
-                           If None, the scale bar will not be displayed.
-            view_scale_factor: The current zoom factor of the InteractiveImageView.
-            parent_view_width: The current width of the parent InteractiveImageView in pixels.
-        """
         logger.debug(f"ScaleBarWidget update_dimensions: m/px_scene={m_per_px_scene}, view_scale={view_scale_factor}, view_width={parent_view_width}")
         visibility_changed = (self._m_per_px_scene is None and m_per_px_scene is not None) or \
                              (self._m_per_px_scene is not None and m_per_px_scene is None)
 
         self._m_per_px_scene = m_per_px_scene
-        self._view_scale_factor = max(0.0001, view_scale_factor) # Avoid division by zero or negative
+        self._view_scale_factor = max(0.0001, view_scale_factor)
         self._parent_view_width = parent_view_width
 
         if self._m_per_px_scene is None or self._view_scale_factor <= 0:
+            if self.isVisible(): # Only log if visibility actually changes
+                logger.debug("Scale bar becoming hidden (no scene scale or invalid view scale).")
             self.setVisible(False)
             self._bar_pixel_length = 0
             self._bar_text_label = ""
-            logger.debug("Scale bar hidden (no scene scale or invalid view scale).")
         else:
-            self._calculate_bar_length_and_label()
-            if not self.isVisible() and self._bar_pixel_length > 0:
-                self.setVisible(True)
-                visibility_changed = True # Became visible
-            elif self.isVisible() and self._bar_pixel_length == 0:
-                 self.setVisible(False)
-                 visibility_changed = True # Became hidden
+            self._calculate_bar_length_and_label() # This updates _bar_pixel_length, _bar_text_label, _text_width, _text_height
+            
+            should_be_visible = self._bar_pixel_length > 0
+            if self.isVisible() != should_be_visible:
+                self.setVisible(should_be_visible)
+                visibility_changed = True
+                logger.debug(f"Scale bar visibility changed to: {should_be_visible}")
 
-            if self.isVisible() or visibility_changed:
-                # Adjust widget size to fit new content
-                required_width = int(max(self._bar_pixel_length + 2 * SCALE_BAR_BORDER_THICKNESS, self._text_width))
-                self.setFixedWidth(max(10, required_width)) # Ensure a minimum width
-                self.update() # Trigger repaint
+            if self.isVisible(): # If it's supposed to be visible
+                required_widget_height = self._calculate_widget_height()
+                if self.height() != required_widget_height:
+                    self.setFixedHeight(required_widget_height)
+                
+                required_widget_width = int(max(self._bar_pixel_length + 2 * FALLBACK_SCALE_BAR_BORDER_THICKNESS, self._text_width))
+                self.setFixedWidth(max(10, required_widget_width))
+                self.update()
+            elif visibility_changed: # Became hidden
+                self.update() # Ensure it's cleared if it was visible and now isn't
+
 
     def _format_length_value(self, length_meters: float) -> str:
-        """
-        Formats a given length in meters into a human-readable string
-        with appropriate units (km, m, cm, mm, µm, nm) or scientific notation.
-        Uses constants from config.py.
-        """
         if length_meters == 0:
             return "0 m"
-
         if abs(length_meters) >= config.SCIENTIFIC_NOTATION_UPPER_THRESHOLD or \
            (abs(length_meters) > 0 and abs(length_meters) <= config.SCIENTIFIC_NOTATION_LOWER_THRESHOLD) :
             return f"{length_meters:.1e}"
-
-        for factor, singular_abbr, plural_abbr in config.UNIT_PREFIXES: # Use config.UNIT_PREFIXES
+        for factor, singular_abbr, plural_abbr in config.UNIT_PREFIXES:
             if abs(length_meters) >= factor * 0.99:
                 value_in_unit = length_meters / factor
                 if factor >= 1.0:
@@ -159,15 +178,8 @@ class ScaleBarWidget(QtWidgets.QWidget):
         return f"{length_meters:.2f} m"
 
     def _calculate_bar_length_and_label(self) -> None:
-        """
-        Calculates the optimal real-world length for the scale bar to represent,
-        its corresponding pixel length on screen, and the text label.
-        Updates _bar_pixel_length and _bar_text_label.
-        Uses ROUND_NUMBER_SEQUENCE from config.py.
-        """
         if self._m_per_px_scene is None or self._view_scale_factor <= 0 or self._parent_view_width <= 0:
-            self._bar_pixel_length = 0
-            self._bar_text_label = ""
+            self._bar_pixel_length = 0; self._bar_text_label = ""; self._text_width = 0; self._text_height = 0
             return
 
         m_per_view_pixel = self._m_per_px_scene / self._view_scale_factor
@@ -177,178 +189,150 @@ class ScaleBarWidget(QtWidgets.QWidget):
         target_real_world_length_m = target_bar_display_width_px * m_per_view_pixel
 
         if target_real_world_length_m <= 0:
-            self._bar_pixel_length = 0
-            self._bar_text_label = ""
+            self._bar_pixel_length = 0; self._bar_text_label = ""; self._text_width = 0; self._text_height = 0
             return
 
         power_of_10 = 10.0 ** math.floor(math.log10(target_real_world_length_m))
-        # Use config.ROUND_NUMBER_SEQUENCE
         best_length_m = power_of_10 * config.ROUND_NUMBER_SEQUENCE[0]
-        for R in config.ROUND_NUMBER_SEQUENCE: # Use config.ROUND_NUMBER_SEQUENCE
-            current_test_length_m = power_of_10 * R
-            if current_test_length_m <= target_real_world_length_m * 1.05:
+        for R_val in config.ROUND_NUMBER_SEQUENCE:
+            current_test_length_m = power_of_10 * R_val
+            if current_test_length_m <= target_real_world_length_m * 1.05: # Allow slight overshoot
                 best_length_m = current_test_length_m
             else:
                 break
-        # Use config.ROUND_NUMBER_SEQUENCE
-        if target_real_world_length_m < power_of_10 * config.ROUND_NUMBER_SEQUENCE[0] * 0.75 and power_of_10 > 1e-9:
+        if target_real_world_length_m < power_of_10 * config.ROUND_NUMBER_SEQUENCE[0] * 0.75 and power_of_10 > 1e-9 : # Avoid excessive shrinking
              power_of_10_smaller = power_of_10 / 10.0
-             best_length_m = power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1] # Use config.ROUND_NUMBER_SEQUENCE
+             if power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1] > 1e-9: # ensure positive length
+                best_length_m = power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1]
+
 
         chosen_real_world_length_m = best_length_m
         final_bar_pixel_length = chosen_real_world_length_m / m_per_view_pixel
 
         if final_bar_pixel_length < SCALE_BAR_MIN_PIXEL_WIDTH / 2.0:
-             self._bar_pixel_length = 0
-             self._bar_text_label = ""
+             self._bar_pixel_length = 0; self._bar_text_label = ""
              logger.debug(f"Calculated scale bar pixel length {final_bar_pixel_length:.1f} too small, hiding bar.")
         else:
             self._bar_pixel_length = final_bar_pixel_length
             self._bar_text_label = self._format_length_value(chosen_real_world_length_m)
             logger.debug(f"Scale bar: Real length={chosen_real_world_length_m:.3g} m, Text='{self._bar_text_label}', Pixel length={self._bar_pixel_length:.1f} px")
-
+        
+        # Update text dimensions based on current font (set in update_appearance_from_settings)
         text_rect = self.font_metrics.boundingRect(self._bar_text_label)
         self._text_width = text_rect.width()
-        self._text_height = text_rect.height()
-
+        self._text_height = text_rect.height() # This is height of the text itself
 
     def minimumSizeHint(self) -> QtCore.QSize:
-        """Provides a minimum size hint for layout purposes (though we position manually)."""
-        width = int(max(self._bar_pixel_length + 2 * SCALE_BAR_BORDER_THICKNESS, self._text_width))
+        width = int(max(self._bar_pixel_length + 2 * FALLBACK_SCALE_BAR_BORDER_THICKNESS, self._text_width))
         height = self._calculate_widget_height()
         return QtCore.QSize(max(10, width), height)
 
     def sizeHint(self) -> QtCore.QSize:
-        """Provides a preferred size hint."""
         return self.minimumSizeHint()
 
-    def set_bar_color(self, color: QtGui.QColor) -> None:
-        """Sets the main color for the scale bar and its text."""
+    def set_bar_color(self, color: QtGui.QColor) -> None: # Kept for direct color changes if needed by MainWindow
         if color.isValid():
             self._bar_color = color
-            self._text_color = color # Keep text color same as bar color for this design
-            # If you want border to also be this color, or a derivative:
-            # self._border_color = color.darker(150) # Example: darker border
-            if self.isVisible(): # Only repaint if currently visible
+            self._text_color = color
+            if self.isVisible():
                 self.update()
-            logger.debug(f"ScaleBarWidget color set to: {color.name()}")
+            logger.debug(f"ScaleBarWidget color set directly to: {color.name()}")
+
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        """Paints the scale bar and its label."""
         if not self.isVisible() or self._bar_pixel_length <= 0:
             return
 
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        
+        current_font = self.font() # Font is already set by update_appearance_from_settings
+        painter.setFont(current_font) # Ensure painter uses the widget's current font
 
         widget_width = self.width()
-        widget_height = self.height() # Fixed height
+        # widget_height is self.height(), managed by setFixedHeight
 
         # --- Draw Text ---
-        # Position text centered horizontally, above the bar
-        text_x = (widget_width - self._text_width) / 2
-        text_y = self._text_height 
-        painter.setPen(self._text_color) # Use the stored _text_color
-        painter.drawText(QtCore.QPointF(text_x, text_y - self.font_metrics.descent()), self._bar_text_label)
-
+        # self._text_height is already calculated based on current font.
+        text_x = (widget_width - self._text_width) / 2.0
+        # Position text baseline correctly. text_y is the y-coordinate for drawText's QPointF,
+        # which refers to the bottom-left of the text's bounding box if not aligned.
+        # For alignment, it's simpler to use the full height of the text from font_metrics.
+        text_baseline_y = float(self._text_height) # Y position for the baseline of the text
+        painter.setPen(self._text_color)
+        # Using QPointF for potentially fractional positions for better centering.
+        # Draw text such that its bounding box top is at 0, then the bar is below it.
+        painter.drawText(QtCore.QPointF(text_x, text_baseline_y - self.font_metrics.descent()), self._bar_text_label)
 
 
         # --- Draw Scale Bar Rectangle ---
-        # Position bar centered horizontally, below the text
-        bar_start_x = (widget_width - self._bar_pixel_length) / 2
-        bar_top_y = self._text_height + SCALE_BAR_TEXT_MARGIN_BOTTOM + SCALE_BAR_BORDER_THICKNESS
+        bar_start_x = (widget_width - self._bar_pixel_length) / 2.0
+        # Bar is positioned below the text and its margin
+        bar_top_y = float(self._text_height + SCALE_BAR_TEXT_MARGIN_BOTTOM + FALLBACK_SCALE_BAR_BORDER_THICKNESS)
 
         bar_rect = QtCore.QRectF(
             bar_start_x,
             bar_top_y,
             self._bar_pixel_length,
-            SCALE_BAR_RECT_HEIGHT
+            float(self._current_bar_rect_height) # Use the setting for bar height
         )
 
-        painter.setBrush(self._bar_color) # Use the stored _bar_color
-        pen = QtGui.QPen(self._border_color, SCALE_BAR_BORDER_THICKNESS) # Use stored _border_color
-        pen.setCosmetic(True) # Ensure border thickness is consistent regardless of painter scale
+        painter.setBrush(self._bar_color)
+        # Border thickness is currently fixed, but pen width uses it.
+        pen = QtGui.QPen(self._border_color, FALLBACK_SCALE_BAR_BORDER_THICKNESS)
+        pen.setCosmetic(True)
         painter.setPen(pen)
         painter.drawRect(bar_rect)
-
-        # For debugging bounding box
-        # painter.setPen(QtGui.QColor("red"))
-        # painter.drawRect(self.rect().adjusted(0,0,-1,-1))
-
         painter.end()
 
-# --- Example Usage (for testing the widget standalone) ---
+# Example Usage (unchanged, but will now reflect new settings if defaults are modified)
 if __name__ == '__main__':
     import sys
     app = QtWidgets.QApplication(sys.argv)
-
-    # Create a dummy parent view for context
     dummy_view = QtWidgets.QGraphicsView()
     dummy_view.setWindowTitle("Dummy Parent View")
     dummy_view.resize(800, 600)
-
-    scale_bar = ScaleBarWidget(parent=dummy_view) # Parent it to the dummy view
-
-    # --- Controls for testing ---
+    scale_bar = ScaleBarWidget(parent=dummy_view)
     test_window = QtWidgets.QWidget()
     test_layout = QtWidgets.QVBoxLayout(test_window)
     test_window.setWindowTitle("Scale Bar Test Controls")
-
-    m_per_px_input = QtWidgets.QLineEdit("0.1") # Initial m/px_scene
-    view_scale_input = QtWidgets.QLineEdit("1.0") # Initial view_scale_factor
-    view_width_input = QtWidgets.QLineEdit(str(dummy_view.width())) # Initial parent_view_width
-
+    m_per_px_input = QtWidgets.QLineEdit("0.1")
+    view_scale_input = QtWidgets.QLineEdit("1.0")
+    view_width_input = QtWidgets.QLineEdit(str(dummy_view.width()))
     test_layout.addWidget(QtWidgets.QLabel("Meters per Scene Pixel (at 1x zoom):"))
     test_layout.addWidget(m_per_px_input)
     test_layout.addWidget(QtWidgets.QLabel("View Scale Factor (Zoom):"))
     test_layout.addWidget(view_scale_input)
     test_layout.addWidget(QtWidgets.QLabel("Parent View Width (pixels):"))
     test_layout.addWidget(view_width_input)
-
     update_button = QtWidgets.QPushButton("Update Scale Bar")
-
     def on_update():
         try:
             mpp = float(m_per_px_input.text()) if m_per_px_input.text() else None
             vs = float(view_scale_input.text())
             vw = int(view_width_input.text())
-
-            if mpp is not None and mpp <= 0: mpp = None # Treat non-positive as None
-
-            # Position the scale bar at bottom right of dummy_view
+            if mpp is not None and mpp <= 0: mpp = None
             margin = 10
-            bar_width_hint = scale_bar.sizeHint().width()
-            bar_height_hint = scale_bar.sizeHint().height()
-
-            # Update dimensions which also triggers internal calculations and visibility
-            scale_bar.update_dimensions(mpp, vs, vw)
-
-            # Only position if visible after update
+            scale_bar.update_dimensions(mpp, vs, vw) # This will now use settings for height/font
             if scale_bar.isVisible():
-                x_pos = dummy_view.viewport().width() - scale_bar.width() - margin
-                y_pos = dummy_view.viewport().height() - scale_bar.height() - margin
+                # Re-fetch widget width/height after update_dimensions as it might change
+                current_bar_width = scale_bar.width()
+                current_bar_height = scale_bar.height()
+                x_pos = dummy_view.viewport().width() - current_bar_width - margin
+                y_pos = dummy_view.viewport().height() - current_bar_height - margin
                 scale_bar.move(x_pos, y_pos)
                 logger.debug(f"Moved scale_bar to ({x_pos}, {y_pos}), size: {scale_bar.size()}")
-
         except ValueError as e:
             logger.error(f"Invalid input for test: {e}")
-            scale_bar.setVisible(False) # Hide on error
-
+            scale_bar.setVisible(False)
     update_button.clicked.connect(on_update)
     test_layout.addWidget(update_button)
     test_window.show()
-
-    # Connect resize of dummy_view to update scale bar (specifically view width and position)
-    def dummy_view_resized():
-        view_width_input.setText(str(dummy_view.viewport().width())) # Update control
-        on_update() # Re-calculate and re-position
-
-    dummy_view.resizeEvent = lambda event: (
-        QtWidgets.QGraphicsView.resizeEvent(dummy_view, event),
-        dummy_view_resized()
-    )
-
+    def dummy_view_resized_event(event): # Capture the event argument
+        QtWidgets.QGraphicsView.resizeEvent(dummy_view, event) # Call base class method
+        view_width_input.setText(str(dummy_view.viewport().width()))
+        on_update()
+    dummy_view.resizeEvent = dummy_view_resized_event
     dummy_view.show()
-    on_update() # Initial update and positioning
-
+    on_update()
     sys.exit(app.exec())

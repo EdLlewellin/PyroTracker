@@ -3,7 +3,7 @@
 Preferences dialog for customizing application visual settings.
 """
 import logging
-from typing import Dict, Any, Optional # Removed unused Callable
+from typing import Dict, Any, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -32,31 +32,24 @@ class ColorButton(QtWidgets.QPushButton):
         """Sets the button's background color, text color, and internal state."""
         if color.isValid() and color != self._color:
             self._color = color
-            # Set text color based on background brightness for readability
             brightness = (self._color.red() * 299 + self._color.green() * 587 + self._color.blue() * 114) / 1000
             text_color = "black" if brightness > 128 else "white"
-            # Update stylesheet in one go
             self.setStyleSheet(
                 f"QPushButton {{ background-color: {self._color.name()}; color: {text_color}; border: 1px solid gray; }}"
             )
-            # Optional: Display the hex code on the button
-            # self.setText(self._color.name())
 
     def color(self) -> QtGui.QColor:
-        """Returns the current QColor object."""
         return self._color
 
     def select_color(self) -> None:
-        """Opens a QColorDialog to allow the user to select a new color."""
-        # Create a dialog instance separate from the button to avoid inheriting styles
         dialog = QtWidgets.QColorDialog(self._color, self.window())
         dialog.setWindowTitle("Select Color")
-        dialog.setStyleSheet("")  # Clear any inherited stylesheet rules
+        dialog.setStyleSheet("")
         if dialog.exec() == QtWidgets.QDialog.Accepted:
             new_color = dialog.selectedColor()
             if new_color.isValid():
                 self.set_color(new_color)
-                self.colorChanged.emit(new_color)  # Emit signal if color changed
+                self.colorChanged.emit(new_color)
 
 class PreferencesDialog(QtWidgets.QDialog):
     settingsApplied = QtCore.Signal()
@@ -64,11 +57,11 @@ class PreferencesDialog(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
-        self.setMinimumWidth(450) # Adjusted for potentially more content with tabs
-        self.setMinimumHeight(350)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
 
         self.setting_widgets: Dict[str, QtWidgets.QWidget] = {}
-        self.tab_widget: Optional[QtWidgets.QTabWidget] = None # For easy access if needed later
+        self.tab_widget: Optional[QtWidgets.QTabWidget] = None
 
         self._setup_ui()
         self._load_settings()
@@ -81,12 +74,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         self.tab_widget = QtWidgets.QTabWidget()
         main_layout.addWidget(self.tab_widget)
 
-        # Create and add tabs
         self._create_tracks_tab()
         self._create_origin_tab()
-        self._create_scales_tab() # New tab
+        self._create_scales_tab()
 
-        # Standard Buttons
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok |
             QtWidgets.QDialogButtonBox.StandardButton.Cancel |
@@ -95,11 +86,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         apply_button = button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Apply)
-        if apply_button: # Ensure button exists
+        if apply_button:
             apply_button.clicked.connect(self._apply_settings)
         main_layout.addWidget(button_box)
 
-    # --- Helper function to add rows to a form layout (reusable) ---
     def _add_setting_to_form(self, form_layout: QtWidgets.QFormLayout,
                              label_text: str, setting_key: str,
                              widget_type: str, widget_params: Optional[Dict] = None) -> None:
@@ -113,14 +103,20 @@ class PreferencesDialog(QtWidgets.QDialog):
                 widget.setMaximum(widget_params.get("max_val", 100.0))
                 widget.setDecimals(widget_params.get("decimals", 1))
                 widget.setSingleStep(widget_params.get("step", 0.5))
-        elif widget_type == "int_spinbox": # New helper for integer spinbox
+        elif widget_type == "int_spinbox":
             widget = QtWidgets.QSpinBox()
             if widget_params:
                 widget.setMinimum(widget_params.get("min_val", 1))
                 widget.setMaximum(widget_params.get("max_val", 100))
                 widget.setSingleStep(widget_params.get("step", 1))
+        elif widget_type == "checkbox":
+            widget = QtWidgets.QCheckBox()
+            if widget_params and "tooltip" in widget_params:
+                widget.setToolTip(widget_params.get("tooltip",""))
 
         if widget:
+            if widget_params and "tooltip" in widget_params and not isinstance(widget, QtWidgets.QCheckBox): # CheckBox handles its own tooltip
+                 widget.setToolTip(widget_params.get("tooltip"))
             form_layout.addRow(label_text, widget)
             self.setting_widgets[setting_key] = widget
         else:
@@ -160,12 +156,11 @@ class PreferencesDialog(QtWidgets.QDialog):
         if self.tab_widget:
             self.tab_widget.addTab(origin_tab_widget, "Origin")
 
-    def _create_scales_tab(self) -> None: # NEW METHOD
+    def _create_scales_tab(self) -> None:
         scales_tab_widget = QtWidgets.QWidget()
-        scales_main_layout = QtWidgets.QVBoxLayout(scales_tab_widget) # Main layout for this tab
+        scales_main_layout = QtWidgets.QVBoxLayout(scales_tab_widget)
         scales_main_layout.setSpacing(15)
 
-        # --- Feature Scale Line Group ---
         feature_line_group = QtWidgets.QGroupBox("Defined Feature Scale Line Visuals")
         feature_line_layout = QtWidgets.QFormLayout(feature_line_group)
         feature_line_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -177,9 +172,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         self._add_setting_to_form(feature_line_layout, "Text Color:", settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR, "color")
         self._add_setting_to_form(feature_line_layout, "Text Size (pt):", settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 72, "step": 1})
         self._add_setting_to_form(feature_line_layout, "Line Width (px):", settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH, "double_spinbox", {"min_val": 0.5, "max_val": 10.0, "decimals": 1, "step": 0.5})
+        self._add_setting_to_form(feature_line_layout, "Show End Ticks:", settings_manager.KEY_FEATURE_SCALE_LINE_SHOW_TICKS, "checkbox", {"tooltip": "Show short perpendicular ticks at the ends of the feature scale line."})
+        self._add_setting_to_form(feature_line_layout, "Tick Length Factor:", settings_manager.KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR, "double_spinbox", {"min_val": 0.5, "max_val": 10.0, "decimals": 1, "step": 0.5, "tooltip": "Length of end ticks as a multiple of the line width (e.g., 3.0 means ticks are 3x line width)."})
         scales_main_layout.addWidget(feature_line_group)
 
-        # --- Scale Bar Group ---
         scale_bar_group = QtWidgets.QGroupBox("On-Screen Scale Bar Visuals")
         scale_bar_layout = QtWidgets.QFormLayout(scale_bar_group)
         scale_bar_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -188,74 +184,54 @@ class PreferencesDialog(QtWidgets.QDialog):
         scale_bar_layout.setVerticalSpacing(8)
 
         self._add_setting_to_form(scale_bar_layout, "Bar & Text Color:", settings_manager.KEY_SCALE_BAR_COLOR, "color")
-        # Note: Scale bar placement is complex and not handled by a simple QSetting.
-        # Its text size is currently fixed or derived from the widget's font.
-        # Its border color is also fixed in the widget.
-        # We are only adding color for the bar itself for now.
+        # REVISED for Scale Bar Height
+        self._add_setting_to_form(scale_bar_layout, "Bar Height (px):", settings_manager.KEY_SCALE_BAR_RECT_HEIGHT, "int_spinbox", {"min_val": 1, "max_val": 20, "step": 1, "tooltip": "Height of the actual scale bar rectangle."})
+        self._add_setting_to_form(scale_bar_layout, "Text Font Size (pt):", settings_manager.KEY_SCALE_BAR_TEXT_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 72, "step": 1})
         scales_main_layout.addWidget(scale_bar_group)
 
-        scales_main_layout.addStretch() # Push groups upwards
+        scales_main_layout.addStretch()
 
         if self.tab_widget:
             self.tab_widget.addTab(scales_tab_widget, "Scales")
 
-
     def _load_settings(self) -> None:
         logger.debug("Loading settings into PreferencesDialog widgets.")
         for key, widget in self.setting_widgets.items():
-            # get_setting should return the correctly typed value (e.g., QColor for colors)
-            # or the correctly typed default value from DEFAULT_SETTINGS.
             current_value_from_manager = settings_manager.get_setting(key)
-            
             try:
                 if isinstance(widget, ColorButton):
-                    if isinstance(current_value_from_manager, QtGui.QColor):
-                        if current_value_from_manager.isValid():
-                            widget.set_color(current_value_from_manager)
-                        else:
-                            # This case implies the default QColor in DEFAULT_SETTINGS was invalid, which shouldn't happen.
-                            logger.error(f"Default QColor for key '{key}' is invalid. Check DEFAULT_SETTINGS.")
-                            # Fallback to a hardcoded valid color for safety.
-                            widget.set_color(QtGui.QColor("black")) 
+                    if isinstance(current_value_from_manager, QtGui.QColor) and current_value_from_manager.isValid():
+                        widget.set_color(current_value_from_manager)
                     else:
-                        # This means get_setting didn't return a QColor for a key mapped to a ColorButton.
-                        logger.error(f"Type mismatch for ColorButton key '{key}'. Expected QColor, got {type(current_value_from_manager)}. Value: '{current_value_from_manager}'. Check DEFAULT_SETTINGS for this key.")
-                        # Fallback to a hardcoded valid color
-                        widget.set_color(QtGui.QColor("black")) 
-
+                        logger.error(f"Invalid or wrong type for ColorButton key '{key}'. Value: '{current_value_from_manager}'. Using black.")
+                        widget.set_color(QtGui.QColor("black"))
                 elif isinstance(widget, QtWidgets.QDoubleSpinBox):
                     if isinstance(current_value_from_manager, (float, int)):
                         widget.setValue(float(current_value_from_manager))
                     else:
-                        logger.warning(f"Type mismatch for QDoubleSpinBox key '{key}'. Expected float/int, got {type(current_value_from_manager)}. Value: '{current_value_from_manager}'. Using default from map.")
-                        default_val = settings_manager.DEFAULT_SETTINGS.get(key, 0.0) # Fallback default
-                        widget.setValue(float(default_val))
-
-                elif isinstance(widget, QtWidgets.QSpinBox): 
+                        logger.warning(f"Type mismatch for QDoubleSpinBox key '{key}'. Using default. Value: {current_value_from_manager}")
+                        widget.setValue(float(settings_manager.DEFAULT_SETTINGS.get(key, 0.0)))
+                elif isinstance(widget, QtWidgets.QSpinBox):
                     if isinstance(current_value_from_manager, int):
                         widget.setValue(current_value_from_manager)
-                    elif isinstance(current_value_from_manager, float): # Allow float to int conversion if it's whole number
+                    elif isinstance(current_value_from_manager, float): # Allow float if it's a whole number
                         widget.setValue(int(current_value_from_manager))
                     else:
-                        logger.warning(f"Type mismatch for QSpinBox key '{key}'. Expected int, got {type(current_value_from_manager)}. Value: '{current_value_from_manager}'. Using default from map.")
-                        default_val = settings_manager.DEFAULT_SETTINGS.get(key, 0) # Fallback default
-                        widget.setValue(int(default_val))
-
-            except Exception as e: # Broad exception catch for safety during widget value setting
+                        logger.warning(f"Type mismatch for QSpinBox key '{key}'. Using default. Value: {current_value_from_manager}")
+                        widget.setValue(int(settings_manager.DEFAULT_SETTINGS.get(key, 0)))
+                elif isinstance(widget, QtWidgets.QCheckBox):
+                    if isinstance(current_value_from_manager, bool):
+                        widget.setChecked(current_value_from_manager)
+                    else:
+                        str_val = str(current_value_from_manager).lower()
+                        if str_val == "true": widget.setChecked(True)
+                        elif str_val == "false": widget.setChecked(False)
+                        else:
+                            logger.warning(f"Type mismatch for QCheckBox key '{key}'. Using default. Value: {current_value_from_manager}")
+                            widget.setChecked(bool(settings_manager.DEFAULT_SETTINGS.get(key, False)))
+            except Exception as e:
                 logger.error(f"Error setting widget value for key '{key}' with value '{current_value_from_manager}': {e}", exc_info=True)
-                # Attempt to set a fallback default from DEFAULT_SETTINGS if widget specific logic failed
-                try:
-                    fallback_default = settings_manager.DEFAULT_SETTINGS.get(key)
-                    if fallback_default is not None:
-                        if isinstance(widget, ColorButton) and isinstance(fallback_default, QtGui.QColor):
-                            widget.set_color(fallback_default)
-                        elif isinstance(widget, QtWidgets.QDoubleSpinBox):
-                            widget.setValue(float(fallback_default))
-                        elif isinstance(widget, QtWidgets.QSpinBox):
-                            widget.setValue(int(fallback_default))
-                except Exception as fallback_e:
-                    logger.error(f"Failed to set even fallback default for key '{key}': {fallback_e}")
-
+                # Fallback logic can be added here if necessary
 
     def _apply_settings(self) -> bool:
         logger.info("Applying preferences...")
@@ -263,14 +239,16 @@ class PreferencesDialog(QtWidgets.QDialog):
             for key, widget in self.setting_widgets.items():
                 value_to_save: Any = None
                 if isinstance(widget, ColorButton):
-                    value_to_save = widget.color().name() 
+                    value_to_save = widget.color() # Store QColor object directly now
                 elif isinstance(widget, QtWidgets.QDoubleSpinBox):
                     value_to_save = widget.value()
-                elif isinstance(widget, QtWidgets.QSpinBox): # For integer spinboxes
+                elif isinstance(widget, QtWidgets.QSpinBox):
                     value_to_save = widget.value()
+                elif isinstance(widget, QtWidgets.QCheckBox):
+                    value_to_save = widget.isChecked()
 
                 if value_to_save is not None:
-                    settings_manager.set_setting(key, value_to_save)
+                    settings_manager.set_setting(key, value_to_save) # set_setting will handle QColor to string conversion
             
             logger.info("Preferences applied and saved.")
             self.settingsApplied.emit()

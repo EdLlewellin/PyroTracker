@@ -32,6 +32,16 @@ KEY_FEATURE_SCALE_LINE_TEXT_COLOR = f"{SCALES_GROUP}/featureScaleLineTextColor"
 KEY_FEATURE_SCALE_LINE_TEXT_SIZE = f"{SCALES_GROUP}/featureScaleLineTextSize"
 KEY_FEATURE_SCALE_LINE_WIDTH = f"{SCALES_GROUP}/featureScaleLineWidth"
 
+# --- NEW KEYS for Feature Scale Line Ticks ---
+KEY_FEATURE_SCALE_LINE_SHOW_TICKS = f"{SCALES_GROUP}/featureScaleLineShowTicks"
+KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR = f"{SCALES_GROUP}/featureScaleLineTickLengthFactor"
+
+# --- REVISED/NEW KEYS for Main Scale Bar Appearance ---
+KEY_SCALE_BAR_RECT_HEIGHT = f"{SCALES_GROUP}/scaleBarRectHeight" # Renamed and clarified
+KEY_SCALE_BAR_TEXT_FONT_SIZE = f"{SCALES_GROUP}/scaleBarTextFontSize"
+# KEY_SCALE_BAR_BORDER_THICKNESS can be added if user wants to control border separately later.
+# For now, it's a constant in scale_bar_widget.py or can be 1px by default.
+
 
 DEFAULT_SETTINGS = {
     KEY_ACTIVE_MARKER_COLOR: QtGui.QColor("yellow"),
@@ -49,7 +59,14 @@ DEFAULT_SETTINGS = {
     KEY_FEATURE_SCALE_LINE_COLOR: QtGui.QColor("magenta"),
     KEY_FEATURE_SCALE_LINE_TEXT_COLOR: QtGui.QColor("magenta"),
     KEY_FEATURE_SCALE_LINE_TEXT_SIZE: 18, # Integer
-    KEY_FEATURE_SCALE_LINE_WIDTH: 1.5   # Float
+    KEY_FEATURE_SCALE_LINE_WIDTH: 1.5,   # Float
+
+    KEY_FEATURE_SCALE_LINE_SHOW_TICKS: True,
+    KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR: 3.0,
+
+    # --- REVISED Defaults for Main Scale Bar ---
+    KEY_SCALE_BAR_RECT_HEIGHT: 4,       # Integer (height of the bar itself)
+    KEY_SCALE_BAR_TEXT_FONT_SIZE: 10,   # Integer (point size)
 }
 
 _settings_instance: Optional[QtCore.QSettings] = None
@@ -65,25 +82,12 @@ def _get_settings() -> QtCore.QSettings:
                  QtCore.QCoreApplication.setApplicationName(config.APP_NAME)
         else:
              logger.warning("QCoreApplication instance not found. Setting fallback names for QSettings.")
-             # This fallback might not be ideal for all platforms but aids headless/test scenarios
-             # This os import was missing in the version I reviewed previously.
-             import os # Ensure os is imported if not already at the top
+             import os
              QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
              config_path = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.StandardLocation.AppConfigLocation)
-             if not os.path.exists(config_path): # This check is good
-                 os.makedirs(config_path, exist_ok=True) # This is also good
-             # The problem is likely here:
-             # QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QStandardPaths.StandardLocation.AppConfigLocation, config.APP_NAME)
-             # setPath is usually for defining where *custom formats* look for files,
-             # not usually for setting the path for the standard INI format based on AppConfigLocation.
-             # QSettings constructor usually handles this better with org/app names.
-             # Let's simplify the fallback to be more standard if no QCoreApplication.instance() exists.
-             # This fallback is tricky and often indicates a problem with how the app is launched
-             # or if settings_manager is used too early.
-             # For now, if app is None, we'll just let QSettings try to use its defaults,
-             # which might write to a less predictable location on some systems without org/app name.
-             # The proper fix is ensuring QCoreApplication.instance() exists and has org/app names.
-             pass # Let the QSettings constructor handle it if app is None.
+             if not os.path.exists(config_path):
+                 os.makedirs(config_path, exist_ok=True)
+             pass
 
 
         _settings_instance = QtCore.QSettings(config.APP_ORGANIZATION, config.APP_NAME)
@@ -94,27 +98,22 @@ def get_setting(key: str, default_override: Optional[Any] = None) -> Any:
     settings = _get_settings()
     default_value_from_map = DEFAULT_SETTINGS.get(key)
 
-    # Determine the ultimate default value to use if the setting isn't found or is invalid
     effective_default = default_override if default_override is not None else default_value_from_map
 
     if effective_default is None and key not in DEFAULT_SETTINGS:
         logger.error(f"CRITICAL: No default defined anywhere for key '{key}'. This is a programming error.")
-        return None # Or raise an error
+        return None
 
     stored_value = settings.value(key)
 
-    if stored_value is None: # Key does not exist in settings file, or was stored as None.
+    if stored_value is None:
         logger.debug(f"Setting key '{key}' not found in QSettings or stored as None. Returning effective default: {effective_default}")
-        return effective_default # Return the well-typed default
+        return effective_default
 
-    # Now, 'stored_value' is what was actually in QSettings.
-    # 'effective_default' tells us the type we expect.
     expected_type = type(effective_default)
 
     if expected_type is QtGui.QColor:
-        # QSettings stores colors as strings (e.g., "#RRGGBB" or name like "red")
-        # if set_setting saved color.name().
-        color = QtGui.QColor(str(stored_value)) 
+        color = QtGui.QColor(str(stored_value))
         if color.isValid():
             return color
         else:
@@ -128,33 +127,23 @@ def get_setting(key: str, default_override: Optional[Any] = None) -> Any:
             return effective_default
     elif expected_type is int:
         try:
-            # QSettings might store numbers as strings or float, so robust conversion:
             return int(float(str(stored_value)))
         except (ValueError, TypeError):
             logger.warning(f"Cannot convert stored value '{stored_value}' to int for key '{key}'. Returning effective default.")
             return effective_default
     elif expected_type is bool:
-        # QSettings can store bools as 'true'/'false' strings, or 0/1.
         if isinstance(stored_value, str):
             if stored_value.lower() == 'true': return True
             if stored_value.lower() == 'false': return False
         try:
-            return bool(int(stored_value)) # Handles 0 or 1
+            return bool(int(float(str(stored_value))))
         except (ValueError, TypeError):
-             # Fallback to direct bool conversion, though this can be risky for arbitrary strings
-            logger.warning(f"Attempting direct bool conversion for '{stored_value}' for key '{key}'.")
-            try:
-                return bool(stored_value) # This will be True for most non-empty strings
-            except: # Should not happen for basic types QSettings stores
-                logger.warning(f"Direct bool conversion failed for '{stored_value}' for key '{key}'. Returning effective default.")
-                return effective_default
-    
-    # If no specific type conversion matched, but 'stored_value' is not None.
-    # Check if its type already matches the expected type.
+            logger.warning(f"Could not convert stored value '{stored_value}' to bool via int for key '{key}'. Returning effective default.")
+            return effective_default
+
     if isinstance(stored_value, expected_type):
         return stored_value
     else:
-        # This case means the stored type is unexpected and not handled by conversions above.
         logger.warning(f"Type mismatch for key '{key}'. Expected {expected_type}, got {type(stored_value)}. Value: '{stored_value}'. Returning effective default.")
         return effective_default
 
@@ -162,11 +151,13 @@ def set_setting(key: str, value: Any) -> None:
     settings = _get_settings()
     value_to_store = value
     if isinstance(value, QtGui.QColor):
-        value_to_store = value.name() # Stores as #RRGGBB or color name
+        value_to_store = value.name()
+    elif isinstance(value, bool):
+        value_to_store = "true" if value else "false"
 
     logger.debug(f"Saving setting '{key}' with value: {value_to_store} (Original type: {type(value)})")
     settings.setValue(key, value_to_store)
-    settings.sync() 
+    settings.sync()
     logger.debug(f"QSettings status after sync for '{key}': {settings.status().name}")
     if settings.status() != QtCore.QSettings.Status.NoError:
         logger.error(f"Error saving setting '{key}': {settings.status().name}")

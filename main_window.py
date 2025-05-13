@@ -468,18 +468,34 @@ class MainWindow(QtWidgets.QMainWindow):
     def _handle_settings_applied(self) -> None:
         """Handles the settingsApplied signal from the PreferencesDialog."""
         logger.info("MainWindow: Settings applied, refreshing visuals.")
-        self._setup_pens() # For tracks and origin marker
-        
-        # For Scale Bar - The ScaleBarWidget itself needs to be told to update its appearance
-        # if its color preference has changed.
-        if self.imageView and self.imageView._scale_bar_widget:
-            new_scale_bar_color = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_COLOR)
-            self.imageView._scale_bar_widget.set_bar_color(new_scale_bar_color) # We'll add this method to ScaleBarWidget
-            # Force a repaint of the scale bar if it's visible
-            if self.imageView._scale_bar_widget.isVisible():
-                self.imageView._scale_bar_widget.update()
+        self._setup_pens() # Reloads pen settings for tracks and origin marker
 
-        self._redraw_scene_overlay() # Redraws tracks, origin, and defined scale line
+        # Update ScaleBarWidget appearance from settings
+        if self.imageView and hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget:
+            logger.debug("MainWindow: Calling update_appearance_from_settings on ScaleBarWidget.")
+            self.imageView._scale_bar_widget.update_appearance_from_settings()
+            # The update_appearance_from_settings method in ScaleBarWidget should handle
+            # calling self.update() if it's visible.
+            # We also need to ensure its position is correct if its size changed.
+            if self.imageView._scale_bar_widget.isVisible():
+                 self.imageView._update_overlay_widget_positions() # Reposition if size changed
+        else:
+            logger.warning("ScaleBarWidget not available or not setup on imageView for settings update.")
+
+        # Redraw overlays that depend on settings (tracks, origin, defined scale line)
+        self._redraw_scene_overlay()
+        
+        # If the scale bar's visibility is managed by a checkbox that might also depend on settings,
+        # or if its content (length/text) depends on other scale settings,
+        # it might be good to call update_scale_bar_dimensions too.
+        # However, update_appearance_from_settings should handle font/height changes.
+        # If scale itself changes, scale_panel_controller.update_ui_from_manager would trigger it.
+        if self.imageView and self.scale_manager and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
+            current_m_per_px = self.scale_manager.get_scale_m_per_px()
+            if current_m_per_px is not None:
+                 # This ensures the bar's length and text are also correct after settings might have affected font metrics etc.
+                self.imageView.update_scale_bar_dimensions(current_m_per_px)
+
 
     @QtCore.Slot(int)
     def _slider_value_changed(self, value: int) -> None:

@@ -8,6 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import config
 from scale_bar_widget import ScaleBarWidget
+import settings_manager
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -374,14 +375,15 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     def draw_persistent_scale_line(self,
                                    line_data: Tuple[float, float, float, float],
                                    length_text: str,
-                                   line_color: QtGui.QColor, # Renamed from 'color'
-                                   text_color: QtGui.QColor, # New
-                                   font_size: int,           # New
+                                   line_color: QtGui.QColor,
+                                   text_color: QtGui.QColor,
+                                   font_size: int,
                                    pen_width: float):
         """
-        Draws the defined scale line, end markers, and length text onto the scene.
-        The text is centered along the line's length and offset perpendicularly,
-        placed on the side of the line closer to the image center.
+        Draws the defined scale line, end markers (now potentially ticks), and length text
+        onto the scene. The text is centered along the line's length and offset
+        perpendicularly, placed on the side of the line closer to the image center.
+        End markers are drawn as ticks if the preference is set.
         """
         if not self._scene or not line_data:
             logger.warning("Cannot draw persistent scale line: Scene or line_data missing.")
@@ -393,30 +395,76 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         p1x, p1y, p2x, p2y = line_data
         z_value = 12 # Or a configurable Z-value
 
-        line_pen = QtGui.QPen(line_color, pen_width) # Use line_color
+        line_pen = QtGui.QPen(line_color, pen_width)
         line_pen.setCosmetic(True)
-        # Marker brush can be the same as line_color or a separate setting if desired later
-        item_brush = QtGui.QBrush(line_color) # For markers
+        line_pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap) # Use flat caps for precise line ends
 
-        # 1. Draw Line and Markers
+        # 1. Draw Main Line
         line_item = QtWidgets.QGraphicsLineItem(p1x, p1y, p2x, p2y)
-        line_item.setPen(line_pen); line_item.setZValue(z_value)
+        line_item.setPen(line_pen)
+        line_item.setZValue(z_value)
         self._scene.addItem(line_item)
+
+        # --- NEW: Retrieve tick preferences ---
+        show_ticks = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_SHOW_TICKS)
+        tick_length_factor = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR)
         
-        # Consider making marker_radius configurable via settings_manager too
-        marker_radius = pen_width * 2.0 # Example: marker radius proportional to pen_width
-        marker_radius = max(2.0, min(marker_radius, 5.0)) # Clamp radius
+        # Calculate tick length based on pen_width and factor
+        # The actual tick will be drawn half on each side of the main line's endpoint,
+        # so the 'tick_length' here is the total length of the perpendicular tick line.
+        tick_total_length = pen_width * tick_length_factor
+        half_tick_length = tick_total_length / 2.0
 
-        for px, py in [(p1x, p1y), (p2x, p2y)]:
-            marker = QtWidgets.QGraphicsEllipseItem(px - marker_radius, py - marker_radius, 2 * marker_radius, 2 * marker_radius)
-            marker.setPen(line_pen); marker.setBrush(item_brush); marker.setZValue(z_value)
-            self._scene.addItem(marker)
+        # 2. Draw End Ticks (if enabled)
+        if show_ticks and tick_total_length > 0:
+            dx = p2x - p1x
+            dy = p2y - p1y
+            line_length_for_norm = math.sqrt(dx*dx + dy*dy)
 
-        # 2. Prepare Text Item
+            if line_length_for_norm > 1e-6: # Avoid division by zero for zero-length lines
+                # Normalized perpendicular vector (-dy/L, dx/L)
+                norm_perp_dx = -dy / line_length_for_norm
+                norm_perp_dy = dx / line_length_for_norm
+
+                # Tick at point 1 (p1x, p1y)
+                tick1_p1x = p1x + norm_perp_dx * half_tick_length
+                tick1_p1y = p1y + norm_perp_dy * half_tick_length
+                tick1_p2x = p1x - norm_perp_dx * half_tick_length
+                tick1_p2y = p1y - norm_perp_dy * half_tick_length
+                tick_item1 = QtWidgets.QGraphicsLineItem(tick1_p1x, tick1_p1y, tick1_p2x, tick1_p2y)
+                tick_item1.setPen(line_pen) # Use the same pen as the main line
+                tick_item1.setZValue(z_value)
+                self._scene.addItem(tick_item1)
+
+                # Tick at point 2 (p2x, p2y)
+                tick2_p1x = p2x + norm_perp_dx * half_tick_length
+                tick2_p1y = p2y + norm_perp_dy * half_tick_length
+                tick2_p2x = p2x - norm_perp_dx * half_tick_length
+                tick2_p2y = p2y - norm_perp_dy * half_tick_length
+                tick_item2 = QtWidgets.QGraphicsLineItem(tick2_p1x, tick2_p1y, tick2_p2x, tick2_p2y)
+                tick_item2.setPen(line_pen) # Use the same pen as the main line
+                tick_item2.setZValue(z_value)
+                self._scene.addItem(tick_item2)
+        else:
+            # Fallback or alternative: Draw simple dots/circles if ticks are disabled or zero length
+            # This replaces the previous default circle markers if ticks are off
+            # You might want to remove this if no end markers are desired when ticks are off.
+            if not show_ticks: # Only draw circles if ticks are explicitly off
+                 item_brush = QtGui.QBrush(line_color)
+                 marker_radius = max(1.0, pen_width / 2.0) # Smaller, subtle dot
+                 for px, py in [(p1x, p1y), (p2x, p2y)]:
+                    dot_marker = QtWidgets.QGraphicsEllipseItem(px - marker_radius, py - marker_radius, 2 * marker_radius, 2 * marker_radius)
+                    dot_marker.setPen(QtGui.QPen(line_color, 0.5)) # Very thin or no border
+                    dot_marker.setBrush(item_brush)
+                    dot_marker.setZValue(z_value)
+                    self._scene.addItem(dot_marker)
+
+
+        # 3. Prepare Text Item (largely unchanged)
         text_item = QtWidgets.QGraphicsSimpleTextItem(length_text)
-        text_item.setBrush(QtGui.QBrush(text_color)) # Use text_color
+        text_item.setBrush(QtGui.QBrush(text_color))
         font = text_item.font()
-        font.setPointSize(font_size) # Use font_size
+        font.setPointSize(font_size)
         text_item.setFont(font)
         text_item.setZValue(z_value)
 
@@ -424,76 +472,69 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         text_width = local_text_rect.width()
         text_height = local_text_rect.height()
 
-        # Set transform origin to the center of the text for rotation
         text_item.setTransformOriginPoint(text_width / 2, text_height / 2)
 
-        # 3. Line Properties
+        # 4. Line Properties for Text Placement (unchanged)
         line_mid_x = (p1x + p2x) / 2
         line_mid_y = (p1y + p2y) / 2
-        dx = p2x - p1x
-        dy = p2y - p1y
-        line_length = math.sqrt(dx*dx + dy*dy)
-        if line_length < 1e-6: return
+        # dx, dy, line_length already calculated if ticks were drawn, reuse or recalc if not
+        if not (show_ticks and tick_total_length > 0 and line_length_for_norm > 1e-6) : # Recalculate if not done for ticks
+            dx = p2x - p1x
+            dy = p2y - p1y
+            line_length = math.sqrt(dx*dx + dy*dy)
+        else:
+            line_length = line_length_for_norm # Reuse if calculated for ticks
+
+        if line_length < 1e-6:
+            # If line has no length, just place text at p1, perhaps with a small offset
+            text_item.setPos(p1x + 2, p1y - text_height - 2) # Avoid covering point itself
+            self._scene.addItem(text_item)
+            logger.debug(f"Drew scale line text '{length_text}' for zero-length line at {text_item.pos()}.")
+            return
 
         line_angle_rad = math.atan2(dy, dx)
         line_angle_deg = math.degrees(line_angle_rad)
 
-        # 4. Initial Position & Rotation
-        # Position the text item so its *center* (transformOriginPoint) is at the line's midpoint
+        # 5. Initial Position & Rotation for Text (unchanged)
         initial_text_x = line_mid_x - (text_width / 2)
         initial_text_y = line_mid_y - (text_height / 2)
         text_item.setPos(initial_text_x, initial_text_y)
 
-        # Rotate the text
         text_rotation_deg = line_angle_deg
         if text_rotation_deg > 90: text_rotation_deg -= 180
         elif text_rotation_deg < -90: text_rotation_deg += 180
         text_item.setRotation(text_rotation_deg)
 
-        # 5. Calculate Perpendicular Shift
-        desired_gap_pixels = 3  # TUNABLE: Gap between line and text's unrotated bounding box edge
-        
-        # The magnitude of the shift is half the text's height (to clear the line) 
-        # plus the desired gap. We use the text_height which is its extent perpendicular
-        # to its own baseline when unrotated.
+        # 6. Calculate Perpendicular Shift for Text (unchanged)
+        desired_gap_pixels = 3
         shift_magnitude = (text_height / 2) + desired_gap_pixels
-
-        # Determine the direction of the shift (perpendicular to the line)
-        # Unit vector perpendicular to the line: (-dy/length, dx/length) or (dy/length, -dx/length)
+        
         perp_dx1 = -dy / line_length
         perp_dy1 = dx / line_length
 
-        # Test which perpendicular direction points towards image center
         img_center = self.sceneRect().center()
         
-        # Test point by shifting from line midpoint in direction 1
-        test_pos1_x = line_mid_x + perp_dx1 * shift_magnitude # Use full shift for test
+        test_pos1_x = line_mid_x + perp_dx1 * shift_magnitude
         test_pos1_y = line_mid_y + perp_dy1 * shift_magnitude
         dist_sq1 = (test_pos1_x - img_center.x())**2 + (test_pos1_y - img_center.y())**2
         
-        # Test point by shifting from line midpoint in direction 2 (-perp_dx1, -perp_dy1)
         test_pos2_x = line_mid_x - perp_dx1 * shift_magnitude
         test_pos2_y = line_mid_y - perp_dy1 * shift_magnitude
         dist_sq2 = (test_pos2_x - img_center.x())**2 + (test_pos2_y - img_center.y())**2
 
         shift_direction_dx = perp_dx1
         shift_direction_dy = perp_dy1
-        if dist_sq2 < dist_sq1: # Second direction is closer to center
+        if dist_sq2 < dist_sq1:
             shift_direction_dx = -perp_dx1
             shift_direction_dy = -perp_dy1
             
-        # Final shift values
         shift_x = shift_direction_dx * shift_magnitude
         shift_y = shift_direction_dy * shift_magnitude
 
-        # 6. Apply the shift using moveBy() to the already positioned and rotated item
-        # moveBy is relative to the item's current *parent* coordinate system (scene)
-        # and is applied *after* the item's own rotation if considering its local axes.
-        # However, QGraphicsItem.moveBy() simply adds to its current scene position.
         text_item.moveBy(shift_x, shift_y)
         
         self._scene.addItem(text_item)
-        logger.debug(f"Drew scale line text '{length_text}'. Final Pos: {text_item.pos()}, Shift: ({shift_x:.1f}, {shift_y:.1f})")
+        logger.debug(f"Drew scale line text '{length_text}'. Final Pos: {text_item.pos()}, Shift: ({shift_x:.1f}, {shift_y:.1f}), Ticks shown: {show_ticks}")
 
 
     def clearOverlay(self) -> None:
