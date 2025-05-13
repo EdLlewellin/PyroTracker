@@ -226,20 +226,29 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1) # Add tabs before scale and coord
 
-    # Scale Configuration Panel
-    scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
-    scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
-    scale_group_layout = QtWidgets.QVBoxLayout(scale_config_group)
-    scale_group_layout.setContentsMargins(6, 6, 6, 6)
-    scale_group_layout.setSpacing(8)
+    # --- Scale Configuration Panel (Collapsible) ---
+    # Assign to main_window attribute
+    main_window.scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
+    main_window.scale_config_group.setCheckable(True)  # Make it checkable
+    main_window.scale_config_group.setChecked(False)   # Start hidden (collapsed) by default
+    main_window.scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
 
-    # --- Row 1: Manual Scale Input ---
+    # This is the main layout for the QGroupBox itself
+    scale_group_outer_layout = QtWidgets.QVBoxLayout(main_window.scale_config_group)
+    scale_group_outer_layout.setContentsMargins(6, 6, 6, 6) # Margins for the group box
+    scale_group_outer_layout.setSpacing(0) # Content widget will handle its internal spacing
+
+    # Create a container QWidget for all the actual contents
+    scale_contents_widget = QtWidgets.QWidget()
+    scale_group_contents_layout = QtWidgets.QVBoxLayout(scale_contents_widget) # Layout for the contents
+    scale_group_contents_layout.setContentsMargins(0, 8, 0, 0) # Top margin for content
+    scale_group_contents_layout.setSpacing(8) # Original spacing for items within
+
+    # --- Row 1: Manual Scale Input (add to scale_group_contents_layout) ---
     scale_input_layout = QtWidgets.QHBoxLayout()
     scale_input_layout.setSpacing(5)
-
     scale_input_layout.addWidget(QtWidgets.QLabel("Manual scale:"))
     scale_input_layout.addStretch(1)
-
     scale_input_layout.addWidget(QtWidgets.QLabel("m/px:"))
     main_window.scale_m_per_px_input = QtWidgets.QLineEdit()
     main_window.scale_m_per_px_input.setPlaceholderText("-")
@@ -247,7 +256,6 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.scale_m_per_px_input.setToolTip("Enter scale as meters per pixel (e.g., 0.001)")
     main_window.scale_m_per_px_input.setMaximumWidth(100)
     scale_input_layout.addWidget(main_window.scale_m_per_px_input)
-
     scale_input_layout.addWidget(QtWidgets.QLabel("px/m:"))
     main_window.scale_px_per_m_input = QtWidgets.QLineEdit()
     main_window.scale_px_per_m_input.setPlaceholderText("-")
@@ -255,75 +263,89 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.scale_px_per_m_input.setToolTip("Enter scale as pixels per meter (e.g., 1000)")
     main_window.scale_px_per_m_input.setMaximumWidth(100)
     scale_input_layout.addWidget(main_window.scale_px_per_m_input)
-
     main_window.scale_reset_button = QtWidgets.QPushButton()
     main_window.scale_reset_button.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogResetButton))
     main_window.scale_reset_button.setToolTip("Reset scale to undefined")
     main_window.scale_reset_button.setFixedSize(main_window.scale_reset_button.iconSize() + QtCore.QSize(10,5))
     scale_input_layout.addWidget(main_window.scale_reset_button)
     scale_input_layout.addStretch(2)
-    scale_group_layout.addLayout(scale_input_layout)
+    scale_group_contents_layout.addLayout(scale_input_layout)
 
-    # --- Row 2: Scale from Feature ---
+    # --- Row 2: Scale from Feature (add to scale_group_contents_layout) ---
     scale_from_feature_layout = QtWidgets.QHBoxLayout()
     scale_from_feature_layout.setSpacing(5)
-
     scale_from_feature_layout.addWidget(QtWidgets.QLabel("Scale from feature:"))
     main_window.setScaleByFeatureButton = QtWidgets.QPushButton("Set")
     main_window.setScaleByFeatureButton.setToolTip("Define scale by clicking two points on a feature of known length")
-    main_window.setScaleByFeatureButton.setEnabled(False) # Initially disabled, enable when video loaded
+    main_window.setScaleByFeatureButton.setEnabled(False)
     scale_from_feature_layout.addWidget(main_window.setScaleByFeatureButton)
-
-    main_window.showScaleLineCheckBox = QtWidgets.QCheckBox("Show scale line") # Set text here
+    main_window.showScaleLineCheckBox = QtWidgets.QCheckBox("Show scale line")
     main_window.showScaleLineCheckBox.setToolTip("Show/hide the line used to define the scale")
     main_window.showScaleLineCheckBox.setChecked(False)
-    main_window.showScaleLineCheckBox.setEnabled(False) # Enable when scale is set by feature
+    main_window.showScaleLineCheckBox.setEnabled(False)
     scale_from_feature_layout.addWidget(main_window.showScaleLineCheckBox)
-
     scale_from_feature_layout.addStretch()
-    scale_group_layout.addLayout(scale_from_feature_layout)
+    scale_group_contents_layout.addLayout(scale_from_feature_layout)
 
-    # --- Row 3: Toggle Row (Display in meters AND Show Scale Bar) ---
+    # --- Row 3: Toggle Row (Display in meters AND Show Scale Bar) (add to scale_group_contents_layout) ---
     scale_toggle_layout = QtWidgets.QHBoxLayout()
     scale_toggle_layout.setSpacing(10)
-
     main_window.scale_display_meters_checkbox = QtWidgets.QCheckBox("Display in meters")
     main_window.scale_display_meters_checkbox.setToolTip("Convert displayed values to meters (only if scale is set)")
     main_window.scale_display_meters_checkbox.setChecked(False)
     main_window.scale_display_meters_checkbox.setEnabled(False)
     scale_toggle_layout.addWidget(main_window.scale_display_meters_checkbox)
-
     main_window.showScaleBarCheckBox = QtWidgets.QCheckBox("Show Scale Bar")
     main_window.showScaleBarCheckBox.setToolTip("Toggle visibility of the scale bar on the image (only if scale is set)")
     main_window.showScaleBarCheckBox.setChecked(False)
     main_window.showScaleBarCheckBox.setEnabled(False)
     scale_toggle_layout.addWidget(main_window.showScaleBarCheckBox)
-
     scale_toggle_layout.addStretch()
-    scale_group_layout.addLayout(scale_toggle_layout)
+    scale_group_contents_layout.addLayout(scale_toggle_layout)
 
-    rightPanelLayout.addWidget(scale_config_group)
-    logger.debug("Scale Configuration panel configured.")
+    # Add the container widget (with all its contents) to the QGroupBox's outer layout
+    scale_group_outer_layout.addWidget(scale_contents_widget)
 
-    # Coordinate System Controls GroupBox (using GridLayout)
-    coords_group = QtWidgets.QGroupBox("Coordinate System")
-    coords_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed) # Fixed vertical size
-    coords_main_layout = QtWidgets.QVBoxLayout(coords_group)
-    coords_main_layout.setContentsMargins(6, 6, 6, 6)
-    coords_main_layout.setSpacing(8)
+    # Connect the QGroupBox's toggled signal to the visibility of the contents_widget
+    main_window.scale_config_group.toggled.connect(scale_contents_widget.setVisible)
+    # Ensure the initial visibility of contents matches the QGroupBox's checked state
+    scale_contents_widget.setVisible(main_window.scale_config_group.isChecked())
+
+    # Add the Scale Configuration GroupBox to the main right panel layout
+    rightPanelLayout.addWidget(main_window.scale_config_group) # stretch=0 is default if not specified
+    logger.debug("Scale Configuration panel configured with collapsibility.")
+
+    # --- Coordinate System Controls GroupBox (Collapsible) ---
+    # Assign to main_window attribute to allow potential external access if needed,
+    # and for consistency if other groups are also assigned.
+    main_window.coords_group = QtWidgets.QGroupBox("Coordinate System")
+    main_window.coords_group.setCheckable(True)  # Make it checkable
+    main_window.coords_group.setChecked(False)    # Start expanded by default
+    main_window.coords_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+
+    # This is the main layout for the QGroupBox itself
+    coords_group_outer_layout = QtWidgets.QVBoxLayout(main_window.coords_group)
+    coords_group_outer_layout.setContentsMargins(6, 6, 6, 6) # Keep original margins for the group box
+    coords_group_outer_layout.setSpacing(0) # Let the content widget handle its internal spacing
+
+    # Create a container QWidget for all the actual content of the group box
+    # This container will be shown/hidden
+    coords_contents_widget = QtWidgets.QWidget()
+    coords_group_contents_layout = QtWidgets.QVBoxLayout(coords_contents_widget)
+    coords_group_contents_layout.setContentsMargins(0, 8, 0, 0) # Top margin for content, others 0
+    coords_group_contents_layout.setSpacing(8) # Original spacing for items within the content
 
     # Grid layout for radio buttons, origin labels, and cursor labels
     grid_layout = QtWidgets.QGridLayout()
-    grid_layout.setContentsMargins(0, 5, 0, 0) # Top margin before headers
+    grid_layout.setContentsMargins(0, 0, 0, 0) # No margins for the grid itself
     grid_layout.setHorizontalSpacing(10)
     grid_layout.setVerticalSpacing(5)
 
-    main_window.coordSystemGroup = QtWidgets.QButtonGroup(main_window) # Manages radio button exclusivity
+    main_window.coordSystemGroup = QtWidgets.QButtonGroup(main_window)
 
-    label_min_width = 100 # Minimum width for origin coordinate labels
-    cursor_label_min_width = 100 # Minimum width for cursor coordinate labels
+    label_min_width = 100
+    cursor_label_min_width = 100
 
-    # Grid Column Headers (Row 0)
     header_origin_label = QtWidgets.QLabel("Origin")
     header_origin_label.setStyleSheet("font-weight: bold;")
     header_origin_label.setToolTip("The Top-Left coordinates of the system's origin")
@@ -337,108 +359,105 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     header_cursor_m_label.setToolTip("Live mouse cursor position in meters (if scale is set)")
     header_cursor_m_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
 
-    grid_layout.addWidget(header_origin_label, 0, 1) # Origin header in Col 1
-    grid_layout.addWidget(header_cursor_label, 0, 2) # Cursor [px] header in Col 2
-    grid_layout.addWidget(header_cursor_m_label, 0, 3)  # Cursor [m] header in Col 3
+    grid_layout.addWidget(header_origin_label, 0, 1)
+    grid_layout.addWidget(header_cursor_label, 0, 2)
+    grid_layout.addWidget(header_cursor_m_label, 0, 3)
 
-    # Row 1: Top Left
     main_window.coordTopLeftRadio = QtWidgets.QRadioButton("TL")
     main_window.coordTopLeftRadio.setToolTip("Origin at (0,0), Y increases downwards")
     main_window.coordSystemGroup.addButton(main_window.coordTopLeftRadio)
-    main_window.coordTopLeftOriginLabel = QtWidgets.QLabel("(0.0, 0.0)") # Fixed origin
+    main_window.coordTopLeftOriginLabel = QtWidgets.QLabel("(0.0, 0.0)")
     main_window.coordTopLeftOriginLabel.setToolTip("Effective origin (Top-Left Coordinates)")
     main_window.coordTopLeftOriginLabel.setMinimumWidth(label_min_width)
     main_window.coordTopLeftOriginLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    
-    main_window.cursorPosLabelTL = QtWidgets.QLabel("(--, --)") # This is for [px]
+    main_window.cursorPosLabelTL = QtWidgets.QLabel("(--, --)")
     main_window.cursorPosLabelTL.setToolTip("Cursor position (Top-Left pixels)")
-    main_window.cursorPosLabelTL.setMinimumWidth(cursor_label_min_width) # cursor_label_min_width might need adjustment
+    main_window.cursorPosLabelTL.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelTL.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-
-    main_window.cursorPosLabelTL_m = QtWidgets.QLabel("(--, --)") # NEW for [m]
+    main_window.cursorPosLabelTL_m = QtWidgets.QLabel("(--, --)")
     main_window.cursorPosLabelTL_m.setToolTip("Cursor position (Top-Left meters)")
-    main_window.cursorPosLabelTL_m.setMinimumWidth(cursor_label_min_width) # Adjust as needed
+    main_window.cursorPosLabelTL_m.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelTL_m.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-
     grid_layout.addWidget(main_window.coordTopLeftRadio, 1, 0)
     grid_layout.addWidget(main_window.coordTopLeftOriginLabel, 1, 1)
-    grid_layout.addWidget(main_window.cursorPosLabelTL, 1, 2)    # px display
-    grid_layout.addWidget(main_window.cursorPosLabelTL_m, 1, 3) # NEW: m display
+    grid_layout.addWidget(main_window.cursorPosLabelTL, 1, 2)
+    grid_layout.addWidget(main_window.cursorPosLabelTL_m, 1, 3)
 
-    # Row 2: Bottom Left
     main_window.coordBottomLeftRadio = QtWidgets.QRadioButton("BL")
     main_window.coordBottomLeftRadio.setToolTip("Origin at (0, Frame Height), Y increases upwards")
     main_window.coordSystemGroup.addButton(main_window.coordBottomLeftRadio)
-    main_window.coordBottomLeftOriginLabel = QtWidgets.QLabel("(0.0, -)") # Placeholder
+    main_window.coordBottomLeftOriginLabel = QtWidgets.QLabel("(0.0, -)")
     main_window.coordBottomLeftOriginLabel.setToolTip("Effective origin (Top-Left Coordinates)")
     main_window.coordBottomLeftOriginLabel.setMinimumWidth(label_min_width)
     main_window.coordBottomLeftOriginLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    
-    main_window.cursorPosLabelBL = QtWidgets.QLabel("(--, --)") # px
+    main_window.cursorPosLabelBL = QtWidgets.QLabel("(--, --)")
     main_window.cursorPosLabelBL.setToolTip("Cursor position (Bottom-Left pixels)")
     main_window.cursorPosLabelBL.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelBL.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-
-    main_window.cursorPosLabelBL_m = QtWidgets.QLabel("(--, --)") # NEW for [m]
+    main_window.cursorPosLabelBL_m = QtWidgets.QLabel("(--, --)")
     main_window.cursorPosLabelBL_m.setToolTip("Cursor position (Bottom-Left meters)")
     main_window.cursorPosLabelBL_m.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelBL_m.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-
     grid_layout.addWidget(main_window.coordBottomLeftRadio, 2, 0)
     grid_layout.addWidget(main_window.coordBottomLeftOriginLabel, 2, 1)
-    grid_layout.addWidget(main_window.cursorPosLabelBL, 2, 2)    # px display
-    grid_layout.addWidget(main_window.cursorPosLabelBL_m, 2, 3) # NEW: m display
+    grid_layout.addWidget(main_window.cursorPosLabelBL, 2, 2)
+    grid_layout.addWidget(main_window.cursorPosLabelBL_m, 2, 3)
 
-    # Row 3: Custom
     main_window.coordCustomRadio = QtWidgets.QRadioButton("Cust.")
     main_window.coordCustomRadio.setToolTip("Origin set by user click, Y increases upwards")
-    main_window.coordCustomRadio.setEnabled(False) # Enabled when video loads
+    main_window.coordCustomRadio.setEnabled(False)
     main_window.coordSystemGroup.addButton(main_window.coordCustomRadio)
-    main_window.coordCustomOriginLabel = QtWidgets.QLabel("(-, -)") # Placeholder
+    main_window.coordCustomOriginLabel = QtWidgets.QLabel("(-, -)")
     main_window.coordCustomOriginLabel.setToolTip("Effective custom origin (Top-Left Coordinates)")
     main_window.coordCustomOriginLabel.setMinimumWidth(label_min_width)
     main_window.coordCustomOriginLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    
-    main_window.cursorPosLabelCustom = QtWidgets.QLabel("(--, --)") # px
+    main_window.cursorPosLabelCustom = QtWidgets.QLabel("(--, --)")
     main_window.cursorPosLabelCustom.setToolTip("Cursor position (Custom pixels)")
     main_window.cursorPosLabelCustom.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelCustom.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-
-    main_window.cursorPosLabelCustom_m = QtWidgets.QLabel("(--, --)") # NEW for [m]
+    main_window.cursorPosLabelCustom_m = QtWidgets.QLabel("(--, --)")
     main_window.cursorPosLabelCustom_m.setToolTip("Cursor position (Custom meters)")
     main_window.cursorPosLabelCustom_m.setMinimumWidth(cursor_label_min_width)
     main_window.cursorPosLabelCustom_m.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-
     grid_layout.addWidget(main_window.coordCustomRadio, 3, 0)
     grid_layout.addWidget(main_window.coordCustomOriginLabel, 3, 1)
-    grid_layout.addWidget(main_window.cursorPosLabelCustom, 3, 2)    # px display
-    grid_layout.addWidget(main_window.cursorPosLabelCustom_m, 3, 3) # NEW: m display
+    grid_layout.addWidget(main_window.cursorPosLabelCustom, 3, 2)
+    grid_layout.addWidget(main_window.cursorPosLabelCustom_m, 3, 3)
 
-    # Configure grid stretching and minimum widths for alignment
-    grid_layout.setColumnMinimumWidth(1, label_min_width) # Origin TL
-    grid_layout.setColumnMinimumWidth(2, cursor_label_min_width) # Cursor [px]
-    grid_layout.setColumnMinimumWidth(3, cursor_label_min_width) # Cursor [m]
-    grid_layout.setColumnStretch(4, 1) # Add stretch to a new last column if needed, or adjust existing.
-                                       # Or, allow the last content column to take available space.
-    coords_main_layout.addLayout(grid_layout) # Add grid to the group's main layout
+    grid_layout.setColumnMinimumWidth(1, label_min_width)
+    grid_layout.setColumnMinimumWidth(2, cursor_label_min_width)
+    grid_layout.setColumnMinimumWidth(3, cursor_label_min_width)
+    grid_layout.setColumnStretch(4, 1)
 
-    # Bottom Controls Row (Show Origin Checkbox and Pick Custom Button)
+    # Add the grid_layout to the contents layout
+    coords_group_contents_layout.addLayout(grid_layout)
+
     bottom_controls_layout = QtWidgets.QHBoxLayout()
-    bottom_controls_layout.setContentsMargins(0, 5, 0, 0) # Top margin
+    bottom_controls_layout.setContentsMargins(0, 5, 0, 0)
     bottom_controls_layout.setSpacing(10)
     main_window.showOriginCheckBox = QtWidgets.QCheckBox("Show Origin")
     main_window.showOriginCheckBox.setToolTip("Toggle visibility of the effective origin marker on the image")
-    main_window.showOriginCheckBox.setChecked(True) # Default to showing origin
+    main_window.showOriginCheckBox.setChecked(True)
     bottom_controls_layout.addWidget(main_window.showOriginCheckBox)
     main_window.setOriginButton = QtWidgets.QPushButton("Pick Custom")
     main_window.setOriginButton.setToolTip("Click to enable origin selection mode, then click on the image")
     bottom_controls_layout.addWidget(main_window.setOriginButton)
-    bottom_controls_layout.addStretch() # Push controls left
-    coords_main_layout.addLayout(bottom_controls_layout)
+    bottom_controls_layout.addStretch()
+
+    # Add the bottom_controls_layout to the contents layout
+    coords_group_contents_layout.addLayout(bottom_controls_layout)
+
+    # Add the single contents widget to the QGroupBox's outer layout
+    coords_group_outer_layout.addWidget(coords_contents_widget)
+
+    # Connect the QGroupBox's toggled signal to the visibility of the contents_widget
+    main_window.coords_group.toggled.connect(coords_contents_widget.setVisible)
+    # Ensure the initial visibility of contents matches the QGroupBox's checked state
+    coords_contents_widget.setVisible(main_window.coords_group.isChecked())
 
     # Add the Coordinate System GroupBox to the main right panel layout
-    rightPanelLayout.addWidget(coords_group, stretch=0) # Don't stretch groupbox vertically
-    logger.debug("Coordinate System panel configured.")
+    rightPanelLayout.addWidget(main_window.coords_group, stretch=0)
+    logger.debug("Coordinate System panel configured with collapsibility.")
 
     # Finish Right Panel and Splitter
     main_window.mainSplitter.addWidget(main_window.rightPanelWidget)
