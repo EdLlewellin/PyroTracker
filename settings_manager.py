@@ -13,8 +13,7 @@ import config # Used for app name/org and some default values
 logger = logging.getLogger(__name__)
 
 # --- Define Setting Keys ---
-# Using a 'group/key' format for organization within QSettings
-VISUALS_GROUP = "visuals"
+VISUALS_GROUP = "visuals" # Group for track and origin visuals
 KEY_ACTIVE_MARKER_COLOR = f"{VISUALS_GROUP}/activeMarkerColor"
 KEY_ACTIVE_LINE_COLOR = f"{VISUALS_GROUP}/activeLineColor"
 KEY_ACTIVE_CURRENT_MARKER_COLOR = f"{VISUALS_GROUP}/activeCurrentMarkerColor"
@@ -25,12 +24,15 @@ KEY_MARKER_SIZE = f"{VISUALS_GROUP}/markerSize"
 KEY_LINE_WIDTH = f"{VISUALS_GROUP}/lineWidth"
 KEY_ORIGIN_MARKER_COLOR = f"{VISUALS_GROUP}/originMarkerColor"
 KEY_ORIGIN_MARKER_SIZE = f"{VISUALS_GROUP}/originMarkerSize"
-# Add other settings keys here using the same pattern if needed
 
-# --- Define Default Values ---
-# Provides fallback values if a setting isn't found or is invalid.
-# Note: Some defaults reference config.py, creating a dependency.
-# Alternatively, copy the literal values from config.py here for full independence.
+SCALES_GROUP = "scales_visuals" # New group for scale-related visuals
+KEY_SCALE_BAR_COLOR = f"{SCALES_GROUP}/scaleBarColor"
+KEY_FEATURE_SCALE_LINE_COLOR = f"{SCALES_GROUP}/featureScaleLineColor"
+KEY_FEATURE_SCALE_LINE_TEXT_COLOR = f"{SCALES_GROUP}/featureScaleLineTextColor"
+KEY_FEATURE_SCALE_LINE_TEXT_SIZE = f"{SCALES_GROUP}/featureScaleLineTextSize"
+KEY_FEATURE_SCALE_LINE_WIDTH = f"{SCALES_GROUP}/featureScaleLineWidth"
+
+
 DEFAULT_SETTINGS = {
     KEY_ACTIVE_MARKER_COLOR: QtGui.QColor("yellow"),
     KEY_ACTIVE_LINE_COLOR: QtGui.QColor("yellow"),
@@ -38,153 +40,133 @@ DEFAULT_SETTINGS = {
     KEY_INACTIVE_MARKER_COLOR: QtGui.QColor("blue"),
     KEY_INACTIVE_LINE_COLOR: QtGui.QColor("blue"),
     KEY_INACTIVE_CURRENT_MARKER_COLOR: QtGui.QColor("cyan"),
-    KEY_MARKER_SIZE: config.DEFAULT_MARKER_SIZE, # Default: 5.0 (from config)
-    KEY_LINE_WIDTH: config.DEFAULT_LINE_WIDTH,   # Default: 1.0 (from config)
-    KEY_ORIGIN_MARKER_COLOR: QtGui.QColor(config.DEFAULT_ORIGIN_MARKER_COLOR_STR), # Create QColor from config string
-    KEY_ORIGIN_MARKER_SIZE: config.DEFAULT_ORIGIN_MARKER_SIZE # Default from config
+    KEY_MARKER_SIZE: config.DEFAULT_MARKER_SIZE,
+    KEY_LINE_WIDTH: config.DEFAULT_LINE_WIDTH,
+    KEY_ORIGIN_MARKER_COLOR: QtGui.QColor(config.DEFAULT_ORIGIN_MARKER_COLOR_STR),
+    KEY_ORIGIN_MARKER_SIZE: config.DEFAULT_ORIGIN_MARKER_SIZE,
+
+    KEY_SCALE_BAR_COLOR: QtGui.QColor("white"),
+    KEY_FEATURE_SCALE_LINE_COLOR: QtGui.QColor("magenta"),
+    KEY_FEATURE_SCALE_LINE_TEXT_COLOR: QtGui.QColor("magenta"),
+    KEY_FEATURE_SCALE_LINE_TEXT_SIZE: 18, # Integer
+    KEY_FEATURE_SCALE_LINE_WIDTH: 1.5   # Float
 }
 
-# Singleton instance of QSettings
 _settings_instance: Optional[QtCore.QSettings] = None
 
 def _get_settings() -> QtCore.QSettings:
-    """
-    Initializes and returns the singleton QSettings instance.
-    Ensures organization and application names are set for QSettings.
-    """
     global _settings_instance
     if _settings_instance is None:
-        # Set org/app names if not already set (needed by QSettings)
         app = QtCore.QCoreApplication.instance()
-        if app: # Check if QCoreApplication exists
+        if app:
              if not QtCore.QCoreApplication.organizationName():
                  QtCore.QCoreApplication.setOrganizationName(config.APP_ORGANIZATION)
              if not QtCore.QCoreApplication.applicationName():
                  QtCore.QCoreApplication.setApplicationName(config.APP_NAME)
         else:
-             # This case should ideally not happen in a running Qt app,
-             # but useful for testing or if run standalone.
              logger.warning("QCoreApplication instance not found. Setting fallback names for QSettings.")
-             # Set directly if no app instance (less ideal)
-             QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat) # Or another preferred format
-             QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.StandardLocation.AppConfigLocation))
+             # This fallback might not be ideal for all platforms but aids headless/test scenarios
+             # This os import was missing in the version I reviewed previously.
+             import os # Ensure os is imported if not already at the top
+             QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
+             config_path = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.StandardLocation.AppConfigLocation)
+             if not os.path.exists(config_path): # This check is good
+                 os.makedirs(config_path, exist_ok=True) # This is also good
+             # The problem is likely here:
+             # QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QStandardPaths.StandardLocation.AppConfigLocation, config.APP_NAME)
+             # setPath is usually for defining where *custom formats* look for files,
+             # not usually for setting the path for the standard INI format based on AppConfigLocation.
+             # QSettings constructor usually handles this better with org/app names.
+             # Let's simplify the fallback to be more standard if no QCoreApplication.instance() exists.
+             # This fallback is tricky and often indicates a problem with how the app is launched
+             # or if settings_manager is used too early.
+             # For now, if app is None, we'll just let QSettings try to use its defaults,
+             # which might write to a less predictable location on some systems without org/app name.
+             # The proper fix is ensuring QCoreApplication.instance() exists and has org/app names.
+             pass # Let the QSettings constructor handle it if app is None.
 
 
-        _settings_instance = QtCore.QSettings(
-            config.APP_ORGANIZATION, config.APP_NAME
-        )
-        logger.info(f"QSettings initialized. Path: {_settings_instance.fileName()}")
+        _settings_instance = QtCore.QSettings(config.APP_ORGANIZATION, config.APP_NAME)
+        logger.info(f"QSettings initialized. Path: {_settings_instance.fileName()} Status: {_settings_instance.status().name}")
     return _settings_instance
 
 def get_setting(key: str, default_override: Optional[Any] = None) -> Any:
-    """
-    Retrieves a setting value for the given key, attempting type conversion
-    based on the default value's type.
-
-    Args:
-        key: The unique key for the setting (e.g., "visuals/markerSize").
-        default_override: If provided, this value is used as the default instead
-                          of the one in DEFAULT_SETTINGS.
-
-    Returns:
-        The retrieved setting value, converted to the expected type if possible,
-        or the appropriate default value if the setting is not found or
-        conversion fails.
-    """
     settings = _get_settings()
+    default_value_from_map = DEFAULT_SETTINGS.get(key)
 
-    # Determine the default value to use
-    if default_override is not None:
-        default_value = default_override
-    elif key in DEFAULT_SETTINGS:
-        default_value = DEFAULT_SETTINGS[key]
+    # Determine the ultimate default value to use if the setting isn't found or is invalid
+    effective_default = default_override if default_override is not None else default_value_from_map
+
+    if effective_default is None and key not in DEFAULT_SETTINGS:
+        logger.error(f"CRITICAL: No default defined anywhere for key '{key}'. This is a programming error.")
+        return None # Or raise an error
+
+    stored_value = settings.value(key)
+
+    if stored_value is None: # Key does not exist in settings file, or was stored as None.
+        logger.debug(f"Setting key '{key}' not found in QSettings or stored as None. Returning effective default: {effective_default}")
+        return effective_default # Return the well-typed default
+
+    # Now, 'stored_value' is what was actually in QSettings.
+    # 'effective_default' tells us the type we expect.
+    expected_type = type(effective_default)
+
+    if expected_type is QtGui.QColor:
+        # QSettings stores colors as strings (e.g., "#RRGGBB" or name like "red")
+        # if set_setting saved color.name().
+        color = QtGui.QColor(str(stored_value)) 
+        if color.isValid():
+            return color
+        else:
+            logger.warning(f"Invalid color string '{stored_value}' retrieved for key '{key}'. Returning effective default.")
+            return effective_default
+    elif expected_type is float:
+        try:
+            return float(stored_value)
+        except (ValueError, TypeError):
+            logger.warning(f"Cannot convert stored value '{stored_value}' to float for key '{key}'. Returning effective default.")
+            return effective_default
+    elif expected_type is int:
+        try:
+            # QSettings might store numbers as strings or float, so robust conversion:
+            return int(float(str(stored_value)))
+        except (ValueError, TypeError):
+            logger.warning(f"Cannot convert stored value '{stored_value}' to int for key '{key}'. Returning effective default.")
+            return effective_default
+    elif expected_type is bool:
+        # QSettings can store bools as 'true'/'false' strings, or 0/1.
+        if isinstance(stored_value, str):
+            if stored_value.lower() == 'true': return True
+            if stored_value.lower() == 'false': return False
+        try:
+            return bool(int(stored_value)) # Handles 0 or 1
+        except (ValueError, TypeError):
+             # Fallback to direct bool conversion, though this can be risky for arbitrary strings
+            logger.warning(f"Attempting direct bool conversion for '{stored_value}' for key '{key}'.")
+            try:
+                return bool(stored_value) # This will be True for most non-empty strings
+            except: # Should not happen for basic types QSettings stores
+                logger.warning(f"Direct bool conversion failed for '{stored_value}' for key '{key}'. Returning effective default.")
+                return effective_default
+    
+    # If no specific type conversion matched, but 'stored_value' is not None.
+    # Check if its type already matches the expected type.
+    if isinstance(stored_value, expected_type):
+        return stored_value
     else:
-        default_value = None # No default defined for this key
-
-    # Retrieve the raw value from QSettings
-    # Pass the determined default_value to QSettings.value() as its fallback
-    value = settings.value(key, defaultValue=default_value)
-
-    # --- Type Conversion Logic ---
-    # Attempt conversion only if we have a defined default value to infer the type from
-    # and the loaded value isn't already the correct type or None.
-    if default_value is not None and value is not None:
-        expected_type = type(default_value)
-
-        # 1. Handle QColor conversion (stored as string name)
-        if expected_type is QtGui.QColor and not isinstance(value, QtGui.QColor):
-            try:
-                # QColor() constructor can handle color names (e.g., '#ffffff', 'red')
-                loaded_color = QtGui.QColor(value)
-                if loaded_color.isValid():
-                    value = loaded_color
-                else:
-                    logger.warning(f"Invalid QColor value '{value}' loaded for key '{key}'. Using default: {default_value.name()}")
-                    value = default_value # Fallback to default
-            except Exception as e: # Catch potential errors during QColor creation
-                logger.warning(f"Error converting loaded value '{value}' to QColor for key '{key}': {e}. Using default: {default_value.name()}")
-                value = default_value # Fallback to default
-
-        # 2. Handle Float conversion (stored possibly as string or int)
-        elif expected_type is float and not isinstance(value, float):
-            try:
-                value = float(value) # Attempt conversion
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid float value '{value}' loaded for key '{key}'. Using default: {default_value}")
-                value = default_value # Fallback to default
-
-        # 3. Handle Int conversion (example, currently unused)
-        # elif expected_type is int and not isinstance(value, int):
-        #     try:
-        #         value = int(value)
-        #     except (ValueError, TypeError):
-        #         logger.warning(f"Invalid int value '{value}' loaded for key '{key}'. Using default: {default_value}")
-        #         value = default_value
-
-        # Add more type handlers (e.g., bool) here if needed.
-        # For bool, consider checking for 'true'/'false' strings if stored that way.
-
-    elif value is None and default_value is not None:
-        # If settings.value() returned None but we have a default, use the default.
-        # This happens if the key didn't exist in the settings file.
-        value = default_value
-
-    elif default_value is None and value is not None:
-        # If we loaded a value but have no default defined, we can't perform
-        # type conversion reliably. Log a warning.
-        logger.warning(f"Setting '{key}' has value '{value}' but no default defined in DEFAULT_SETTINGS. Returning raw value.")
-
-    # Debug log can be useful during development
-    # logger.debug(f"Retrieved setting '{key}': {value} (Type: {type(value)})")
-    return value
+        # This case means the stored type is unexpected and not handled by conversions above.
+        logger.warning(f"Type mismatch for key '{key}'. Expected {expected_type}, got {type(stored_value)}. Value: '{stored_value}'. Returning effective default.")
+        return effective_default
 
 def set_setting(key: str, value: Any) -> None:
-    """
-    Saves a setting value for the given key using QSettings.
-
-    Args:
-        key: The unique key for the setting.
-        value: The value to save. QSettings handles basic types, others
-               might need conversion (e.g., QColor is often saved as name string).
-    """
     settings = _get_settings()
-    logger.debug(f"Setting setting '{key}' to value: {value} (Type: {type(value)})")
-    settings.setValue(key, value)
-    # Explicit sync is usually not needed; QSettings handles saving.
-    # settings.sync()
+    value_to_store = value
+    if isinstance(value, QtGui.QColor):
+        value_to_store = value.name() # Stores as #RRGGBB or color name
 
-# --- Optional Signal for Settings Changes ---
-# Useful if parts of the UI need to react immediately to changes from Preferences.
-# class SettingsSignalEmitter(QtCore.QObject):
-#     settingChanged = QtCore.Signal(str) # Emits the key that changed
-#
-# settings_emitter = SettingsSignalEmitter()
-#
-# # Modified set_setting to emit the signal:
-# def set_setting_with_signal(key: str, value: Any) -> None:
-#     settings = _get_settings()
-#     logger.debug(f"Setting setting '{key}' to: {value}")
-#     settings.setValue(key, value)
-#     # settings.sync() # Optional explicit save
-#     settings_emitter.settingChanged.emit(key) # Notify listeners
-# --- End Optional Signal ---
+    logger.debug(f"Saving setting '{key}' with value: {value_to_store} (Original type: {type(value)})")
+    settings.setValue(key, value_to_store)
+    settings.sync() 
+    logger.debug(f"QSettings status after sync for '{key}': {settings.status().name}")
+    if settings.status() != QtCore.QSettings.Status.NoError:
+        logger.error(f"Error saving setting '{key}': {settings.status().name}")

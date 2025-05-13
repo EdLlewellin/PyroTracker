@@ -59,146 +59,232 @@ class ColorButton(QtWidgets.QPushButton):
                 self.colorChanged.emit(new_color)  # Emit signal if color changed
 
 class PreferencesDialog(QtWidgets.QDialog):
-    """Dialog for editing application preferences stored via settings_manager."""
-
-    # Signal emitted when settings are successfully applied (via OK or Apply)
     settingsApplied = QtCore.Signal()
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(450) # Adjusted for potentially more content with tabs
+        self.setMinimumHeight(350)
 
-        # Dictionary to hold references to the input widgets, keyed by setting key
         self.setting_widgets: Dict[str, QtWidgets.QWidget] = {}
+        self.tab_widget: Optional[QtWidgets.QTabWidget] = None # For easy access if needed later
 
         self._setup_ui()
         self._load_settings()
-        logger.debug("PreferencesDialog initialized.")
+        logger.debug("PreferencesDialog initialized with tabs.")
 
     def _setup_ui(self) -> None:
-        """Creates the UI layout and widgets."""
         main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setSpacing(15) # Spacing between group boxes/widgets
+        main_layout.setSpacing(10)
 
-        # --- Visuals Group ---
-        visuals_group = QtWidgets.QGroupBox("Track Visuals")
-        visuals_layout = QtWidgets.QFormLayout(visuals_group)
-        visuals_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
-        visuals_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        visuals_layout.setHorizontalSpacing(10) # Spacing between labels and fields
-        visuals_layout.setVerticalSpacing(8)   # Spacing between rows
+        self.tab_widget = QtWidgets.QTabWidget()
+        main_layout.addWidget(self.tab_widget)
 
-        # --- Helper functions to add rows to the form layout ---
-        def add_color_setting(label_text: str, setting_key: str) -> None:
-            """Adds a label and ColorButton row for a color setting."""
-            color_button = ColorButton()
-            visuals_layout.addRow(label_text, color_button)
-            self.setting_widgets[setting_key] = color_button
+        # Create and add tabs
+        self._create_tracks_tab()
+        self._create_origin_tab()
+        self._create_scales_tab() # New tab
 
-        def add_spinbox_setting(label_text: str, setting_key: str, min_val: float, max_val: float, decimals: int, step: float) -> None:
-            """Adds a label and QDoubleSpinBox row for a numeric setting."""
-            spin_box = QtWidgets.QDoubleSpinBox()
-            spin_box.setMinimum(min_val)
-            spin_box.setMaximum(max_val)
-            spin_box.setDecimals(decimals)
-            spin_box.setSingleStep(step)
-            visuals_layout.addRow(label_text, spin_box)
-            self.setting_widgets[setting_key] = spin_box
-        # --- End Helper functions ---
-
-        # Add settings rows using helpers and keys from settings_manager
-        add_color_setting("Active Track Marker (Current Frame):", settings_manager.KEY_ACTIVE_CURRENT_MARKER_COLOR)
-        add_color_setting("Active Track Marker (Other Frames):", settings_manager.KEY_ACTIVE_MARKER_COLOR)
-        add_color_setting("Active Track Line:", settings_manager.KEY_ACTIVE_LINE_COLOR)
-        add_color_setting("Inactive Track Marker (Current Frame):", settings_manager.KEY_INACTIVE_CURRENT_MARKER_COLOR)
-        add_color_setting("Inactive Track Marker (Other Frames):", settings_manager.KEY_INACTIVE_MARKER_COLOR)
-        add_color_setting("Inactive Track Line:", settings_manager.KEY_INACTIVE_LINE_COLOR)
-        add_spinbox_setting("Track Marker Size (pixels):", settings_manager.KEY_MARKER_SIZE, 1.0, 20.0, 1, 0.5)
-        add_spinbox_setting("Track Line Width (pixels):", settings_manager.KEY_LINE_WIDTH, 0.5, 10.0, 1, 0.5)
-
-        # Add a separator row within the form layout for visual grouping
-        separator_label = QtWidgets.QLabel("--- Origin Marker ---")
-        separator_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        visuals_layout.addRow(separator_label) # Spans both columns
-
-        add_color_setting("Origin Marker Color:", settings_manager.KEY_ORIGIN_MARKER_COLOR)
-        add_spinbox_setting("Origin Marker Size (pixels):", settings_manager.KEY_ORIGIN_MARKER_SIZE, 1.0, 20.0, 1, 0.5)
-
-        main_layout.addWidget(visuals_group)
-        main_layout.addStretch() # Pushes elements upwards
-
-        # --- Standard Buttons (OK, Cancel, Apply) ---
+        # Standard Buttons
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok |
             QtWidgets.QDialogButtonBox.StandardButton.Cancel |
             QtWidgets.QDialogButtonBox.StandardButton.Apply
         )
-        button_box.accepted.connect(self.accept) # OK clicked
-        button_box.rejected.connect(self.reject) # Cancel clicked
-
-        # Connect the Apply button specifically to the _apply_settings slot
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
         apply_button = button_box.button(QtWidgets.QDialogButtonBox.StandardButton.Apply)
-        apply_button.clicked.connect(self._apply_settings)
-
+        if apply_button: # Ensure button exists
+            apply_button.clicked.connect(self._apply_settings)
         main_layout.addWidget(button_box)
 
+    # --- Helper function to add rows to a form layout (reusable) ---
+    def _add_setting_to_form(self, form_layout: QtWidgets.QFormLayout,
+                             label_text: str, setting_key: str,
+                             widget_type: str, widget_params: Optional[Dict] = None) -> None:
+        widget: Optional[QtWidgets.QWidget] = None
+        if widget_type == "color":
+            widget = ColorButton()
+        elif widget_type == "double_spinbox":
+            widget = QtWidgets.QDoubleSpinBox()
+            if widget_params:
+                widget.setMinimum(widget_params.get("min_val", 0.0))
+                widget.setMaximum(widget_params.get("max_val", 100.0))
+                widget.setDecimals(widget_params.get("decimals", 1))
+                widget.setSingleStep(widget_params.get("step", 0.5))
+        elif widget_type == "int_spinbox": # New helper for integer spinbox
+            widget = QtWidgets.QSpinBox()
+            if widget_params:
+                widget.setMinimum(widget_params.get("min_val", 1))
+                widget.setMaximum(widget_params.get("max_val", 100))
+                widget.setSingleStep(widget_params.get("step", 1))
+
+        if widget:
+            form_layout.addRow(label_text, widget)
+            self.setting_widgets[setting_key] = widget
+        else:
+            logger.warning(f"Unsupported widget_type '{widget_type}' for setting '{setting_key}'.")
+
+    def _create_tracks_tab(self) -> None:
+        tracks_tab_widget = QtWidgets.QWidget()
+        tracks_layout = QtWidgets.QFormLayout(tracks_tab_widget)
+        tracks_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        tracks_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        tracks_layout.setHorizontalSpacing(10)
+        tracks_layout.setVerticalSpacing(8)
+
+        self._add_setting_to_form(tracks_layout, "Active Track Marker (Current Frame):", settings_manager.KEY_ACTIVE_CURRENT_MARKER_COLOR, "color")
+        self._add_setting_to_form(tracks_layout, "Active Track Marker (Other Frames):", settings_manager.KEY_ACTIVE_MARKER_COLOR, "color")
+        self._add_setting_to_form(tracks_layout, "Active Track Line:", settings_manager.KEY_ACTIVE_LINE_COLOR, "color")
+        self._add_setting_to_form(tracks_layout, "Inactive Track Marker (Current Frame):", settings_manager.KEY_INACTIVE_CURRENT_MARKER_COLOR, "color")
+        self._add_setting_to_form(tracks_layout, "Inactive Track Marker (Other Frames):", settings_manager.KEY_INACTIVE_MARKER_COLOR, "color")
+        self._add_setting_to_form(tracks_layout, "Inactive Track Line:", settings_manager.KEY_INACTIVE_LINE_COLOR, "color")
+        self._add_setting_to_form(tracks_layout, "Track Marker Size (pixels):", settings_manager.KEY_MARKER_SIZE, "double_spinbox", {"min_val": 1.0, "max_val": 20.0, "decimals": 1, "step": 0.5})
+        self._add_setting_to_form(tracks_layout, "Track Line Width (pixels):", settings_manager.KEY_LINE_WIDTH, "double_spinbox", {"min_val": 0.5, "max_val": 10.0, "decimals": 1, "step": 0.5})
+
+        if self.tab_widget:
+            self.tab_widget.addTab(tracks_tab_widget, "Tracks")
+
+    def _create_origin_tab(self) -> None:
+        origin_tab_widget = QtWidgets.QWidget()
+        origin_layout = QtWidgets.QFormLayout(origin_tab_widget)
+        origin_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        origin_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        origin_layout.setHorizontalSpacing(10)
+        origin_layout.setVerticalSpacing(8)
+
+        self._add_setting_to_form(origin_layout, "Origin Marker Color:", settings_manager.KEY_ORIGIN_MARKER_COLOR, "color")
+        self._add_setting_to_form(origin_layout, "Origin Marker Size (pixels):", settings_manager.KEY_ORIGIN_MARKER_SIZE, "double_spinbox", {"min_val": 1.0, "max_val": 20.0, "decimals": 1, "step": 0.5})
+
+        if self.tab_widget:
+            self.tab_widget.addTab(origin_tab_widget, "Origin")
+
+    def _create_scales_tab(self) -> None: # NEW METHOD
+        scales_tab_widget = QtWidgets.QWidget()
+        scales_main_layout = QtWidgets.QVBoxLayout(scales_tab_widget) # Main layout for this tab
+        scales_main_layout.setSpacing(15)
+
+        # --- Feature Scale Line Group ---
+        feature_line_group = QtWidgets.QGroupBox("Defined Feature Scale Line Visuals")
+        feature_line_layout = QtWidgets.QFormLayout(feature_line_group)
+        feature_line_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        feature_line_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        feature_line_layout.setHorizontalSpacing(10)
+        feature_line_layout.setVerticalSpacing(8)
+
+        self._add_setting_to_form(feature_line_layout, "Line Color:", settings_manager.KEY_FEATURE_SCALE_LINE_COLOR, "color")
+        self._add_setting_to_form(feature_line_layout, "Text Color:", settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR, "color")
+        self._add_setting_to_form(feature_line_layout, "Text Size (pt):", settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 72, "step": 1})
+        self._add_setting_to_form(feature_line_layout, "Line Width (px):", settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH, "double_spinbox", {"min_val": 0.5, "max_val": 10.0, "decimals": 1, "step": 0.5})
+        scales_main_layout.addWidget(feature_line_group)
+
+        # --- Scale Bar Group ---
+        scale_bar_group = QtWidgets.QGroupBox("On-Screen Scale Bar Visuals")
+        scale_bar_layout = QtWidgets.QFormLayout(scale_bar_group)
+        scale_bar_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        scale_bar_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        scale_bar_layout.setHorizontalSpacing(10)
+        scale_bar_layout.setVerticalSpacing(8)
+
+        self._add_setting_to_form(scale_bar_layout, "Bar & Text Color:", settings_manager.KEY_SCALE_BAR_COLOR, "color")
+        # Note: Scale bar placement is complex and not handled by a simple QSetting.
+        # Its text size is currently fixed or derived from the widget's font.
+        # Its border color is also fixed in the widget.
+        # We are only adding color for the bar itself for now.
+        scales_main_layout.addWidget(scale_bar_group)
+
+        scales_main_layout.addStretch() # Push groups upwards
+
+        if self.tab_widget:
+            self.tab_widget.addTab(scales_tab_widget, "Scales")
+
+
     def _load_settings(self) -> None:
-        """Loads current settings from settings_manager into the UI widgets."""
         logger.debug("Loading settings into PreferencesDialog widgets.")
         for key, widget in self.setting_widgets.items():
-            current_value = settings_manager.get_setting(key)
+            # get_setting should return the correctly typed value (e.g., QColor for colors)
+            # or the correctly typed default value from DEFAULT_SETTINGS.
+            current_value_from_manager = settings_manager.get_setting(key)
+            
             try:
                 if isinstance(widget, ColorButton):
-                    # Attempt to create a QColor from the stored value (likely a string name)
-                    color = QtGui.QColor(current_value)
-                    if color.isValid():
-                         widget.set_color(color)
+                    if isinstance(current_value_from_manager, QtGui.QColor):
+                        if current_value_from_manager.isValid():
+                            widget.set_color(current_value_from_manager)
+                        else:
+                            # This case implies the default QColor in DEFAULT_SETTINGS was invalid, which shouldn't happen.
+                            logger.error(f"Default QColor for key '{key}' is invalid. Check DEFAULT_SETTINGS.")
+                            # Fallback to a hardcoded valid color for safety.
+                            widget.set_color(QtGui.QColor("black")) 
                     else:
-                         logger.warning(f"Invalid color value '{current_value}' for key '{key}' in settings.")
-                         # Optionally set a default color here if loading fails
-                elif isinstance(widget, QtWidgets.QDoubleSpinBox):
-                     widget.setValue(float(current_value))
-                # Add handlers for other widget types here if needed (e.g., QCheckBox, QLineEdit)
+                        # This means get_setting didn't return a QColor for a key mapped to a ColorButton.
+                        logger.error(f"Type mismatch for ColorButton key '{key}'. Expected QColor, got {type(current_value_from_manager)}. Value: '{current_value_from_manager}'. Check DEFAULT_SETTINGS for this key.")
+                        # Fallback to a hardcoded valid color
+                        widget.set_color(QtGui.QColor("black")) 
 
-            except (ValueError, TypeError, AttributeError) as e:
-                 # Catch potential errors during conversion or if value is None/unexpected type
-                 logger.warning(f"Could not load value for key '{key}' from setting '{current_value}': {e}")
-                 # Optionally set a default value in the widget here
+                elif isinstance(widget, QtWidgets.QDoubleSpinBox):
+                    if isinstance(current_value_from_manager, (float, int)):
+                        widget.setValue(float(current_value_from_manager))
+                    else:
+                        logger.warning(f"Type mismatch for QDoubleSpinBox key '{key}'. Expected float/int, got {type(current_value_from_manager)}. Value: '{current_value_from_manager}'. Using default from map.")
+                        default_val = settings_manager.DEFAULT_SETTINGS.get(key, 0.0) # Fallback default
+                        widget.setValue(float(default_val))
+
+                elif isinstance(widget, QtWidgets.QSpinBox): 
+                    if isinstance(current_value_from_manager, int):
+                        widget.setValue(current_value_from_manager)
+                    elif isinstance(current_value_from_manager, float): # Allow float to int conversion if it's whole number
+                        widget.setValue(int(current_value_from_manager))
+                    else:
+                        logger.warning(f"Type mismatch for QSpinBox key '{key}'. Expected int, got {type(current_value_from_manager)}. Value: '{current_value_from_manager}'. Using default from map.")
+                        default_val = settings_manager.DEFAULT_SETTINGS.get(key, 0) # Fallback default
+                        widget.setValue(int(default_val))
+
+            except Exception as e: # Broad exception catch for safety during widget value setting
+                logger.error(f"Error setting widget value for key '{key}' with value '{current_value_from_manager}': {e}", exc_info=True)
+                # Attempt to set a fallback default from DEFAULT_SETTINGS if widget specific logic failed
+                try:
+                    fallback_default = settings_manager.DEFAULT_SETTINGS.get(key)
+                    if fallback_default is not None:
+                        if isinstance(widget, ColorButton) and isinstance(fallback_default, QtGui.QColor):
+                            widget.set_color(fallback_default)
+                        elif isinstance(widget, QtWidgets.QDoubleSpinBox):
+                            widget.setValue(float(fallback_default))
+                        elif isinstance(widget, QtWidgets.QSpinBox):
+                            widget.setValue(int(fallback_default))
+                except Exception as fallback_e:
+                    logger.error(f"Failed to set even fallback default for key '{key}': {fallback_e}")
+
 
     def _apply_settings(self) -> bool:
-        """Reads values from UI widgets and saves them using settings_manager. Returns True on success."""
         logger.info("Applying preferences...")
         try:
             for key, widget in self.setting_widgets.items():
                 value_to_save: Any = None
                 if isinstance(widget, ColorButton):
-                    # Store color as its hex name string (e.g., '#ffffff') for robustness
-                    value_to_save = widget.color().name()
+                    value_to_save = widget.color().name() 
                 elif isinstance(widget, QtWidgets.QDoubleSpinBox):
                     value_to_save = widget.value()
-                # Add handlers for other widget types here if needed
+                elif isinstance(widget, QtWidgets.QSpinBox): # For integer spinboxes
+                    value_to_save = widget.value()
 
                 if value_to_save is not None:
                     settings_manager.set_setting(key, value_to_save)
-
+            
             logger.info("Preferences applied and saved.")
-            self.settingsApplied.emit() # Notify other parts of the application
+            self.settingsApplied.emit()
             return True
         except Exception as e:
-             # Catch broad exceptions during saving process (e.g., QSettings issues)
-             logger.exception("Error applying settings.") # Logs traceback
-             QtWidgets.QMessageBox.warning(self, "Error", f"Could not apply settings:\n{e}")
-             return False
+            logger.exception("Error applying settings.")
+            QtWidgets.QMessageBox.warning(self, "Error", f"Could not apply settings:\n{e}")
+            return False
 
     def accept(self) -> None:
-        """Applies settings and then closes the dialog if successful."""
         logger.debug("PreferencesDialog accepted (OK clicked).")
         if self._apply_settings():
-            # Only call the base class accept (which closes the dialog) if applying settings succeeded
             super().accept()
 
     def reject(self) -> None:
-        """Closes the dialog without applying any pending changes."""
         logger.debug("PreferencesDialog rejected (Cancel clicked).")
-        super().reject() # Closes the dialog
+        super().reject()

@@ -466,8 +466,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _handle_settings_applied(self) -> None:
-        self._setup_pens()
-        self._redraw_scene_overlay()
+        """Handles the settingsApplied signal from the PreferencesDialog."""
+        logger.info("MainWindow: Settings applied, refreshing visuals.")
+        self._setup_pens() # For tracks and origin marker
+        
+        # For Scale Bar - The ScaleBarWidget itself needs to be told to update its appearance
+        # if its color preference has changed.
+        if self.imageView and self.imageView._scale_bar_widget:
+            new_scale_bar_color = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_COLOR)
+            self.imageView._scale_bar_widget.set_bar_color(new_scale_bar_color) # We'll add this method to ScaleBarWidget
+            # Force a repaint of the scale bar if it's visible
+            if self.imageView._scale_bar_widget.isVisible():
+                self.imageView._scale_bar_widget.update()
+
+        self._redraw_scene_overlay() # Redraws tracks, origin, and defined scale line
 
     @QtCore.Slot(int)
     def _slider_value_changed(self, value: int) -> None:
@@ -708,18 +720,22 @@ class MainWindow(QtWidgets.QMainWindow):
                     meter_length = pixel_length * scale_m_per_px
                     length_text = self._format_length_value_for_line(meter_length)
 
-                    # Define appearance (could come from settings later)
-                    line_color = QtGui.QColor("magenta")
-                    line_pen_width = 1.5
+                    # --- Retrieve appearance settings FOR DEFINED SCALE LINE ---
+                    line_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
+                    text_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
+                    font_sz = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
+                    pen_w = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
 
                     # Call the drawing method on InteractiveImageView
                     self.imageView.draw_persistent_scale_line(
                         line_data=line_data,
                         length_text=length_text,
-                        color=line_color,
-                        pen_width=line_pen_width
+                        line_color=line_clr, # Pass the retrieved color
+                        text_color=text_clr, # Pass the retrieved text color
+                        font_size=font_sz,   # Pass the retrieved font size
+                        pen_width=pen_w      # Pass the retrieved pen width
                     )
-                    logger.debug("MainWindow requested ImageView to draw persistent scale line.")
+                    logger.debug("MainWindow requested ImageView to draw persistent scale line with updated settings.")
 
             # Ensure the viewport is updated (ImageView might handle this internally, but explicit update is safe)
             if self.imageView.viewport():

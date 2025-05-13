@@ -9,6 +9,8 @@ from typing import Optional, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import settings_manager
+
 logger = logging.getLogger(__name__)
 
 # --- Constants for Scale Bar Appearance (can be moved to config.py later if desired) ---
@@ -52,9 +54,26 @@ class ScaleBarWidget(QtWidgets.QWidget):
 
         # Basic appearance (can be customized further if needed)
         self.font_metrics = QtGui.QFontMetrics(self.font()) # Use default widget font for now
-        self._bar_color = QtGui.QColor(QtCore.Qt.GlobalColor.white)
-        self._border_color = QtGui.QColor(QtCore.Qt.GlobalColor.black)
-        self._text_color = QtGui.QColor(QtCore.Qt.GlobalColor.white) # Text color, consider contrast
+        
+        # Initialize with default from settings if possible, or fallback.
+        # This initial setting will be overridden if MainWindow applies new settings later.
+        initial_bar_color_setting = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_COLOR)
+        
+        # Ensure the retrieved setting is a QColor object or can be converted to one
+        if isinstance(initial_bar_color_setting, QtGui.QColor):
+            self._bar_color = initial_bar_color_setting
+        elif isinstance(initial_bar_color_setting, str): # If color is stored as string name/hex
+            self._bar_color = QtGui.QColor(initial_bar_color_setting)
+            if not self._bar_color.isValid(): # Fallback if string was invalid
+                logger.warning(f"Invalid color string '{initial_bar_color_setting}' from settings for scale bar. Using white.")
+                self._bar_color = QtGui.QColor("white")
+        else: # Fallback for any other unexpected type
+            logger.warning(f"Unexpected type for scale bar color setting '{type(initial_bar_color_setting)}'. Using white.")
+            self._bar_color = QtGui.QColor("white")
+        
+        # For simplicity, border is usually black or contrasting, text matches bar color
+        self._border_color = QtGui.QColor("black") # Could be a setting too
+        self._text_color = self._bar_color # Text will match bar color
 
         # Set size policy to allow it to adapt if parent uses it in a layout (though we'll position manually)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -203,6 +222,17 @@ class ScaleBarWidget(QtWidgets.QWidget):
         """Provides a preferred size hint."""
         return self.minimumSizeHint()
 
+    def set_bar_color(self, color: QtGui.QColor) -> None:
+        """Sets the main color for the scale bar and its text."""
+        if color.isValid():
+            self._bar_color = color
+            self._text_color = color # Keep text color same as bar color for this design
+            # If you want border to also be this color, or a derivative:
+            # self._border_color = color.darker(150) # Example: darker border
+            if self.isVisible(): # Only repaint if currently visible
+                self.update()
+            logger.debug(f"ScaleBarWidget color set to: {color.name()}")
+
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         """Paints the scale bar and its label."""
         if not self.isVisible() or self._bar_pixel_length <= 0:
@@ -217,9 +247,10 @@ class ScaleBarWidget(QtWidgets.QWidget):
         # --- Draw Text ---
         # Position text centered horizontally, above the bar
         text_x = (widget_width - self._text_width) / 2
-        text_y = self._text_height # Baseline or top of text
-        painter.setPen(self._text_color)
+        text_y = self._text_height 
+        painter.setPen(self._text_color) # Use the stored _text_color
         painter.drawText(QtCore.QPointF(text_x, text_y - self.font_metrics.descent()), self._bar_text_label)
+
 
 
         # --- Draw Scale Bar Rectangle ---
@@ -234,8 +265,8 @@ class ScaleBarWidget(QtWidgets.QWidget):
             SCALE_BAR_RECT_HEIGHT
         )
 
-        painter.setBrush(self._bar_color)
-        pen = QtGui.QPen(self._border_color, SCALE_BAR_BORDER_THICKNESS)
+        painter.setBrush(self._bar_color) # Use the stored _bar_color
+        pen = QtGui.QPen(self._border_color, SCALE_BAR_BORDER_THICKNESS) # Use stored _border_color
         pen.setCosmetic(True) # Ensure border thickness is consistent regardless of painter scale
         painter.setPen(pen)
         painter.drawRect(bar_rect)

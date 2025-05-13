@@ -374,7 +374,9 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     def draw_persistent_scale_line(self,
                                    line_data: Tuple[float, float, float, float],
                                    length_text: str,
-                                   color: QtGui.QColor,
+                                   line_color: QtGui.QColor, # Renamed from 'color'
+                                   text_color: QtGui.QColor, # New
+                                   font_size: int,           # New
                                    pen_width: float):
         """
         Draws the defined scale line, end markers, and length text onto the scene.
@@ -389,17 +391,22 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             return
 
         p1x, p1y, p2x, p2y = line_data
-        z_value = 12
+        z_value = 12 # Or a configurable Z-value
 
-        line_pen = QtGui.QPen(color, pen_width)
+        line_pen = QtGui.QPen(line_color, pen_width) # Use line_color
         line_pen.setCosmetic(True)
-        item_brush = QtGui.QBrush(color)
+        # Marker brush can be the same as line_color or a separate setting if desired later
+        item_brush = QtGui.QBrush(line_color) # For markers
 
         # 1. Draw Line and Markers
         line_item = QtWidgets.QGraphicsLineItem(p1x, p1y, p2x, p2y)
         line_item.setPen(line_pen); line_item.setZValue(z_value)
         self._scene.addItem(line_item)
-        marker_radius = 3.0
+        
+        # Consider making marker_radius configurable via settings_manager too
+        marker_radius = pen_width * 2.0 # Example: marker radius proportional to pen_width
+        marker_radius = max(2.0, min(marker_radius, 5.0)) # Clamp radius
+
         for px, py in [(p1x, p1y), (p2x, p2y)]:
             marker = QtWidgets.QGraphicsEllipseItem(px - marker_radius, py - marker_radius, 2 * marker_radius, 2 * marker_radius)
             marker.setPen(line_pen); marker.setBrush(item_brush); marker.setZValue(z_value)
@@ -407,9 +414,9 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
         # 2. Prepare Text Item
         text_item = QtWidgets.QGraphicsSimpleTextItem(length_text)
-        text_item.setBrush(item_brush)
+        text_item.setBrush(QtGui.QBrush(text_color)) # Use text_color
         font = text_item.font()
-        font.setPointSize(18) # Your desired font size
+        font.setPointSize(font_size) # Use font_size
         text_item.setFont(font)
         text_item.setZValue(z_value)
 
