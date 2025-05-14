@@ -239,42 +239,60 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             self._update_overlay_widget_positions()
 
 
-    def _zoom(self, factor: float) -> None:
+    def _zoom(self, factor: float, mouse_viewport_pos: Optional[QtCore.QPoint] = None) -> None: # Keep mouse_viewport_pos for now, though not directly used in this version
         if not self._pixmap_item:
             logger.debug("_zoom called but no pixmap item exists.")
             return
 
         current_scale: float = self.transform().m11()
-        logger.debug(f"Zoom requested with factor {factor:.3f}. Current scale: {current_scale:.4f}")
+        logger.debug(f"Zoom requested with factor {factor:.3f}. Current scale: {current_scale:.4f}, mouse_viewport_pos: {mouse_viewport_pos}")
 
         target_scale: float
         if factor > 1.0:
             target_scale = min(current_scale * factor, self._max_scale)
         else:
             target_scale = max(current_scale * factor, self._min_scale)
+        
         logger.debug(f"Calculated target scale: {target_scale:.4f} (Min: {self._min_scale:.4f}, Max: {self._max_scale:.4f})")
 
         if not math.isclose(target_scale, current_scale, rel_tol=1e-5):
-            actual_zoom: float = target_scale / current_scale
-            logger.debug(f"Applying scale factor {actual_zoom:.4f} (Target: {target_scale:.4f})")
-            self.scale(actual_zoom, actual_zoom)
+            actual_zoom_factor: float = target_scale / current_scale
+            
+            # Store the original anchor
+            original_anchor = self.transformationAnchor()
+            
+            # Try to force Qt to re-evaluate the mouse position for AnchorUnderMouse
+            # by temporarily changing the anchor.
+            # This can sometimes clear cached anchor points.
+            self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.NoAnchor)
+            self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+            # Ensure the viewport has a chance to process any pending events that might update mouse pos
+            # QtWidgets.QApplication.processEvents() # Usually not needed and can cause other issues, but as a last resort for testing.
+
+            logger.debug(f"Applying scale factor {actual_zoom_factor:.4f} (Target: {target_scale:.4f}) using AnchorUnderMouse.")
+            self.scale(actual_zoom_factor, actual_zoom_factor)
+            
+            # No manual scrollbar adjustment here, rely purely on AnchorUnderMouse
+            
             self.viewTransformChanged.emit()
         else:
             logger.debug("Target scale close to current scale or limits reached. No zoom applied.")
+
 
 
     @QtCore.Slot()
     def _zoomIn(self) -> None:
         logger.debug("Zoom In button clicked.")
         zoom_in_factor: float = 1.3
-        self._zoom(zoom_in_factor)
-
+        viewport_center = self.viewport().rect().center() # Get current viewport center
+        self._zoom(zoom_in_factor, viewport_center)
 
     @QtCore.Slot()
     def _zoomOut(self) -> None:
         logger.debug("Zoom Out button clicked.")
         zoom_out_factor: float = 1.0 / 1.3
-        self._zoom(zoom_out_factor)
+        viewport_center = self.viewport().rect().center() # Get current viewport center
+        self._zoom(zoom_out_factor, viewport_center)
 
 
     def setPixmap(self, pixmap: QtGui.QPixmap) -> None:
@@ -631,38 +649,35 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if not self._pixmap_item:
-             super().wheelEvent(event)
-             return
-        
-        # --- MODIFICATION: Disable wheel scroll for frame stepping if defining scale line ---
-        if self._current_mode == InteractionMode.SET_SCALE_LINE_END:
-            logger.debug("Wheel event ignored during SET_SCALE_LINE_END mode.")
-            event.accept()
+            super().wheelEvent(event)
             return
-        # --- END MODIFICATION ---
 
         modifiers: QtCore.Qt.KeyboardModifiers = event.modifiers()
         angle_delta: QtCore.QPoint = event.angleDelta()
+        mouse_pos_in_viewport: QtCore.QPoint = event.position().toPoint() # Get mouse pos from event
 
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            logger.debug("Ctrl+Scroll detected: Performing zoom.")
+            logger.debug(f"Ctrl+Scroll detected: Performing zoom at viewport pos {mouse_pos_in_viewport}.")
             scroll_amount: int = angle_delta.y()
             if scroll_amount == 0:
-                 event.ignore()
-                 return
+                event.ignore()
+                return
             zoom_factor_base: float = 1.15
             if scroll_amount > 0:
-                self._zoom(zoom_factor_base)
+                self._zoom(zoom_factor_base, mouse_pos_in_viewport) # Pass mouse_pos
             else:
-                self._zoom(1.0 / zoom_factor_base)
+                self._zoom(1.0 / zoom_factor_base, mouse_pos_in_viewport) # Pass mouse_pos
             event.accept()
-        else:
+        elif self._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
+            logger.debug(f"Wheel event ignored (frame stepping disabled) during {self._current_mode.name} mode.")
+            event.accept()
+        else: 
             logger.debug("Scroll detected (no/other modifier): Requesting frame step.")
             scroll_amount_y: int = angle_delta.y()
             if scroll_amount_y == 0:
-                 event.ignore()
-                 return
-            step: int = -1 if scroll_amount_y > 0 else 1
+                event.ignore()
+                return
+            step: int = -1 if scroll_amount_y > 0 else 1 
             logger.debug(f"Emitting frameStepRequested signal with step: {step}")
             self.frameStepRequested.emit(step)
             event.accept()
@@ -740,7 +755,6 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     def get_current_view_scale_factor(self) -> float:
         return self.transform().m11()
 
-    # --- START OF MODIFIED MOUSEPRESSEVENT ---
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         button: QtCore.Qt.MouseButton = event.button()
         logger.debug(f"Mouse press event: Button={button}, Pos={event.pos()}, Mode={self._current_mode.name}")
@@ -748,47 +762,24 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         if button == QtCore.Qt.MouseButton.LeftButton and self._pixmap_item:
             scene_pos = self.mapToScene(event.pos())
 
-            if not self._pixmap_item.sceneBoundingRect().contains(scene_pos):
-                logger.debug("Left click outside pixmap bounds. Ignoring for special modes.")
-                super().mousePressEvent(event) # Allow standard behavior (e.g. deselecting scene items)
-                return
-
-            if self._current_mode == InteractionMode.SET_SCALE_LINE_START:
-                self.clearTemporaryScaleVisuals() # Clear any previous attempts
-                self._scale_line_point1_scene = scene_pos
-                self._temp_scale_marker1 = self._draw_temporary_scale_marker(self._scale_line_point1_scene)
-                logger.info(f"Scale line point 1 set at scene: ({scene_pos.x():.2f}, {scene_pos.y():.2f})")
-                self.scaleLinePoint1Clicked.emit(scene_pos.x(), scene_pos.y())
-                # Mode will be changed to SET_SCALE_LINE_END by the controller
-                event.accept()
-            elif self._current_mode == InteractionMode.SET_SCALE_LINE_END:
-                # This click defines the second point
-                if self._scale_line_point1_scene is not None:
-                    self._temp_scale_marker2 = self._draw_temporary_scale_marker(scene_pos)
-                    self._draw_temporary_scale_line(self._scale_line_point1_scene, scene_pos) # Finalize line
-                    logger.info(f"Scale line point 2 set at scene: ({scene_pos.x():.2f}, {scene_pos.y():.2f})")
-                    self.scaleLinePoint2Clicked.emit(
-                        self._scale_line_point1_scene.x(), self._scale_line_point1_scene.y(),
-                        scene_pos.x(), scene_pos.y()
-                    )
-                    # Controller will reset mode to NORMAL after dialog
-                else:
-                    logger.warning("SET_SCALE_LINE_END mode but point1 is not set. Resetting to START.")
-                    # This case should ideally be prevented by controller logic, but as a fallback:
-                    self.set_interaction_mode(InteractionMode.SET_SCALE_LINE_START) # Go back to expecting first point
-                event.accept()
-            else: # NORMAL or SET_ORIGIN modes
+            # Always allow initiating a potential pan or click if within pixmap bounds
+            if self._pixmap_item.sceneBoundingRect().contains(scene_pos):
                 self._left_button_press_pos = event.pos()
                 self._is_potential_pan = True
                 self._is_panning = False
                 logger.debug(f"Left mouse pressed at view pos: {self._left_button_press_pos} in mode {self._current_mode.name}. Potential pan/click.")
                 event.accept()
+            else:
+                # Click outside pixmap, specific mode handling might be needed if any,
+                # otherwise, let base class handle (e.g., for deselecting items if scene allows).
+                logger.debug("Left click outside pixmap bounds. Passing to superclass.")
+                super().mousePressEvent(event)
+                return
         else:
             logger.debug("Non-left mouse button pressed or no pixmap, passing event to base class.")
             super().mousePressEvent(event)
-    # --- END OF MODIFIED MOUSEPRESSEVENT ---
 
-    # --- START OF MODIFIED MOUSEMOVEEVENT ---
+
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         viewport_pos = event.pos()
         scene_x, scene_y = -1.0, -1.0
@@ -801,111 +792,148 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
         self.sceneMouseMoved.emit(scene_x, scene_y)
 
-        # --- Handle dynamic drawing for SET_SCALE_LINE_END mode ---
-        if self._current_mode == InteractionMode.SET_SCALE_LINE_END and \
-           self._scale_line_point1_scene is not None and current_scene_pos is not None:
-            self._draw_temporary_scale_line(self._scale_line_point1_scene, current_scene_pos)
-            event.accept()
-            return # Consume event, dynamic line drawing handled
-
-        # --- Handle Panning (existing logic) ---
+        # Handle Panning Initiation
         if self._is_potential_pan and self._left_button_press_pos is not None:
             distance_moved = (viewport_pos - self._left_button_press_pos).manhattanLength()
             if distance_moved >= config.DRAG_THRESHOLD:
-                if self._current_mode == InteractionMode.NORMAL: # Only allow panning in NORMAL mode
-                    logger.debug(f"Drag threshold ({config.DRAG_THRESHOLD}px) exceeded. Starting pan.")
+                if self._current_mode in [InteractionMode.NORMAL,
+                                          InteractionMode.SET_SCALE_LINE_START,
+                                          InteractionMode.SET_SCALE_LINE_END]:
+                    logger.debug(f"Drag threshold ({config.DRAG_THRESHOLD}px) exceeded in mode {self._current_mode.name}. Starting pan.")
                     self._is_panning = True
-                    self.clearTemporaryScaleVisuals() # Cancel scale definition if pan starts
-                else:
-                    logger.debug(f"Drag threshold exceeded but not in NORMAL mode. Potential click.")
-
-                self._is_potential_pan = False # Resolved from potential
-                if self._is_panning: # Check again if we actually started panning
+                
+                self._is_potential_pan = False 
+                if self._is_panning:
                     self._last_pan_point = viewport_pos
                     self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
                     event.accept()
-                    return
-        
-        if self._is_panning and self._last_pan_point is not None: # Panning is active
+                    return 
+
+        # Handle Active Panning
+        if self._is_panning and self._last_pan_point is not None:
             delta = viewport_pos - self._last_pan_point
             self._last_pan_point = viewport_pos
             h_bar = self.horizontalScrollBar()
             v_bar = self.verticalScrollBar()
-            h_bar.setValue(h_bar.value() - delta.x())
-            v_bar.setValue(v_bar.value() - delta.y())
+            if h_bar: h_bar.setValue(h_bar.value() - delta.x()) # Check if scrollbars exist
+            if v_bar: v_bar.setValue(v_bar.value() - delta.y()) # Check if scrollbars exist
+            self.viewTransformChanged.emit() 
             event.accept()
-            return
+            return 
+
+        # --- DIAGNOSTIC CHANGE: Temporarily disable dynamic line drawing ---
+        # if self._current_mode == InteractionMode.SET_SCALE_LINE_END and \
+        #    self._scale_line_point1_scene is not None and current_scene_pos is not None and \
+        #    not self._is_panning: 
+        #     self._draw_temporary_scale_line(self._scale_line_point1_scene, current_scene_pos)
+        #     event.accept() 
+        #     return
+        # --- END DIAGNOSTIC CHANGE ---
 
         super().mouseMoveEvent(event)
-    # --- END OF MODIFIED MOUSEMOVEEVENT ---
 
-    # --- START OF MODIFIED MOUSERELEASEEVENT ---
+
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         button: QtCore.Qt.MouseButton = event.button()
-        logger.debug(f"Mouse release event: Button={button}, Pos={event.pos()}, Mode={self._current_mode.name}")
+        logger.debug(f"Mouse release event: Button={button}, Pos={event.pos()}, Mode={self._current_mode.name}, isPanning={self._is_panning}, isPotentialPan={self._is_potential_pan}")
 
         if button == QtCore.Qt.MouseButton.LeftButton:
             if self._is_panning:
                 self._is_panning = False
-                self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                # Set cursor based on current mode, not just ArrowCursor
+                if self._current_mode == InteractionMode.NORMAL:
+                    self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                elif self._current_mode == InteractionMode.SET_ORIGIN or \
+                     self._current_mode == InteractionMode.SET_SCALE_LINE_START or \
+                     self._current_mode == InteractionMode.SET_SCALE_LINE_END:
+                    self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+                else:
+                    self.setCursor(QtCore.Qt.CursorShape.ArrowCursor) # Fallback
                 logger.debug("Panning finished.")
                 event.accept()
-            elif self._is_potential_pan and self._current_mode != InteractionMode.SET_SCALE_LINE_START and self._current_mode != InteractionMode.SET_SCALE_LINE_END:
-                # This was a click in NORMAL or SET_ORIGIN mode
+            elif self._is_potential_pan: # This means it was a click, not a pan
                 self._is_potential_pan = False
                 logger.debug(f"Potential pan resolved as a click in mode {self._current_mode.name}.")
+
                 if self._pixmap_item and self._left_button_press_pos is not None:
+                    # Use the stored press position for click accuracy, not event.pos() which is release position
                     scene_pos: QtCore.QPointF = self.mapToScene(self._left_button_press_pos)
                     logger.debug(f"Click mapped to scene pos: ({scene_pos.x():.3f}, {scene_pos.y():.3f})")
 
                     if self._pixmap_item.boundingRect().contains(scene_pos):
-                        if self._current_mode == InteractionMode.SET_ORIGIN:
+                        # --- Point Definition Logic for Scale Modes ---
+                        if self._current_mode == InteractionMode.SET_SCALE_LINE_START:
+                            self.clearTemporaryScaleVisuals() # Clear any previous attempts
+                            self._scale_line_point1_scene = scene_pos
+                            self._temp_scale_marker1 = self._draw_temporary_scale_marker(self._scale_line_point1_scene)
+                            logger.info(f"Scale line point 1 set at scene: ({scene_pos.x():.2f}, {scene_pos.y():.2f})")
+                            self.scaleLinePoint1Clicked.emit(scene_pos.x(), scene_pos.y())
+                            # Controller will change mode to SET_SCALE_LINE_END
+                            event.accept()
+                        elif self._current_mode == InteractionMode.SET_SCALE_LINE_END:
+                            if self._scale_line_point1_scene is not None:
+                                # Ensure the second point marker is also cleared if it existed from a previous move
+                                if self._temp_scale_marker2 and self._temp_scale_marker2.scene() == self._scene:
+                                    self._scene.removeItem(self._temp_scale_marker2)
+                                    self._temp_scale_marker2 = None
+
+                                self._temp_scale_marker2 = self._draw_temporary_scale_marker(scene_pos)
+                                self._draw_temporary_scale_line(self._scale_line_point1_scene, scene_pos) # Finalize line
+                                logger.info(f"Scale line point 2 set at scene: ({scene_pos.x():.2f}, {scene_pos.y():.2f})")
+                                self.scaleLinePoint2Clicked.emit(
+                                    self._scale_line_point1_scene.x(), self._scale_line_point1_scene.y(),
+                                    scene_pos.x(), scene_pos.y()
+                                )
+                                # Controller will reset mode to NORMAL after dialog
+                            else: # Should not happen if controller logic is correct
+                                logger.warning("SET_SCALE_LINE_END mode but point1 is not set. Resetting to START.")
+                                self.set_interaction_mode(InteractionMode.SET_SCALE_LINE_START)
+                            event.accept()
+                        # --- Existing Click Logic for Other Modes ---
+                        elif self._current_mode == InteractionMode.SET_ORIGIN:
                             logger.info(f"Click in SET_ORIGIN mode. Emitting originSetRequest.")
                             self.originSetRequest.emit(scene_pos.x(), scene_pos.y())
                             event.accept()
                         elif self._current_mode == InteractionMode.NORMAL:
-                            modifiers = event.modifiers()
+                            modifiers = event.modifiers() # Use release event's modifiers for click type
                             if (modifiers == QtCore.Qt.KeyboardModifier.ControlModifier or
                                 modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier):
                                 logger.info(f"Modified click detected with modifiers: {modifiers}. Emitting modifiedClick.")
                                 self.modifiedClick.emit(scene_pos.x(), scene_pos.y(), modifiers)
-                                event.accept()
                             else:
                                 logger.info(f"Standard click detected. Emitting pointClicked.")
                                 self.pointClicked.emit(scene_pos.x(), scene_pos.y())
-                                event.accept()
-                        # No 'else' for SET_SCALE modes here, as their clicks are handled in mousePressEvent
-                    else:
-                        logger.debug("Click was outside pixmap bounds. Ignoring.")
+                            event.accept()
+                        else:
+                            super().mouseReleaseEvent(event) # Fallback for unhandled modes
+                    else: # Click outside pixmap
+                        logger.debug("Click was outside pixmap bounds. Ignoring for point definition.")
                         super().mouseReleaseEvent(event)
-                else:
+                else: # No pixmap or invalid press position
                     logger.debug("Click occurred but no pixmap loaded or press pos invalid. Ignoring.")
                     super().mouseReleaseEvent(event)
-            elif self._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
-                # Clicks for these modes are fully handled in mousePressEvent.
-                # This block ensures the event is accepted if it was a scale-setting click.
-                # _is_potential_pan would be false if a scale click was already processed in press.
-                logger.debug(f"Mouse release in mode {self._current_mode.name}. Click logic handled in press.")
-                event.accept() # Accept to prevent further processing by base class if it was a scale click.
-            else:
-                 logger.debug("Left mouse released, but was not in panning or relevant potential click state.")
-                 super().mouseReleaseEvent(event)
+            else: # Not a pan, not a potential_pan (e.g. right click, or event consumed by child)
+                logger.debug("Left mouse released, but was not in panning or a resolved click state handled here.")
+                super().mouseReleaseEvent(event)
 
             # Reset pan state variables after handling left button release
-            self._is_potential_pan = False # Always reset this
+            self._is_potential_pan = False
             self._left_button_press_pos = None
             self._last_pan_point = None
             
-            # Update cursor based on current mode (it might have been changed by controller)
-            if not self._is_panning: # Ensure not mid-pan (should be false here anyway)
-                 if self._current_mode == InteractionMode.NORMAL:
-                      self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
-                 elif self._current_mode == InteractionMode.SET_ORIGIN:
-                      self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
-                 elif self._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
-                      self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+            # Update cursor based on current mode (it might have been changed by controller during click handling)
+            # This is important because if a scale point was set, the controller changes the mode.
+            if not self._is_panning: # Ensure not mid-pan (should be false here if pan finished)
+                if self._current_mode == InteractionMode.NORMAL:
+                    self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                elif self._current_mode == InteractionMode.SET_ORIGIN:
+                    self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+                elif self._current_mode == InteractionMode.SET_SCALE_LINE_START or \
+                     self._current_mode == InteractionMode.SET_SCALE_LINE_END:
+                    self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+                else: # Should not happen if modes are exhaustive
+                    self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
 
         else: # Other mouse buttons
             logger.debug("Non-left mouse button released, passing event to base class.")
             super().mouseReleaseEvent(event)
-    # --- END OF MODIFIED MOUSERELEASEEVENT ---
