@@ -13,20 +13,16 @@ from PySide6 import QtCore, QtGui, QtWidgets
 import config
 from interactive_image_view import InteractiveImageView
 
-# Use TYPE_CHECKING to avoid circular import with MainWindow for type hints
 if TYPE_CHECKING:
     from main_window import MainWindow
 
 logger = logging.getLogger(__name__)
 
 def setup_main_window_ui(main_window: 'MainWindow') -> None:
-    """
-    Creates and arranges the main UI widgets, layouts, and menus for the MainWindow.
-    """
     logger.info("Setting up MainWindow UI elements...")
-
     style: QtWidgets.QStyle = main_window.style()
 
+    # ... (keep existing UI setup for leftPanelWidget, rightPanelWidget, dataTabsWidget, groups, etc.) ...
     main_window.mainSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     main_window.setCentralWidget(main_window.mainSplitter)
 
@@ -76,12 +72,11 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     auto_advance_layout.addWidget(main_window.autoAdvanceCheckBox)
     main_window.autoAdvanceSpinBox = QtWidgets.QSpinBox(); main_window.autoAdvanceSpinBox.setMinimum(1); main_window.autoAdvanceSpinBox.setMaximum(100); main_window.autoAdvanceSpinBox.setValue(1); main_window.autoAdvanceSpinBox.setToolTip("Number of frames to advance automatically")
     auto_advance_layout.addWidget(main_window.autoAdvanceSpinBox); auto_advance_layout.addStretch(1)
-    rightPanelLayout.addWidget(auto_advance_group) # Stretch = 0 (default)
+    rightPanelLayout.addWidget(auto_advance_group) 
     logger.debug("Auto-Advance panel configured.")
 
     main_window.dataTabsWidget = QtWidgets.QTabWidget()
     main_window.dataTabsWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-    # Add dataTabsWidget with a stretch factor so it expands
     rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1) 
     
     tracksTab = QtWidgets.QWidget(); tracksTabLayout = QtWidgets.QVBoxLayout(tracksTab); tracksTabLayout.setContentsMargins(2, 2, 2, 2)
@@ -112,10 +107,6 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.dataTabsWidget.addTab(pointsTab, "Points")
     logger.debug("Points tab configured.")
 
-    # The dataTabsWidget is already added to rightPanelLayout with stretch=1 above.
-    # Now add the other panels below it, they will have stretch=0 by default.
-
-    # --- Scale Configuration Panel (Collapsible) ---
     main_window.scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
     main_window.scale_config_group.setCheckable(True); main_window.scale_config_group.setChecked(False)
     main_window.scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -142,10 +133,9 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     scale_group_outer_layout.addWidget(scale_contents_widget)
     main_window.scale_config_group.toggled.connect(scale_contents_widget.setVisible)
     scale_contents_widget.setVisible(main_window.scale_config_group.isChecked())
-    rightPanelLayout.addWidget(main_window.scale_config_group) # Add with default stretch (0)
+    rightPanelLayout.addWidget(main_window.scale_config_group) 
     logger.debug("Scale Configuration panel configured.")
 
-    # --- Coordinate System Controls GroupBox (Collapsible) ---
     main_window.coords_group = QtWidgets.QGroupBox("Coordinate System")
     main_window.coords_group.setCheckable(True); main_window.coords_group.setChecked(False)
     main_window.coords_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -185,12 +175,8 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     coords_group_outer_layout.addWidget(coords_contents_widget)
     main_window.coords_group.toggled.connect(coords_contents_widget.setVisible)
     coords_contents_widget.setVisible(main_window.coords_group.isChecked())
-    rightPanelLayout.addWidget(main_window.coords_group) # Add with default stretch (0)
+    rightPanelLayout.addWidget(main_window.coords_group) 
     logger.debug("Coordinate System panel configured.")
-
-    # --- MODIFICATION: Remove the final addStretch to push config panels to bottom ---
-    # rightPanelLayout.addStretch(1) # This line was removed
-    # The dataTabsWidget with stretch=1 will now expand, pushing subsequent widgets down.
 
     main_window.mainSplitter.addWidget(main_window.rightPanelWidget)
     logger.debug("Right panel UI configured.")
@@ -222,12 +208,12 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     export_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton) 
     main_window.exportViewAction = QtGui.QAction(export_icon, "Export Video with Overlays...", main_window)
     main_window.exportViewAction.setStatusTip("Export the current view with overlays to a video file")
-    main_window.exportViewAction.setEnabled(False) # Initial state
+    main_window.exportViewAction.setEnabled(False)
     file_menu.addAction(main_window.exportViewAction)
-    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon) # Example icon
+    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon) 
     main_window.exportFrameAction = QtGui.QAction(export_frame_icon, "Export Current Frame to PNG...", main_window)
     main_window.exportFrameAction.setStatusTip("Export the current frame with overlays to a PNG image file")
-    main_window.exportFrameAction.setEnabled(False) # Initial state, enable when video loaded
+    main_window.exportFrameAction.setEnabled(False) 
     file_menu.addAction(main_window.exportFrameAction)
     file_menu.addSeparator()
     info_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView)
@@ -236,12 +222,24 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     exit_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogCloseButton)
     exit_action = QtGui.QAction(exit_icon, "E&xit", main_window); exit_action.setStatusTip("Exit the application"); exit_action.setShortcut(QtGui.QKeySequence.StandardKey.Quit); exit_action.triggered.connect(main_window.close)
     file_menu.addAction(exit_action)
+
     edit_menu: QtWidgets.QMenu = menu_bar.addMenu("&Edit")
+    # --- NEW: Undo Action ---
+    undo_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack) # Or SP_FileDialogBack
+    main_window.undoAction = QtGui.QAction(undo_icon, "&Undo Point Action", main_window)
+    main_window.undoAction.setStatusTip("Undo the last point addition or modification (Ctrl+Z)")
+    main_window.undoAction.setShortcut(QtGui.QKeySequence.StandardKey.Undo)
+    main_window.undoAction.setEnabled(False) # Initially disabled
+    edit_menu.addAction(main_window.undoAction)
+    # --- END NEW ---
+    edit_menu.addSeparator() # Keep separator if newTrackAction is next
     main_window.newTrackAction = QtGui.QAction("&New Track", main_window); main_window.newTrackAction.setStatusTip("Create a new track for marking points"); main_window.newTrackAction.setEnabled(False)
+    # Consider adding SP_FileIcon or similar for New Track if desired
     edit_menu.addAction(main_window.newTrackAction); edit_menu.addSeparator()
     prefs_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
     main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window); main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
     edit_menu.addAction(main_window.preferencesAction)
+
     help_menu: QtWidgets.QMenu = menu_bar.addMenu("&Help")
     about_action = QtGui.QAction("&About", main_window); about_action.setStatusTip("Show information about this application"); about_action.triggered.connect(main_window._show_about_dialog)
     help_menu.addAction(about_action)
