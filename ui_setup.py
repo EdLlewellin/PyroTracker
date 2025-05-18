@@ -223,7 +223,6 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.exportViewAction = QtGui.QAction(export_icon, "Export Video with Overlays...", main_window)
     main_window.exportViewAction.setStatusTip("Export the current view with overlays to a video file")
     main_window.exportViewAction.setEnabled(False) # Initial state
-    main_window.exportViewAction.triggered.connect(main_window._handle_export_video) # Connect to the new method name
     file_menu.addAction(main_window.exportViewAction)
     export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon) # Example icon
     main_window.exportFrameAction = QtGui.QAction(export_frame_icon, "Export Current Frame to PNG...", main_window)

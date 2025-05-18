@@ -7,11 +7,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 # Import necessary types from typing module
 from typing import Optional, List, Tuple, Dict, Any
 
-# --- BEGIN ADDITION: Imports for video export ---
-import cv2 # type: ignore
-import numpy as np
-# --- END ADDITION ---
-
 from metadata_dialog import MetadataDialog
 
 # Import constants and application components
@@ -25,12 +20,10 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 import settings_manager
 from preferences_dialog import PreferencesDialog
 from scale_manager import ScaleManager
-# --- BEGIN MODIFICATION: Import ScaleBarWidget for type hinting if needed by export ---
-from scale_bar_widget import ScaleBarWidget # For type hinting, or direct use if getters are sufficient
-# --- END MODIFICATION ---
+from scale_bar_widget import ScaleBarWidget
 from panel_controllers import ScalePanelController, CoordinatePanelController
 from table_controllers import TrackDataViewController
-
+from export_handler import ExportHandler
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -60,7 +53,7 @@ class MainWindow(QtWidgets.QMainWindow):
     scale_panel_controller: Optional[ScalePanelController]
     coord_panel_controller: Optional[CoordinatePanelController]
     table_data_controller: Optional[TrackDataViewController]
-
+    _export_handler: Optional[ExportHandler] = None
 
     # Video State (Mirrored from VideoHandler for easier UI updates)
     total_frames: int
@@ -126,7 +119,6 @@ class MainWindow(QtWidgets.QMainWindow):
     cursorPosLabelTL_m: Optional[QtWidgets.QLabel] = None
     cursorPosLabelBL_m: Optional[QtWidgets.QLabel] = None
     cursorPosLabelCustom_m: Optional[QtWidgets.QLabel] = None
-
 
     # Drawing Pens (Configured based on settings)
     pen_origin_marker: QtGui.QPen
@@ -248,11 +240,25 @@ class MainWindow(QtWidgets.QMainWindow):
         if status_bar_instance:
             status_bar_instance.showMessage("Ready. Load a video via File -> Open Video...")
 
+        # --- Instantiate ExportHandler ---
+        self._export_handler = ExportHandler(
+            video_handler=self.video_handler,
+            track_manager=self.track_manager,
+            scale_manager=self.scale_manager,
+            coord_transformer=self.coord_transformer,
+            image_view=self.imageView,
+            main_window=self, # Pass self if ExportHandler needs to create dialogs with MainWindow as parent
+            parent=self
+        )
+        logger.debug("ExportHandler initialized in MainWindow.")
+
+        # --- Connect signals for VideoHandler ---
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
 
+        # --- Connect signals for ImageView ---
         if self.imageView:
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
@@ -263,11 +269,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
 
+        # --- Connect signals for TrackManager ---
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
 
+        # --- Connect signals for ScaleManager ---
         if self.scale_panel_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
         if self.table_data_controller:
@@ -275,6 +283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.coord_panel_controller:
              self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
 
+        # --- Connect signals for CoordinatePanelController ---
         if self.coord_panel_controller:
             self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
             if self.table_data_controller:
@@ -282,6 +291,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar_instance:
                 self.coord_panel_controller.statusBarMessage.connect(status_bar_instance.showMessage)
 
+        # --- Connect signals for TrackDataViewController ---
         if self.table_data_controller:
             self.table_data_controller.seekVideoToFrame.connect(self.video_handler.seek_frame)
             self.table_data_controller.updateMainWindowUIState.connect(self._update_ui_state)
@@ -293,6 +303,7 @@ class MainWindow(QtWidgets.QMainWindow):
                      self.table_data_controller.handle_visibility_header_clicked
                  )
 
+        # --- Connect UI element signals ---
         if self.frameSlider: self.frameSlider.valueChanged.connect(self._slider_value_changed)
         if self.playPauseButton: self.playPauseButton.clicked.connect(self._toggle_playback)
         if self.prevFrameButton: self.prevFrameButton.clicked.connect(self._show_previous_frame)
@@ -305,10 +316,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
-        if hasattr(self, 'exportViewAction') and self.exportViewAction:
-            self.exportViewAction.triggered.connect(self._handle_export_video) # Changed to _handle_export_video
-        if hasattr(self, 'exportFrameAction') and self.exportFrameAction:
-            self.exportFrameAction.triggered.connect(self._handle_export_current_frame)
+
+        # --- MODIFIED: Connect Export Actions to ExportHandler ---
+        if hasattr(self, 'exportViewAction') and self.exportViewAction and self._export_handler:
+            self.exportViewAction.triggered.connect(self._trigger_export_video) # New slot in MainWindow
+        if hasattr(self, 'exportFrameAction') and self.exportFrameAction and self._export_handler:
+            self.exportFrameAction.triggered.connect(self._trigger_export_frame) # New slot in MainWindow
+
+        # --- Connect signals from ExportHandler ---
+        if self._export_handler:
+            self._export_handler.exportStarted.connect(self._on_export_started)
+            self._export_handler.exportProgress.connect(self._on_export_progress)
+            self._export_handler.exportFinished.connect(self._on_export_finished)
+
         self._update_ui_state()
         if self.table_data_controller:
             self.table_data_controller.update_tracks_table_ui()
@@ -644,34 +664,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if disable and status_bar:
             status_bar.showMessage("Frame navigation disabled while defining scale line.", 0)
 
-    def _format_length_value_for_line(self, length_meters: float) -> str:
-        """
-        Formats a given length in meters into a human-readable string
-        with appropriate units (km, m, cm, mm, µm, nm) or scientific notation.
-        Uses constants from config.py.
-        """
-        if length_meters == 0:
-            return "0 m"
-
-        if abs(length_meters) >= config.SCIENTIFIC_NOTATION_UPPER_THRESHOLD or \
-           (abs(length_meters) > 0 and abs(length_meters) <= config.SCIENTIFIC_NOTATION_LOWER_THRESHOLD):
-            return f"{length_meters:.2e}"
-
-        for factor, singular_abbr, plural_abbr in config.UNIT_PREFIXES:
-            if abs(length_meters) >= factor * 0.99:
-                value_in_unit = length_meters / factor
-                if factor >= 1.0:
-                    precision = 2 if abs(value_in_unit) < 10 else 1 if abs(value_in_unit) < 100 else 0
-                elif factor >= 1e-3:
-                    precision = 1 if abs(value_in_unit) < 100 else 0
-                else:
-                    precision = 0
-                if abs(value_in_unit) >= 1 and value_in_unit == math.floor(value_in_unit) and precision > 0:
-                     if abs(value_in_unit) > 10 : precision = 0
-                formatted_value = f"{value_in_unit:.{precision}f}"
-                unit_to_display = plural_abbr if plural_abbr and abs(value_in_unit) != 1.0 else singular_abbr
-                return f"{formatted_value} {unit_to_display}"
-        return f"{length_meters:.3f} m"
 
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
@@ -680,9 +672,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         scene = self.imageView._scene
-        self.imageView.clearOverlay()
+        self.imageView.clearOverlay() # This clears items EXCEPT temporary scale markers/line
 
         try:
+            # --- Draw Tracks ---
             marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
             elements = self.track_manager.get_visual_elements(self.current_frame_index)
             pens = {
@@ -696,22 +689,28 @@ class MainWindow(QtWidgets.QMainWindow):
             for el in elements:
                 pen = pens.get(el.get('style'))
                 if not pen: continue
+                current_pen = QtGui.QPen(pen) # Create a new QPen instance from the template
+                current_pen.setCosmetic(True) # Ensure it's cosmetic for consistent export
                 if el.get('type') == 'marker' and el.get('pos'):
                     x, y = el['pos']; r = marker_sz / 2.0
                     path = QtGui.QPainterPath(); path.moveTo(x - r, y); path.lineTo(x + r, y); path.moveTo(x, y - r); path.lineTo(x, y + r)
-                    item = QtWidgets.QGraphicsPathItem(path); item.setPen(pen); item.setZValue(10); scene.addItem(item)
+                    item = QtWidgets.QGraphicsPathItem(path); item.setPen(current_pen); item.setZValue(10); scene.addItem(item)
                 elif el.get('type') == 'line' and el.get('p1') and el.get('p2'):
                     p1, p2 = el['p1'], el['p2']
-                    item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1]); item.setPen(pen); item.setZValue(9); scene.addItem(item)
+                    item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1]); item.setPen(current_pen); item.setZValue(9); scene.addItem(item)
 
+            # --- Draw Origin Marker ---
             if self.coord_panel_controller and self.coord_panel_controller.get_show_origin_marker_status():
                 origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
                 ox, oy = self.coord_transformer.get_current_origin_tl()
                 r_orig = origin_sz / 2.0
+                origin_pen_cosmetic = QtGui.QPen(self.pen_origin_marker) # Create a new QPen instance
+                origin_pen_cosmetic.setCosmetic(True)
                 origin_item = QtWidgets.QGraphicsEllipseItem(ox - r_orig, oy - r_orig, origin_sz, origin_sz)
-                origin_item.setPen(self.pen_origin_marker); origin_item.setBrush(self.pen_origin_marker.color()); origin_item.setZValue(11)
+                origin_item.setPen(origin_pen_cosmetic); origin_item.setBrush(self.pen_origin_marker.color()); origin_item.setZValue(11)
                 scene.addItem(origin_item)
 
+            # --- Draw Defined Scale Line (if enabled and defined) ---
             if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
                self.scale_manager and self.scale_manager.has_defined_scale_line():
 
@@ -719,370 +718,122 @@ class MainWindow(QtWidgets.QMainWindow):
                 scale_m_per_px = self.scale_manager.get_scale_m_per_px()
 
                 if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
+                    # The imageView's draw_persistent_scale_line already handles settings internally
                     p1x, p1y, p2x, p2y = line_data
                     dx = p2x - p1x; dy = p2y - p1y
                     pixel_length = math.sqrt(dx*dx + dy*dy)
                     meter_length = pixel_length * scale_m_per_px
-                    length_text = self._format_length_value_for_line(meter_length)
+                    
+                    # Use the format_length_value_for_line from ExportHandler (or move it to a common place)
+                    # For now, assuming ExportHandler is instantiated and available
+                    length_text = "Err"
+                    if self._export_handler: # Check if export_handler is available
+                        length_text = self._export_handler.format_length_value_for_line(meter_length)
+                    else: # Fallback or log error if export_handler isn't there for formatting
+                        logger.warning("Export handler not available for formatting scale line text in redraw.")
+                        length_text = f"{meter_length:.2f} m"
+
+
                     line_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
                     text_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
                     font_sz = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
                     pen_w = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
+                    
+                    # This method adds items directly to the imageView's scene
                     self.imageView.draw_persistent_scale_line(
                         line_data=line_data, length_text=length_text, line_color=line_clr,
                         text_color=text_clr, font_size=font_sz, pen_width=pen_w
                     )
                     logger.debug("MainWindow requested ImageView to draw persistent scale line with updated settings.")
-
-            if self.imageView.viewport():
-                self.imageView.viewport().update()
+            
         except Exception as e:
-            logger.exception(f"Error during overlay coordination in _redraw_scene_overlay: {e}")
-            if self.imageView: self.imageView.clearOverlay()
+            logger.exception(f"Error during overlay drawing in _redraw_scene_overlay: {e}")
+            # If an error occurs, we still want to try and update the viewport to show cleared state or partial drawing
+        finally:
+            if self.imageView and self.imageView.viewport():
+                self.imageView.viewport().update() # Ensure viewport updates regardless of errors in drawing
+
 
     @QtCore.Slot()
-    def _handle_export_video(self) -> None:
-        action_to_disable = None
-        if hasattr(self, 'exportViewAction') and self.exportViewAction:
-            action_to_disable = self.exportViewAction
-            if action_to_disable.isEnabled():
-                action_to_disable.setEnabled(False)
-            else:
-                # This case might indicate the action was already disabled by another process
-                # or the event is being triggered multiple times rapidly.
-                logger.warning("_handle_export_video called while action already disabled by a prior call in this event sequence. Aborting duplicate call.")
-                return # Prevent re-entry if already processing
+    def _trigger_export_video(self) -> None:
+        """
+        Handles the 'Export Video with Overlays' action, gets file path and format,
+        then calls the ExportHandler.
+        """
+        if not self.video_loaded or not self._export_handler:
+            QtWidgets.QMessageBox.warning(self, "Export Error", "No video loaded or export handler not ready.")
+            return
 
-        original_status_message = ""
-        status_bar = self.statusBar()
-        if status_bar:
-            original_status_message = status_bar.currentMessage()
+        base_video_name = "video_with_overlays"
+        if self.video_filepath:
+            base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0] + "_tracked"
 
-        try:
-            if not self.video_loaded:
-                QtWidgets.QMessageBox.warning(self, "Export Error", "No video loaded to export.")
-                return
-            if not self.imageView:
-                logger.error("Cannot export: ImageView not available.")
-                QtWidgets.QMessageBox.critical(self, "Export Error", "Internal error: ImageView component missing.")
-                return
+        export_options = [
+            ("mp4", "mp4v", "MP4 Video Files (*.mp4)"),
+            ("avi", "MJPG", "AVI Video Files (Motion JPEG) (*.avi)"),
+        ]
+        file_filters = ";;".join([opt[2] for opt in export_options])
+        default_filename = f"{base_video_name}.{export_options[0][0]}"
+        start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
 
-            base_video_name = "video_with_overlays"
-            if self.video_filepath:
-                base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0] + "_tracked"
+        save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export Video with Overlays",
+            os.path.join(start_dir, default_filename),
+            file_filters
+        )
 
-            export_options = [
-                ("mp4", "mp4v", f"MP4 Video Files (*.mp4)"),
-                ("avi", "MJPG", f"AVI Video Files (Motion JPEG) (*.avi)"),
-            ]
+        if not save_path:
+            status_bar = self.statusBar()
+            if status_bar: status_bar.showMessage("Video export cancelled.", 3000)
+            logger.info("Video export cancelled by user at file dialog.")
+            return
 
-            file_filters = ";;".join([opt[2] for opt in export_options])
-            default_filename = f"{base_video_name}.{export_options[0][0]}"
-            
-            start_dir = os.path.dirname(self.video_filepath) if self.video_filepath else os.getcwd()
-            # Ensure start_dir exists, fall back to cwd if not (e.g. if video_filepath was from a temp location)
-            if not os.path.isdir(start_dir):
-                start_dir = os.getcwd()
-
-            save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(
-                self, "Export Video with Overlays",
-                os.path.join(start_dir, default_filename),
-                file_filters
-            )
-
-            if not save_path:
-                if status_bar: status_bar.showMessage("Export cancelled.", 3000)
-                logger.info("Video export cancelled by user at file dialog.")
-                return
-
-            chosen_fourcc_str = ""
-            chosen_extension_dot = ""
-
-            for ext, fcc, desc in export_options:
-                if desc == selected_filter_desc:
-                    chosen_fourcc_str = fcc
-                    chosen_extension_dot = f".{ext}"
-                    break
-            
-            if not chosen_fourcc_str:
-                _name_part, ext_part_from_path = os.path.splitext(save_path)
-                if ext_part_from_path:
-                    ext_part_from_path_lower = ext_part_from_path.lower()
-                    for ext, fcc, desc in export_options:
-                        if f".{ext}" == ext_part_from_path_lower:
-                            chosen_fourcc_str = fcc
-                            chosen_extension_dot = ext_part_from_path_lower
-                            logger.info(f"Inferred format from typed extension: {chosen_extension_dot}, FourCC: {chosen_fourcc_str}")
-                            break
-                    if not chosen_fourcc_str:
-                        logger.warning(f"Unknown extension '{ext_part_from_path}' typed by user. Defaulting to {export_options[0][2]}.")
-                        chosen_fourcc_str = export_options[0][1]
-                        chosen_extension_dot = f".{export_options[0][0]}"
-                else: 
-                    logger.info(f"No extension provided and no specific filter matched. Defaulting to {export_options[0][2]}.")
-                    chosen_fourcc_str = export_options[0][1]
-                    chosen_extension_dot = f".{export_options[0][0]}"
-            
-            current_name_part, current_ext_part = os.path.splitext(save_path)
-            if current_ext_part.lower() != chosen_extension_dot.lower():
-                save_path = current_name_part + chosen_extension_dot
-                logger.info(f"Adjusted save path to have consistent extension: {save_path}")
-
-            if not chosen_fourcc_str:
-                QtWidgets.QMessageBox.critical(self, "Export Error", "Could not determine a video format for export.")
-                logger.error("Critical: Failed to determine chosen_fourcc_str for export.")
-                return
-
-            logger.info(f"Attempting export to: {save_path} using FourCC: {chosen_fourcc_str}")
-
-            view_transform = self.imageView.transform()
-            viewport_size = self.imageView.viewport().size()
-            export_width = viewport_size.width()
-            export_height = viewport_size.height()
-
-            if export_width <= 0 or export_height <= 0:
-                QtWidgets.QMessageBox.critical(self, "Export Error", "Invalid viewport dimensions for export.")
-                return
-
-            fourcc = cv2.VideoWriter_fourcc(*chosen_fourcc_str)
-            video_fps_for_export = self.fps if self.fps > 0 else 30.0
-            video_writer = cv2.VideoWriter(save_path, fourcc, video_fps_for_export, (export_width, export_height))
-
-            if not video_writer.isOpened():
-                error_detail = f"Could not open video writer for:\n{save_path}\n\nUsing FourCC: '{chosen_fourcc_str}' for extension '{chosen_extension_dot}'.\nThis may indicate a missing codec or an incompatible format/codec pair for your OpenCV setup."
-                QtWidgets.QMessageBox.critical(self, "Export Error", error_detail)
-                logger.error(f"VideoWriter failed to open. Path: {save_path}, FourCC: {chosen_fourcc_str}, Ext: {chosen_extension_dot}")
-                return
-
-            progress_dialog = QtWidgets.QProgressDialog("Exporting video...", "Cancel", 0, self.total_frames, self)
-            progress_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
-            progress_dialog.setWindowTitle("Export Progress")
-            progress_dialog.show()
-            QtWidgets.QApplication.processEvents() 
-
-            if status_bar: status_bar.showMessage(f"Exporting to {os.path.basename(save_path)}...", 0) # Persistent message
-
-            export_cancelled = False
-            for frame_idx in range(self.total_frames):
-                if progress_dialog.wasCanceled():
-                    export_cancelled = True
-                    logger.info(f"Video export to {save_path} cancelled by user during processing.")
-                    break
-                progress_dialog.setValue(frame_idx)
-                if frame_idx % 10 == 0: # Process events periodically to keep UI responsive
-                    QtWidgets.QApplication.processEvents()
-
-                raw_cv_frame = self.video_handler.get_raw_frame_at_index(frame_idx)
-                source_qimage_for_drawing: Optional[QtGui.QImage] = None
-                if raw_cv_frame is not None:
-                    h_raw, w_raw = raw_cv_frame.shape[:2]
-                    channels_raw = raw_cv_frame.shape[2] if len(raw_cv_frame.shape) == 3 else 1
-                    try:
-                        if channels_raw == 3: 
-                            contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
-                            rgb_frame_data = cv2.cvtColor(contig_raw_cv_frame, cv2.COLOR_BGR2RGB) 
-                            temp_qimage_wrapper = QtGui.QImage(rgb_frame_data.data, w_raw, h_raw, rgb_frame_data.strides[0], QtGui.QImage.Format.Format_RGB888)
-                        elif channels_raw == 1: 
-                            contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
-                            temp_qimage_wrapper = QtGui.QImage(contig_raw_cv_frame.data, w_raw, h_raw, contig_raw_cv_frame.strides[0], QtGui.QImage.Format.Format_Grayscale8)
-                        else: temp_qimage_wrapper = None
-                        
-                        if temp_qimage_wrapper is not None and not temp_qimage_wrapper.isNull():
-                            source_qimage_for_drawing = temp_qimage_wrapper.convertToFormat(QtGui.QImage.Format.Format_RGB888) if temp_qimage_wrapper.format() != QtGui.QImage.Format.Format_RGB888 else temp_qimage_wrapper.copy()
-                    except Exception as e_conv:
-                        logger.error(f"Frame {frame_idx}: Error during raw_cv_frame to QImage conversion: {e_conv}", exc_info=True)
-                    if source_qimage_for_drawing is not None and source_qimage_for_drawing.isNull(): source_qimage_for_drawing = None
-                
-                if source_qimage_for_drawing is None:
-                    logger.warning(f"Frame {frame_idx}: source_qimage_for_drawing is None. Using black frame.")
-                    source_qimage_for_drawing = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_RGB888)
-                    source_qimage_for_drawing.fill(QtCore.Qt.GlobalColor.black)
-
-                export_canvas_qimage = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_RGB888)
-                export_canvas_qimage.fill(QtCore.Qt.GlobalColor.black) # Base for drawing
-
-                painter = QtGui.QPainter(export_canvas_qimage)
-                painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-                painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing, True)
-                painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
-
-                target_export_rect = QtCore.QRectF(export_canvas_qimage.rect())
-                visible_scene_area_rect_float = self.imageView.mapToScene(self.imageView.viewport().rect()).boundingRect()
-                painter.drawImage(target_export_rect, source_qimage_for_drawing, visible_scene_area_rect_float)
-
-                painter.save()
-                if not visible_scene_area_rect_float.isEmpty():
-                    visible_scene_area_rect_for_overlays_int = visible_scene_area_rect_float.toRect()
-                    painter.setWindow(visible_scene_area_rect_for_overlays_int)
-                    painter.setViewport(export_canvas_qimage.rect())
-                
-                marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-                track_elements = self.track_manager.get_visual_elements(frame_idx)
-                pens = {
-                    config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
-                    config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
-                    config.STYLE_MARKER_INACTIVE_CURRENT: self.pen_marker_inactive_current,
-                    config.STYLE_MARKER_INACTIVE_OTHER: self.pen_marker_inactive_other,
-                    config.STYLE_LINE_ACTIVE: self.pen_line_active,
-                    config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
-                }
-                for el in track_elements:
-                    pen_to_use = pens.get(el.get('style'))
-                    if not pen_to_use: continue
-                    current_pen = QtGui.QPen(pen_to_use); current_pen.setCosmetic(True); painter.setPen(current_pen)
-                    if el.get('type') == 'marker' and el.get('pos'):
-                        x, y = el['pos']; r = marker_sz / 2.0
-                        painter.drawLine(QtCore.QPointF(x - r, y), QtCore.QPointF(x + r, y))
-                        painter.drawLine(QtCore.QPointF(x, y - r), QtCore.QPointF(x, y + r))
-                    elif el.get('type') == 'line' and el.get('p1') and el.get('p2'):
-                        p1, p2 = el['p1'], el['p2']
-                        painter.drawLine(QtCore.QPointF(p1[0], p1[1]), QtCore.QPointF(p2[0], p2[1]))
-
-                if self.coord_panel_controller and self.coord_panel_controller.get_show_origin_marker_status():
-                    origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
-                    ox, oy = self.coord_transformer.get_current_origin_tl() 
-                    r_orig = origin_sz / 2.0
-                    origin_pen = QtGui.QPen(self.pen_origin_marker); origin_pen.setCosmetic(True); painter.setPen(origin_pen)
-                    painter.setBrush(self.pen_origin_marker.color())
-                    painter.drawEllipse(QtCore.QRectF(ox - r_orig, oy - r_orig, origin_sz, origin_sz))
-
-                if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
-                   self.scale_manager and self.scale_manager.has_defined_scale_line():
-                    line_data = self.scale_manager.get_defined_scale_line_data() 
-                    scale_m_per_px = self.scale_manager.get_scale_m_per_px()
-                    if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
-                        line_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
-                        text_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
-                        font_sz_sl = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
-                        pen_w_sl = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
-                        p1x_line,p1y_line,p2x_line,p2y_line=line_data; dx_sl_line=p2x_line-p1x_line; dy_sl_line=p2y_line-p1y_line
-                        pixel_length_sl_line = math.sqrt(dx_sl_line*dx_sl_line + dy_sl_line*dy_sl_line)
-                        meter_length_sl_line = pixel_length_sl_line * scale_m_per_px
-                        length_text_sl_line = self._format_length_value_for_line(meter_length_sl_line)
-                        self._draw_scale_line_on_painter(painter, line_data, length_text_sl_line, 
-                                                         line_clr_sl, text_clr_sl, font_sz_sl, pen_w_sl,
-                                                         visible_scene_area_rect_float)
-                painter.restore() 
-
-                if self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked() and \
-                   self.scale_manager and self.scale_manager.get_scale_m_per_px() is not None and \
-                   hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget:
-                    sb_widget: ScaleBarWidget = self.imageView._scale_bar_widget
-                    sb_widget.update_dimensions( 
-                        m_per_px_scene=self.scale_manager.get_scale_m_per_px(),
-                        view_scale_factor=view_transform.m11(),
-                        parent_view_width=export_width
-                    )
-                    if sb_widget.isVisible() and sb_widget.get_current_bar_pixel_length() > 0:
-                        sb_bar_len_px=sb_widget.get_current_bar_pixel_length(); sb_text=sb_widget.get_current_bar_text_label()
-                        sb_bar_color=sb_widget.get_current_bar_color(); sb_text_color=sb_widget.get_current_text_color()
-                        sb_border_color=sb_widget.get_current_border_color(); sb_font=sb_widget.get_current_font()
-                        painter_sb_font_metrics = QtGui.QFontMetrics(sb_font) 
-                        sb_rect_h_px=sb_widget.get_current_bar_rect_height(); sb_text_margin_bottom=sb_widget.get_text_margin_bottom()
-                        sb_border_thickness_px=sb_widget.get_border_thickness()
-                        sb_text_w_px = painter_sb_font_metrics.boundingRect(sb_text).width()
-                        sb_text_h_px = painter_sb_font_metrics.height()
-                        margin=10; overall_sb_width = int(max(sb_bar_len_px + 2*sb_border_thickness_px, sb_text_w_px))
-                        overall_sb_height = sb_text_h_px + sb_text_margin_bottom + sb_rect_h_px + 2*sb_border_thickness_px
-                        sb_x_offset=export_width-overall_sb_width-margin; sb_y_offset=export_height-overall_sb_height-margin
-                        painter.save(); painter.translate(sb_x_offset, sb_y_offset); painter.setFont(sb_font); painter.setPen(sb_text_color)
-                        text_x_local=(overall_sb_width-sb_text_w_px)/2.0; text_baseline_y_local=float(painter_sb_font_metrics.ascent()) 
-                        painter.drawText(QtCore.QPointF(text_x_local, text_baseline_y_local), sb_text)
-                        bar_start_x_local=(overall_sb_width-sb_bar_len_px)/2.0; bar_top_y_local=float(sb_text_h_px+sb_text_margin_bottom+sb_border_thickness_px) 
-                        bar_rect_local=QtCore.QRectF(bar_start_x_local, bar_top_y_local, sb_bar_len_px, float(sb_rect_h_px))
-                        current_scale_bar_pen=QtGui.QPen(sb_border_color,sb_border_thickness_px); current_scale_bar_pen.setCosmetic(True) 
-                        painter.setPen(current_scale_bar_pen); painter.setBrush(sb_bar_color); painter.drawRect(bar_rect_local); painter.restore()
-                painter.end() 
-                
-                if export_canvas_qimage.format() != QtGui.QImage.Format.Format_RGB888:
-                    export_canvas_qimage = export_canvas_qimage.convertToFormat(QtGui.QImage.Format.Format_RGB888)
-                temp_width=export_canvas_qimage.width(); temp_height=export_canvas_qimage.height()
-                ptr=export_canvas_qimage.constBits()
-                try: ptr.setsize(export_canvas_qimage.sizeInBytes()) 
-                except AttributeError: pass 
-                buffer_size = export_canvas_qimage.sizeInBytes()
-                full_buffer_1d = np.frombuffer(ptr, dtype=np.uint8, count=buffer_size)
-                cv_export_frame_rgb = np.empty((temp_height, temp_width, 3), dtype=np.uint8)
-                bytes_per_actual_line = temp_width * 3
-                bytes_per_qimage_line = export_canvas_qimage.bytesPerLine()
-                for i in range(temp_height):
-                    line_start_offset_in_buffer = i * bytes_per_qimage_line
-                    line_pixel_data = full_buffer_1d[line_start_offset_in_buffer : line_start_offset_in_buffer + bytes_per_actual_line]
-                    if line_pixel_data.size == bytes_per_actual_line:
-                        cv_export_frame_rgb[i] = line_pixel_data.reshape(temp_width, 3)
-                    else:
-                        logger.error(f"F{frame_idx} L{i}: Size mismatch. Got {line_pixel_data.size}, expected {bytes_per_actual_line}. Black fill.")
-                        cv_export_frame_rgb[i] = 0 
-                cv_export_frame_bgr = cv2.cvtColor(cv_export_frame_rgb, cv2.COLOR_RGB2BGR)
-                video_writer.write(cv_export_frame_bgr)
-
-            video_writer.release()
-            progress_dialog.setValue(self.total_frames)
-
-            if status_bar:
-                if export_cancelled:
-                    status_bar.showMessage("Video export cancelled.", 5000)
-                    if os.path.exists(save_path):
-                        try: os.remove(save_path); logger.info(f"Removed cancelled export file: {save_path}")
-                        except OSError as e: logger.warning(f"Could not remove cancelled export file {save_path}: {e}")
-                else:
-                    status_bar.showMessage(f"Video export complete: {os.path.basename(save_path)}", 5000)
-                    logger.info(f"Video export complete: {save_path}")
+        chosen_fourcc_str = ""
+        chosen_extension_dot = ""
+        for ext, fcc, desc in export_options:
+            if desc == selected_filter_desc:
+                chosen_fourcc_str = fcc
+                chosen_extension_dot = f".{ext}"
+                break
         
-        except Exception as e:
-            logger.exception("An error occurred during video export.")
-            QtWidgets.QMessageBox.critical(self, "Export Error", f"An unexpected error occurred during export:\n{str(e)}")
-            if status_bar: status_bar.showMessage("Export failed (see log).", 5000)
+        if not chosen_fourcc_str: # Infer from typed extension if no filter was actively selected
+            _name_part, ext_part_from_path = os.path.splitext(save_path)
+            if ext_part_from_path:
+                ext_part_from_path_lower = ext_part_from_path.lower()
+                for ext, fcc, desc in export_options:
+                    if f".{ext}" == ext_part_from_path_lower:
+                        chosen_fourcc_str = fcc
+                        chosen_extension_dot = ext_part_from_path_lower
+                        break
+            if not chosen_fourcc_str: # Fallback to first option if still not determined
+                chosen_fourcc_str = export_options[0][1]
+                chosen_extension_dot = f".{export_options[0][0]}"
+        
+        current_name_part, current_ext_part = os.path.splitext(save_path)
+        if current_ext_part.lower() != chosen_extension_dot.lower():
+            save_path = current_name_part + chosen_extension_dot
+            logger.info(f"Adjusted save path for consistent extension: {save_path}")
 
-        finally: 
-            if action_to_disable:
-                # --- MODIFICATION: Defer re-enabling the action ---
-                def re_enable_action():
-                    if self.video_loaded: # Check current state
-                        action_to_disable.setEnabled(True)
-                    else: # If video got unloaded somehow, ensure UI is consistent
-                        self._update_ui_state()
-                    # Restore original status bar message if export didn't set a persistent one
-                    if status_bar and status_bar.currentMessage().startswith("Exporting to"):
-                         if original_status_message: # Restore if there was one
-                            status_bar.showMessage(original_status_message, 3000 if original_status_message != "Ready." else 0)
-                         elif self.video_loaded: # Or a generic loaded message
-                            status_bar.showMessage(f"Loaded '{os.path.basename(self.video_filepath)}'", 3000)
-                         else: # Or just Ready
-                            status_bar.showMessage("Ready.", 0)
-
-
-                QtCore.QTimer.singleShot(0, re_enable_action)
-
+        if self._export_handler:
+            # The actual export logic is now in ExportHandler
+            self._export_handler.export_video_with_overlays(save_path, chosen_fourcc_str, chosen_extension_dot)
 
     @QtCore.Slot()
-    def _handle_export_current_frame(self) -> None:
-        """Handles exporting the current frame with overlays to a PNG image."""
-        if not self.video_loaded or self.current_frame_index < 0:
-            QtWidgets.QMessageBox.warning(self, "Export Frame Error", "No video loaded or no current frame selected.")
+    def _trigger_export_frame(self) -> None:
+        """
+        Handles the 'Export Current Frame to PNG' action, gets file path,
+        then calls the ExportHandler.
+        """
+        if not self.video_loaded or self.current_frame_index < 0 or not self._export_handler:
+            QtWidgets.QMessageBox.warning(self, "Export Frame Error", "No video loaded, no current frame, or export handler not ready.")
             return
-        if not self.imageView:
-            logger.error("Cannot export frame: ImageView not available.")
-            QtWidgets.QMessageBox.critical(self, "Export Frame Error", "Internal error: ImageView component missing.")
-            return
-
-        action_to_disable = None
-        if hasattr(self, 'exportFrameAction') and self.exportFrameAction:
-            action_to_disable = self.exportFrameAction
-            if action_to_disable.isEnabled():
-                action_to_disable.setEnabled(False) # Disable during operation
-            else:
-                logger.warning("_handle_export_current_frame called while action already disabled.")
-                return
 
         base_video_name = "frame"
         if self.video_filepath:
             base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0]
         
         default_filename = f"{base_video_name}_frame_{self.current_frame_index + 1}.png"
-        start_dir = os.path.dirname(self.video_filepath) if self.video_filepath else os.getcwd()
-        if not os.path.isdir(start_dir):
-            start_dir = os.getcwd()
+        start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
 
         save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Export Current Frame to PNG",
@@ -1090,423 +841,68 @@ class MainWindow(QtWidgets.QMainWindow):
             "PNG Image Files (*.png);;All Files (*)"
         )
 
-        status_bar = self.statusBar()
-        original_status_message = status_bar.currentMessage() if status_bar else ""
-
         if not save_path:
+            status_bar = self.statusBar()
             if status_bar: status_bar.showMessage("Frame export cancelled.", 3000)
-            if action_to_disable: action_to_disable.setEnabled(self.video_loaded and self.current_frame_index >=0) # Re-enable if cancelled
             return
 
-        try:
-            if status_bar: status_bar.showMessage(f"Exporting frame to {os.path.basename(save_path)}...", 0)
-            QtWidgets.QApplication.processEvents() # Ensure message is shown
+        if self._export_handler:
+            # The actual export logic is now in ExportHandler
+            self._export_handler.export_current_frame_to_png(save_path)
 
-            # Get current viewport size and transform (similar to video export)
-            view_transform = self.imageView.transform()
-            viewport_size = self.imageView.viewport().size()
-            export_width = viewport_size.width()
-            export_height = viewport_size.height()
+    _export_progress_dialog: Optional[QtWidgets.QProgressDialog] = None
 
-            if export_width <= 0 or export_height <= 0:
-                QtWidgets.QMessageBox.critical(self, "Export Frame Error", "Invalid viewport dimensions for export.")
-                if status_bar: status_bar.showMessage("Frame export failed.", 3000)
-                return
+    @QtCore.Slot()
+    def _on_export_started(self) -> None:
+        """Handles the exportStarted signal from ExportHandler."""
+        logger.info("MainWindow: Export process started.")
+        if self.exportViewAction: self.exportViewAction.setEnabled(False)
+        if self.exportFrameAction: self.exportFrameAction.setEnabled(False)
+        # Could disable other UI elements here if needed
 
-            # 1. Get the raw video frame
-            raw_cv_frame = self.video_handler.get_raw_frame_at_index(self.current_frame_index)
-            source_qimage_for_drawing: Optional[QtGui.QImage] = None
-            if raw_cv_frame is not None:
-                h_raw, w_raw = raw_cv_frame.shape[:2]
-                channels_raw = raw_cv_frame.shape[2] if len(raw_cv_frame.shape) == 3 else 1
-                try:
-                    if channels_raw == 3:
-                        contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
-                        rgb_frame_data = cv2.cvtColor(contig_raw_cv_frame, cv2.COLOR_BGR2RGB)
-                        temp_qimage_wrapper = QtGui.QImage(rgb_frame_data.data, w_raw, h_raw, rgb_frame_data.strides[0], QtGui.QImage.Format.Format_RGB888)
-                    elif channels_raw == 1:
-                        contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
-                        temp_qimage_wrapper = QtGui.QImage(contig_raw_cv_frame.data, w_raw, h_raw, contig_raw_cv_frame.strides[0], QtGui.QImage.Format.Format_Grayscale8)
-                    else: temp_qimage_wrapper = None
+        # Initialize and show progress dialog
+        self._export_progress_dialog = QtWidgets.QProgressDialog("Exporting...", "Cancel", 0, 100, self)
+        self._export_progress_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        self._export_progress_dialog.setWindowTitle("Export Progress")
+        self._export_progress_dialog.setValue(0)
+        self._export_progress_dialog.show()
+        status_bar = self.statusBar()
+        if status_bar: status_bar.showMessage("Exporting...", 0) # Persistent message
 
-                    if temp_qimage_wrapper is not None and not temp_qimage_wrapper.isNull():
-                        source_qimage_for_drawing = temp_qimage_wrapper.convertToFormat(QtGui.QImage.Format.Format_RGB888) if temp_qimage_wrapper.format() != QtGui.QImage.Format.Format_RGB888 else temp_qimage_wrapper.copy()
-                except Exception as e_conv:
-                    logger.error(f"Frame {self.current_frame_index}: Error during raw_cv_frame to QImage conversion for frame export: {e_conv}", exc_info=True)
-                if source_qimage_for_drawing is not None and source_qimage_for_drawing.isNull(): source_qimage_for_drawing = None
-            
-            if source_qimage_for_drawing is None:
-                logger.warning(f"Frame {self.current_frame_index}: source_qimage_for_drawing is None for frame export. Using black frame.")
-                source_qimage_for_drawing = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_RGB888)
-                source_qimage_for_drawing.fill(QtCore.Qt.GlobalColor.black)
+    @QtCore.Slot(str, int, int)
+    def _on_export_progress(self, message: str, current_value: int, max_value: int) -> None:
+        """Handles the exportProgress signal from ExportHandler."""
+        if self._export_progress_dialog:
+            if self._export_progress_dialog.maximum() != max_value:
+                self._export_progress_dialog.setMaximum(max_value)
+            self._export_progress_dialog.setValue(current_value)
+            self._export_progress_dialog.setLabelText(message)
+            if self._export_progress_dialog.wasCanceled():
+                # If we want ExportHandler to know about cancellation, it needs a method.
+                # For now, ExportHandler's loop should check wasCanceled on the dialog if passed,
+                # or MainWindow can emit a "cancelExport" signal.
+                # This example assumes ExportHandler manages its own cancellation check if it has the dialog.
+                logger.info("MainWindow: Export cancel detected by progress dialog.")
+                # self._export_handler.cancel_export() # Assuming ExportHandler has such a method
 
-            # 2. Create a QImage canvas for drawing
-            export_canvas_qimage = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_ARGB32_Premultiplied) # Use ARGB for QPainter on QImage for PNG
-            export_canvas_qimage.fill(QtCore.Qt.transparent) # Fill with transparent for PNG background if base image doesn't cover all
+        QtWidgets.QApplication.processEvents() # Keep UI responsive
 
-            painter = QtGui.QPainter(export_canvas_qimage)
-            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-            painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing, True)
-            painter.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform, True)
+    @QtCore.Slot(bool, str)
+    def _on_export_finished(self, success: bool, message: str) -> None:
+        """Handles the exportFinished signal from ExportHandler."""
+        logger.info(f"MainWindow: Export process finished. Success: {success}, Message: {message}")
+        if self._export_progress_dialog:
+            self._export_progress_dialog.close()
+            self._export_progress_dialog = None
 
-            # 3. Draw the source video frame onto the canvas
-            target_export_rect = QtCore.QRectF(export_canvas_qimage.rect())
-            visible_scene_area_rect_float = self.imageView.mapToScene(self.imageView.viewport().rect()).boundingRect()
-            painter.drawImage(target_export_rect, source_qimage_for_drawing, visible_scene_area_rect_float)
+        status_bar = self.statusBar()
+        if status_bar: status_bar.showMessage(message, 5000 if success else 8000)
 
-            # 4. Draw overlays (tracks, origin, scale line, scale bar)
-            painter.save()
-            if not visible_scene_area_rect_float.isEmpty():
-                visible_scene_area_rect_for_overlays_int = visible_scene_area_rect_float.toRect()
-                painter.setWindow(visible_scene_area_rect_for_overlays_int)
-                painter.setViewport(export_canvas_qimage.rect()) # Map scene to image pixels
+        if not success:
+            QtWidgets.QMessageBox.warning(self, "Export Problem", message)
 
-            # Draw tracks
-            marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-            track_elements = self.track_manager.get_visual_elements(self.current_frame_index)
-            pens = {
-                config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
-                config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
-                config.STYLE_MARKER_INACTIVE_CURRENT: self.pen_marker_inactive_current,
-                config.STYLE_MARKER_INACTIVE_OTHER: self.pen_marker_inactive_other,
-                config.STYLE_LINE_ACTIVE: self.pen_line_active,
-                config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
-            }
-            for el in track_elements:
-                pen_to_use = pens.get(el.get('style'))
-                if not pen_to_use: continue
-                current_pen = QtGui.QPen(pen_to_use); current_pen.setCosmetic(True); painter.setPen(current_pen)
-                if el.get('type') == 'marker' and el.get('pos'):
-                    x, y = el['pos']; r = marker_sz / 2.0
-                    painter.drawLine(QtCore.QPointF(x - r, y), QtCore.QPointF(x + r, y))
-                    painter.drawLine(QtCore.QPointF(x, y - r), QtCore.QPointF(x, y + r))
-                elif el.get('type') == 'line' and el.get('p1') and el.get('p2'):
-                    p1, p2 = el['p1'], el['p2']
-                    painter.drawLine(QtCore.QPointF(p1[0], p1[1]), QtCore.QPointF(p2[0], p2[1]))
-
-            # Draw origin marker
-            if self.coord_panel_controller and self.coord_panel_controller.get_show_origin_marker_status():
-                origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
-                ox, oy = self.coord_transformer.get_current_origin_tl()
-                r_orig = origin_sz / 2.0
-                origin_pen = QtGui.QPen(self.pen_origin_marker); origin_pen.setCosmetic(True); painter.setPen(origin_pen)
-                painter.setBrush(self.pen_origin_marker.color())
-                painter.drawEllipse(QtCore.QRectF(ox - r_orig, oy - r_orig, origin_sz, origin_sz))
-
-            # Draw defined scale line
-            if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
-               self.scale_manager and self.scale_manager.has_defined_scale_line():
-                line_data = self.scale_manager.get_defined_scale_line_data()
-                scale_m_per_px = self.scale_manager.get_scale_m_per_px()
-                if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
-                    line_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
-                    text_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
-                    font_sz_sl = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
-                    pen_w_sl = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
-                    p1x_l,p1y_l,p2x_l,p2y_l=line_data; dx_l=p2x_l-p1x_l; dy_l=p2y_l-p1y_l
-                    pix_len_l = math.sqrt(dx_l*dx_l + dy_l*dy_l)
-                    meter_len_l = pix_len_l * scale_m_per_px
-                    len_text_l = self._format_length_value_for_line(meter_len_l)
-                    self._draw_scale_line_on_painter(painter, line_data, len_text_l,
-                                                     line_clr_sl, text_clr_sl,
-                                                     font_sz_sl, pen_w_sl,
-                                                     visible_scene_area_rect_float)
-            painter.restore() # Restore from overlay drawing coordinate system
-
-            # Draw scale bar (relative to the export_canvas_qimage, not scene coords)
-            if self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked() and \
-               self.scale_manager and self.scale_manager.get_scale_m_per_px() is not None and \
-               hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget:
-                sb_widget: ScaleBarWidget = self.imageView._scale_bar_widget
-                sb_widget.update_dimensions(
-                    m_per_px_scene=self.scale_manager.get_scale_m_per_px(),
-                    view_scale_factor=view_transform.m11(), # Transform of the view at the moment of export
-                    parent_view_width=export_width
-                )
-                if sb_widget.isVisible() and sb_widget.get_current_bar_pixel_length() > 0:
-                    sb_bar_len_px=sb_widget.get_current_bar_pixel_length(); sb_text=sb_widget.get_current_bar_text_label()
-                    sb_bar_color=sb_widget.get_current_bar_color(); sb_text_color=sb_widget.get_current_text_color()
-                    sb_border_color=sb_widget.get_current_border_color(); sb_font=sb_widget.get_current_font()
-                    painter_sb_font_metrics = QtGui.QFontMetrics(sb_font)
-                    sb_rect_h_px=sb_widget.get_current_bar_rect_height(); sb_text_margin_bottom=sb_widget.get_text_margin_bottom()
-                    sb_border_thickness_px=sb_widget.get_border_thickness()
-                    sb_text_w_px = painter_sb_font_metrics.boundingRect(sb_text).width()
-                    sb_text_h_px = painter_sb_font_metrics.height()
-                    margin=10; overall_sb_width = int(max(sb_bar_len_px + 2*sb_border_thickness_px, sb_text_w_px))
-                    overall_sb_height = sb_text_h_px + sb_text_margin_bottom + sb_rect_h_px + 2*sb_border_thickness_px
-                    sb_x_offset=export_width-overall_sb_width-margin; sb_y_offset=export_height-overall_sb_height-margin
-                    
-                    painter.save() # Save before drawing scale bar at fixed position
-                    painter.translate(sb_x_offset, sb_y_offset)
-                    painter.setFont(sb_font); painter.setPen(sb_text_color)
-                    text_x_local=(overall_sb_width-sb_text_w_px)/2.0; text_baseline_y_local=float(painter_sb_font_metrics.ascent())
-                    painter.drawText(QtCore.QPointF(text_x_local, text_baseline_y_local), sb_text)
-                    bar_start_x_local=(overall_sb_width-sb_bar_len_px)/2.0
-                    bar_top_y_local=float(sb_text_h_px+sb_text_margin_bottom+sb_border_thickness_px)
-                    bar_rect_local=QtCore.QRectF(bar_start_x_local, bar_top_y_local, sb_bar_len_px, float(sb_rect_h_px))
-                    current_scale_bar_pen=QtGui.QPen(sb_border_color,sb_border_thickness_px); current_scale_bar_pen.setCosmetic(True)
-                    painter.setPen(current_scale_bar_pen); painter.setBrush(sb_bar_color); painter.drawRect(bar_rect_local)
-                    painter.restore() # Restore from scale bar drawing
-            
-            painter.end() # Finish painting on export_canvas_qimage
-
-            # 5. Save the QImage
-            if export_canvas_qimage.save(save_path, "PNG"):
-                logger.info(f"Successfully exported current frame to: {save_path}")
-                if status_bar: status_bar.showMessage(f"Frame saved to {os.path.basename(save_path)}", 5000)
-            else:
-                logger.error(f"Failed to save frame image to: {save_path}")
-                QtWidgets.QMessageBox.critical(self, "Export Frame Error", f"Could not save image to:\n{save_path}")
-                if status_bar: status_bar.showMessage("Frame export failed.", 3000)
-
-        except Exception as e:
-            logger.exception("An error occurred during frame export.")
-            QtWidgets.QMessageBox.critical(self, "Export Frame Error", f"An unexpected error occurred during frame export:\n{str(e)}")
-            if status_bar: status_bar.showMessage("Frame export failed (see log).", 5000)
-        finally:
-            if action_to_disable:
-                def re_enable_action():
-                    if self.video_loaded and self.current_frame_index >=0:
-                        action_to_disable.setEnabled(True)
-                    else:
-                        self._update_ui_state() # Ensure general UI state is correct
-                    if status_bar and status_bar.currentMessage().startswith("Exporting frame"):
-                         if original_status_message:
-                            status_bar.showMessage(original_status_message, 3000 if original_status_message != "Ready." else 0)
-                         elif self.video_loaded:
-                            status_bar.showMessage(f"Loaded '{os.path.basename(self.video_filepath)}'", 3000)
-                         else:
-                            status_bar.showMessage("Ready.", 0)
-                QtCore.QTimer.singleShot(0, re_enable_action)
-
-
-    def _draw_scale_line_on_painter(self, painter: QtGui.QPainter,
-                                   line_data: Tuple[float, float, float, float],
-                                   length_text: str,
-                                   line_color_qcolor: QtGui.QColor,
-                                   text_color_qcolor: QtGui.QColor,
-                                   font_size_pt: int,
-                                   pen_width_px: float,
-                                   # --- MODIFICATION: Add scene_rect_for_text_placement ---
-                                   scene_rect_for_text_placement: QtCore.QRectF) -> None:
-        """
-        Helper to draw a scale line with text onto a QPainter instance.
-        This replicates the logic from InteractiveImageView.draw_persistent_scale_line.
-        Assumes painter's transform is already set for scene coordinates.
-        """
-        p1x, p1y, p2x, p2y = line_data
-
-        # --- Line Pen ---
-        line_pen = QtGui.QPen(line_color_qcolor, pen_width_px)
-        line_pen.setCosmetic(True)
-        line_pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
-        painter.setPen(line_pen)
-        painter.drawLine(QtCore.QPointF(p1x, p1y), QtCore.QPointF(p2x, p2y))
-
-        # --- End Ticks (if enabled in settings) ---
-        show_ticks = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_SHOW_TICKS)
-        tick_length_factor = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR)
-        tick_total_length = pen_width_px * tick_length_factor
-        half_tick_length = tick_total_length / 2.0
-
-        dx = p2x - p1x # dx, dy needed for line_length_for_norm and text placement later
-        dy = p2y - p1y
-        line_length_for_norm = math.sqrt(dx*dx + dy*dy)
-
-        if show_ticks and tick_total_length > 0:
-            if line_length_for_norm > 1e-6:
-                norm_perp_dx = -dy / line_length_for_norm
-                norm_perp_dy = dx / line_length_for_norm
-
-                for px_pt, py_pt in [(p1x, p1y), (p2x, p2y)]:
-                    tick1_p1x = px_pt + norm_perp_dx * half_tick_length
-                    tick1_p1y = py_pt + norm_perp_dy * half_tick_length
-                    tick1_p2x = px_pt - norm_perp_dx * half_tick_length
-                    tick1_p2y = py_pt - norm_perp_dy * half_tick_length
-                    painter.drawLine(QtCore.QPointF(tick1_p1x, tick1_p1y), QtCore.QPointF(tick1_p2x, tick1_p2y))
-        elif not show_ticks: # Fallback dots if ticks are off
-            painter.setBrush(QtGui.QBrush(line_color_qcolor))
-            dot_pen = QtGui.QPen(line_color_qcolor, 0.5) # Thin border for dots
-            dot_pen.setCosmetic(True)
-            painter.setPen(dot_pen)
-            marker_radius = max(1.0, pen_width_px / 2.0)
-            for px_dot, py_dot in [(p1x, p1y), (p2x, p2y)]:
-                painter.drawEllipse(QtCore.QRectF(px_dot - marker_radius, py_dot - marker_radius,
-                                                 2 * marker_radius, 2 * marker_radius))
-
-
-        # --- Text ---
-        current_font = painter.font() # Get painter's current font
-        # Ensure point size is applied correctly if not already set on painter from outside
-        if current_font.pointSize() != font_size_pt:
-            current_font.setPointSize(font_size_pt)
-        painter.setFont(current_font)
-        painter.setPen(text_color_qcolor)
-
-        font_metrics = QtGui.QFontMetrics(current_font)
-        # Using tightBoundingRect can sometimes give more accurate width/height for rotated text.
-        # However, boundingRect is generally used for layout before rotation.
-        local_text_rect = font_metrics.boundingRect(length_text)
-        text_width = local_text_rect.width()
-        text_height = local_text_rect.height() # Height of the bounding rect
-
-        # --- Text Placement (Logic adapted from InteractiveImageView) ---
-        line_mid_x = (p1x + p2x) / 2.0
-        line_mid_y = (p1y + p2y) / 2.0
-        
-        # line_length_for_norm already calculated for ticks, reuse it
-        line_length = line_length_for_norm
-
-        if line_length < 1e-6: # Zero-length line
-            painter.drawText(QtCore.QPointF(p1x + 2, p1y - text_height - 2), length_text)
-            return
-
-        line_angle_rad = math.atan2(dy, dx) # dy, dx already calculated
-        line_angle_deg = math.degrees(line_angle_rad)
-
-        # Save painter state for text transformation
-        painter.save()
-
-        # Move painter origin to the text's intended center *before* rotation and shift
-        # The text will be drawn relative to (0,0) after transformations.
-        # The reference point for drawing the text is its top-left corner.
-        # We want to rotate around the text's own center.
-        painter.translate(line_mid_x, line_mid_y) # Move to line midpoint
-
-        # Rotate painter to align with the line
-        text_rotation_deg = line_angle_deg
-        if text_rotation_deg > 90: text_rotation_deg -= 180
-        elif text_rotation_deg < -90: text_rotation_deg += 180
-        painter.rotate(text_rotation_deg)
-
-        # Calculate perpendicular shift for text
-        desired_gap_pixels = 3 # Consistent with InteractiveImageView
-        # Shift magnitude relative to the text's height (for vertical clearance)
-        shift_magnitude = (text_height / 2.0) + desired_gap_pixels
-
-        # Determine which side of the line is "towards the center" of the scene_rect_for_text_placement
-        img_center = scene_rect_for_text_placement.center()
-
-        # To determine which side is "closer" to the image center, we effectively
-        # test points shifted perpendicularly from the line's midpoint.
-        # The painter is already rotated, so a Y-shift will be perpendicular.
-        # We need to un-rotate the image center relative to the line's midpoint
-        # to make this decision in the line's local coordinate system.
-
-        # Transform image center to be relative to line_mid_x, line_mid_y
-        relative_img_center_x = img_center.x() - line_mid_x
-        relative_img_center_y = img_center.y() - line_mid_y
-
-        # Rotate this relative point by the *negative* of the line's angle
-        # to see where it lies in the line's unrotated coordinate frame.
-        cos_neg_angle = math.cos(-line_angle_rad)
-        sin_neg_angle = math.sin(-line_angle_rad)
-        
-        unrotated_img_center_y = relative_img_center_x * sin_neg_angle + relative_img_center_y * cos_neg_angle
-        # unrotated_img_center_x is not needed for this decision.
-
-        # If unrotated_img_center_y is negative, it means the image center is on the "up" side
-        # of the horizontal line in its local frame (which corresponds to one perpendicular direction).
-        # We want to shift the text away from the image center.
-        # So, if image center is "up" (negative local Y), shift text "down" (positive Y shift).
-        # If image center is "down" (positive local Y), shift text "up" (negative Y shift).
-        final_shift_y = shift_magnitude
-        if unrotated_img_center_y < 0: # Image center is "above" the line (in its local frame)
-            final_shift_y = shift_magnitude # Shift text "down"
-        else: # Image center is "below" or on the line
-            final_shift_y = -shift_magnitude # Shift text "up"
-            
-
-        # Reset painter for this new logic block, as the previous translate/rotate was for a different approach
-        painter.restore() # Restores to state before the previous painter.save()
-        painter.save()    # Save again for this block
-
-        painter.setPen(text_color_qcolor) # Ensure pen is set after restore
-
-        # Calculate the final top-left position of the text including rotation and perpendicular shift
-        # This is the complex part that needs to match QGraphicsSimpleTextItem's behavior.
-        
-        # Start with text centered at line_mid_x, line_mid_y (its center, not top-left)
-        # Then apply shifts and rotation
-        
-        transform = QtGui.QTransform()
-        transform.translate(line_mid_x, line_mid_y) # Move to line center
-        transform.rotate(text_rotation_deg)         # Rotate
-        
-        # Perpendicular shift in the rotated system.
-        # If final_shift_y determined above is correct direction:
-        transform.translate(0, final_shift_y) # Shift perpendicularly
-        
-        # Now, adjust for the text's own bounding box to draw from top-left
-        # The (0,0) of the painter is now where the center of the text baseline *should* be,
-        # but rotated and shifted. We draw the text such that its bounding box is centered around this.
-        # So, draw at (-text_width/2, -text_height/2), but need to consider baseline.
-        # QPainter.drawText(QPointF, str) draws with QPointF as the top-left of the *text*.
-        
-        painter.setTransform(transform) # Apply the combined transform
-        
-        # Replicating the setPos then moveBy of QGraphicsItem:
-        painter.restore() # Restore to before any text specific transforms
-        painter.save()
-
-        # 1. Initial position: text top-left as if it's horizontal and centered on line mid-point
-        initial_text_top_left_x = line_mid_x - (text_width / 2)
-        initial_text_top_left_y = line_mid_y - (text_height / 2)
-
-        # 2. Perpendicular shift calculation (Global coordinates)
-        # final_shift_y was calculated in the line's local rotated frame. Need global shift vector.
-        # The perpendicular direction in global coords depends on line_angle_rad
-        # perp_dx_global = -dy / line_length  (or math.sin(line_angle_rad + math.pi/2))
-        # perp_dy_global =  dx / line_length  (or -math.cos(line_angle_rad + math.pi/2))
-        
-        # The `final_shift_y` determines direction. Let's use the sign.
-        actual_shift_magnitude = shift_magnitude
-        if final_shift_y < 0: # Corresponds to one perp direction
-            shift_offset_x = actual_shift_magnitude * math.sin(math.radians(line_angle_deg)) # sin for y-component of perp vector if line is horizontal
-            shift_offset_y = -actual_shift_magnitude * math.cos(math.radians(line_angle_deg))# cos for x-component
-        else: # Corresponds to the other perp direction
-            shift_offset_x = -actual_shift_magnitude * math.sin(math.radians(line_angle_deg))
-            shift_offset_y = actual_shift_magnitude * math.cos(math.radians(line_angle_deg))
-            
-        # This is still not quite right. Let's use the InteractiveImageView's perp vector logic:
-        perp_dx_global_norm = -dy / line_length # Normalized perpendicular vector component
-        perp_dy_global_norm = dx / line_length  # Normalized perpendicular vector component
-
-        # Choose direction based on `unrotated_img_center_y`
-        # If unrotated_img_center_y < 0, image center is on the side pointed by (perp_dx_global_norm, perp_dy_global_norm)
-        # So we want to shift the text in the OPPOSITE direction of that.
-        # If unrotated_img_center_y >=0, image center is on the side pointed by (-perp_dx_global_norm, -perp_dy_global_norm)
-        # So we want to shift the text in the direction of (perp_dx_global_norm, perp_dy_global_norm)
-        
-        chosen_shift_dx_component = 0.0
-        chosen_shift_dy_component = 0.0
-
-        if unrotated_img_center_y < 0: # img center is "above" (using the original logic's terms)
-            chosen_shift_dx_component = -perp_dx_global_norm 
-            chosen_shift_dy_component = -perp_dy_global_norm
-        else:
-            chosen_shift_dx_component = perp_dx_global_norm
-            chosen_shift_dy_component = perp_dy_global_norm
-            
-        final_total_shift_x = chosen_shift_dx_component * shift_magnitude
-        final_total_shift_y = chosen_shift_dy_component * shift_magnitude
-        
-        # Final position for text's top-left, before rotation applied around its center
-        text_final_pos_x = initial_text_top_left_x + final_total_shift_x
-        text_final_pos_y = initial_text_top_left_y + final_total_shift_y
-
-        # Apply translation to this final top-left, then rotate around text's center.
-        painter.translate(text_final_pos_x + text_width / 2, text_final_pos_y + text_height / 2)
-        painter.rotate(text_rotation_deg)
-        
-        # Draw text with its top-left at (-text_width/2, -text_height/2) relative to current translated/rotated origin
-        # For QPainter.drawText, the y-coordinate is the baseline if using QPointF.
-        # Need to adjust for baseline from top-left.
-        # font_metrics.ascent() is height from baseline to top.
-        # So, draw at y = -text_height/2 + font_metrics.ascent()
-        painter.drawText(QtCore.QPointF(-text_width / 2, -text_height / 2 + font_metrics.ascent()), length_text)
-        
-        painter.restore()
+        # Re-enable UI elements
+        self._update_ui_state() # This will re-enable actions based on video_loaded state
 
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
