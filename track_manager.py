@@ -32,11 +32,12 @@ class TrackVisibilityMode(Enum):
     INCREMENTAL = auto()
     ALWAYS_VISIBLE = auto()
 
-# --- NEW: Enum for Undo Action Types ---
+# --- MODIFIED: Enum for Undo Action Types ---
 class UndoActionType(Enum):
     """Defines the types of actions that can be undone."""
     POINT_ADDED = auto()
     POINT_MODIFIED = auto()
+    POINT_DELETED = auto() # New action type
 
 class TrackManager(QtCore.QObject):
     """
@@ -49,16 +50,14 @@ class TrackManager(QtCore.QObject):
     trackListChanged = QtCore.Signal()
     activeTrackDataChanged = QtCore.Signal()
     visualsNeedUpdate = QtCore.Signal()
-    # --- NEW: Signal for undo state change ---
-    undoStateChanged = QtCore.Signal(bool) # True if undo is available, False otherwise
+    undoStateChanged = QtCore.Signal(bool)
 
     tracks: AllTracksData
     track_visibility_modes: List[TrackVisibilityMode]
     active_track_index: int
 
-    # --- NEW: Variables for Undo Functionality ---
     _last_action_type: Optional[UndoActionType] = None
-    _last_action_details: Dict[str, Any] = {} # Stores context for undo
+    _last_action_details: Dict[str, Any] = {}
 
     def __init__(self, parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
@@ -66,12 +65,11 @@ class TrackManager(QtCore.QObject):
         self.tracks = []
         self.track_visibility_modes = []
         self.active_track_index = -1
-        self._clear_last_action() # Initialize undo state
+        self._clear_last_action()
         logger.info("TrackManager initialized.")
 
     def _clear_last_action(self) -> None:
         """Clears the stored last action, making undo unavailable."""
-        # logger.debug("Clearing last undo action.")
         self._last_action_type = None
         self._last_action_details = {}
         self.undoStateChanged.emit(False)
@@ -81,9 +79,8 @@ class TrackManager(QtCore.QObject):
         self.tracks = []
         self.track_visibility_modes = []
         self.active_track_index = -1
-        self._clear_last_action() # Clear undo state on reset
+        self._clear_last_action()
         logger.info("TrackManager reset complete.")
-        logger.debug("Emitting trackListChanged and activeTrackDataChanged after reset.")
         self.trackListChanged.emit()
         self.activeTrackDataChanged.emit()
 
@@ -96,8 +93,7 @@ class TrackManager(QtCore.QObject):
         self.set_active_track(new_track_index)
         new_track_id: int = new_track_index + 1
         logger.info(f"Created new track {new_track_id} (index {new_track_index}).")
-        self._clear_last_action() # Creating a track clears any previous point undo action
-        logger.debug("Emitting trackListChanged after creating new track.")
+        self._clear_last_action()
         self.trackListChanged.emit()
         return new_track_id
 
@@ -116,24 +112,18 @@ class TrackManager(QtCore.QObject):
 
         active_track_changed: bool = False
         if self.active_track_index == track_index_to_delete:
-            logger.info(f"Deleted track {track_id_deleted} was active. Resetting active index to -1.")
             self.active_track_index = -1
             active_track_changed = True
         elif self.active_track_index > track_index_to_delete:
-            old_active: int = self.active_track_index
             self.active_track_index -= 1
-            logger.info(f"Active track index shifted down from {old_active} to {self.active_track_index} due to deletion.")
             active_track_changed = True
         
-        self._clear_last_action() # Deleting a track clears any previous point undo action
+        self._clear_last_action()
 
-        logger.debug("Emitting trackListChanged after deletion.")
         self.trackListChanged.emit()
         if active_track_changed:
-            logger.debug("Emitting activeTrackDataChanged after deletion due to active index change.")
             self.activeTrackDataChanged.emit()
         if was_visible:
-            logger.debug("Emitting visualsNeedUpdate after deleting a potentially visible track.")
             self.visualsNeedUpdate.emit()
 
         logger.info(f"Track {track_id_deleted} deleted successfully.")
@@ -146,37 +136,25 @@ class TrackManager(QtCore.QObject):
         elif track_index == -1:
             new_active_index = -1
         else:
-            logger.warning(f"Invalid track index {track_index} passed to set_active_track. Total tracks: {len(self.tracks)}. Ignoring.")
             return
 
         if self.active_track_index != new_active_index:
             old_active_index: int = self.active_track_index
             old_mode: TrackVisibilityMode = self.get_track_visibility_mode(old_active_index)
-
             self.active_track_index = new_active_index
             new_mode: TrackVisibilityMode = self.get_track_visibility_mode(new_active_index)
-
-            logger.info(f"Set active track index to {self.active_track_index} (ID: {self.get_active_track_id()})")
-            self._clear_last_action() # Changing active track clears undo for previous track's points
-            logger.debug("Emitting activeTrackDataChanged due to active track change.")
+            self._clear_last_action()
             self.activeTrackDataChanged.emit()
-
             if old_mode != TrackVisibilityMode.HIDDEN or new_mode != TrackVisibilityMode.HIDDEN:
-                 logger.debug(f"Emitting visualsNeedUpdate because old ({old_mode.name}) or new ({new_mode.name}) active track might be visible.")
                  self.visualsNeedUpdate.emit()
 
     def set_track_visibility_mode(self, track_index: int, mode: TrackVisibilityMode) -> None:
         if not (0 <= track_index < len(self.track_visibility_modes)):
-            logger.warning(f"Invalid track index {track_index} for setting visibility. Ignoring.")
             return
-
         if self.track_visibility_modes[track_index] != mode:
-            old_mode: TrackVisibilityMode = self.track_visibility_modes[track_index]
+            old_mode = self.track_visibility_modes[track_index]
             self.track_visibility_modes[track_index] = mode
-            track_id: int = track_index + 1
-            logger.info(f"Set visibility for track {track_id} (index {track_index}) to {mode.name}")
             if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
-                logger.debug("Emitting visualsNeedUpdate due to visibility mode change for a potentially visible track.")
                 self.visualsNeedUpdate.emit()
             self.trackListChanged.emit()
 
@@ -186,118 +164,97 @@ class TrackManager(QtCore.QObject):
         return TrackVisibilityMode.HIDDEN
 
     def set_all_tracks_visibility(self, mode: TrackVisibilityMode) -> None:
-        if not self.tracks:
-             logger.debug("set_all_tracks_visibility called, but no tracks exist.")
-             return
-        logger.info(f"Setting visibility for ALL {len(self.tracks)} tracks to {mode.name}...")
-        changed: bool = False
-        needs_visual_update: bool = False
+        if not self.tracks: return
+        changed, needs_visual_update = False, False
         for i in range(len(self.track_visibility_modes)):
-            old_mode: TrackVisibilityMode = self.track_visibility_modes[i]
-            if old_mode != mode:
+            if self.track_visibility_modes[i] != mode:
+                if self.track_visibility_modes[i] != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
+                    needs_visual_update = True
                 self.track_visibility_modes[i] = mode
                 changed = True
-                if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
-                    needs_visual_update = True
-        if changed:
-            logger.debug("Visibility changed for at least one track. Emitting trackListChanged.")
-            self.trackListChanged.emit()
-        if needs_visual_update:
-            logger.debug("Visual update needed due to visibility change. Emitting visualsNeedUpdate.")
-            self.visualsNeedUpdate.emit()
-        if not changed:
-             logger.debug("All tracks were already in the target visibility mode. No changes made.")
+        if changed: self.trackListChanged.emit()
+        if needs_visual_update: self.visualsNeedUpdate.emit()
 
     def get_active_track_id(self) -> int:
          return self.active_track_index + 1 if self.active_track_index != -1 else -1
 
     def get_point_for_active_track(self, frame_index: int) -> Optional[PointData]:
-        """
-        Retrieves a specific point for the currently active track at the given frame index.
-        Returns None if no active track, or if the point doesn't exist.
-        """
         if self.active_track_index < 0 or self.active_track_index >= len(self.tracks):
             return None
-        active_track_list: Track = self.tracks[self.active_track_index]
-        for point_data in active_track_list:
+        for point_data in self.tracks[self.active_track_index]:
             if point_data[0] == frame_index:
                 return point_data
         return None
 
     def add_point(self, frame_index: int, time_ms: float, x: float, y: float) -> bool:
         if self.active_track_index < 0 or self.active_track_index >= len(self.tracks):
-            logger.error("Add Point Error: No active track selected.")
             self._clear_last_action()
             return False
 
-        active_track_list: Track = self.tracks[self.active_track_index]
-        active_track_id: int = self.get_active_track_id()
-        x_coord: float = round(x, 3)
-        y_coord: float = round(y, 3)
-
-        existing_point_data: Optional[PointData] = None
-        existing_point_index_in_list: int = -1 # Index within the active_track_list
+        active_track_list = self.tracks[self.active_track_index]
+        x_coord, y_coord = round(x, 3), round(y, 3)
+        existing_point_data, existing_point_index_in_list = None, -1
         for i, p_data in enumerate(active_track_list):
             if p_data[0] == frame_index:
-                existing_point_data = p_data
-                existing_point_index_in_list = i
+                existing_point_data, existing_point_index_in_list = p_data, i
                 break
         
-        # --- Store information for UNDO ---
         self._last_action_details = {
-            "track_index": self.active_track_index,
-            "frame_index": frame_index,
-            "time_ms": time_ms # Store time_ms in case a new point is added
+            "track_index": self.active_track_index, "frame_index": frame_index, "time_ms": time_ms
         }
         if existing_point_data:
             self._last_action_type = UndoActionType.POINT_MODIFIED
-            self._last_action_details["previous_point_data"] = existing_point_data # Store (frame, time, x, y)
-            logger.debug(f"Preparing UNDO for POINT_MODIFIED: Previous data {existing_point_data}")
+            self._last_action_details["previous_point_data"] = existing_point_data
         else:
             self._last_action_type = UndoActionType.POINT_ADDED
-            logger.debug(f"Preparing UNDO for POINT_ADDED at frame {frame_index}")
-        # --- End UNDO storage ---
-
-        new_point_data_tuple: PointData = (frame_index, time_ms, x_coord, y_coord)
-
+        
+        new_point_data_tuple = (frame_index, time_ms, x_coord, y_coord)
         if existing_point_index_in_list != -1:
             active_track_list[existing_point_index_in_list] = new_point_data_tuple
-            logger.info(f"Updated point for track {active_track_id} at frame {frame_index}: ({x_coord}, {y_coord})")
         else:
             active_track_list.append(new_point_data_tuple)
             active_track_list.sort(key=lambda p: p[0])
-            logger.info(f"Added point for track {active_track_id} at frame {frame_index}: ({x_coord}, {y_coord})")
 
-        self.undoStateChanged.emit(True) # Undo is now available
+        self.undoStateChanged.emit(True)
         self.activeTrackDataChanged.emit()
         self.trackListChanged.emit()
         if self.get_track_visibility_mode(self.active_track_index) != TrackVisibilityMode.HIDDEN:
             self.visualsNeedUpdate.emit()
         return True
 
+    # --- MODIFIED: delete_point to store undo information ---
     def delete_point(self, track_index: int, frame_index: int) -> bool:
         if not (0 <= track_index < len(self.tracks)):
             logger.error(f"Delete Point Error: Invalid track index {track_index}.")
+            self._clear_last_action() # Clear undo if attempted on invalid track
             return False
 
         target_track_list: Track = self.tracks[track_index]
         point_to_remove_idx: int = -1
+        deleted_point_data: Optional[PointData] = None
+
         for i, point_data in enumerate(target_track_list):
             if point_data[0] == frame_index:
                 point_to_remove_idx = i
+                deleted_point_data = point_data # Store the data of the point being deleted
                 break
 
-        if point_to_remove_idx != -1:
-            # --- MODIFICATION: Store info for potential UNDO of delete (currently out of scope) ---
-            # For now, deleting a point clears the general undo stack for add/modify.
-            # If undoing delete was required, this would be more complex.
-            self._clear_last_action() # Deleting a point invalidates the last add/modify undo.
-            # --- END MODIFICATION ---
+        if point_to_remove_idx != -1 and deleted_point_data is not None:
+            # --- Store information for UNDO ---
+            self._last_action_type = UndoActionType.POINT_DELETED
+            self._last_action_details = {
+                "track_index": track_index,
+                "frame_index": frame_index, # Though also in deleted_point_data, store for consistency
+                "deleted_point_data": deleted_point_data # Store (frame, time, x, y)
+            }
+            logger.debug(f"Preparing UNDO for POINT_DELETED: Deleted data {deleted_point_data}")
+            # --- End UNDO storage ---
 
             del target_track_list[point_to_remove_idx]
             track_id: int = track_index + 1
             logger.info(f"Deleted point from track {track_id} (index {track_index}) at frame {frame_index}")
 
+            self.undoStateChanged.emit(True) # Undo is now available
             if track_index == self.active_track_index:
                 self.activeTrackDataChanged.emit()
             self.trackListChanged.emit()
@@ -306,18 +263,14 @@ class TrackManager(QtCore.QObject):
             return True
         else:
             logger.warning(f"Attempted to delete point for track {track_index+1} at frame {frame_index}, but no point found.")
+            self._clear_last_action() # No action was performed, clear any previous undo state
             return False
 
-    # --- NEW: Undo Functionality ---
     def can_undo_last_point_action(self) -> bool:
-        """Checks if there is a point action that can be undone."""
         return self._last_action_type is not None
 
+    # --- MODIFIED: undo_last_point_action to handle POINT_DELETED ---
     def undo_last_point_action(self) -> bool:
-        """
-        Reverts the last point addition or modification if possible.
-        Returns True if an action was undone, False otherwise.
-        """
         if not self.can_undo_last_point_action():
             logger.info("Undo requested, but no action available to undo.")
             return False
@@ -325,241 +278,206 @@ class TrackManager(QtCore.QObject):
         action_type = self._last_action_type
         details = self._last_action_details
         track_idx_to_undo = details.get("track_index")
-        frame_idx_to_undo = details.get("frame_index")
+        frame_idx_to_undo = details.get("frame_index") # Used for POINT_ADDED and POINT_MODIFIED
 
-        if track_idx_to_undo is None or frame_idx_to_undo is None or \
-           not (0 <= track_idx_to_undo < len(self.tracks)):
-            logger.error(f"Undo failed: Invalid details stored. TrackIdx: {track_idx_to_undo}, FrameIdx: {frame_idx_to_undo}")
-            self._clear_last_action()
-            return False
-        
+        if track_idx_to_undo is None or not (0 <= track_idx_to_undo < len(self.tracks)):
+            # For POINT_DELETED, frame_idx_to_undo might not be directly used if deleted_point_data has it
+            if action_type != UndoActionType.POINT_DELETED and frame_idx_to_undo is None:
+                logger.error(f"Undo failed: Invalid details (track/frame index missing). Action: {action_type}")
+                self._clear_last_action()
+                return False
+            elif action_type == UndoActionType.POINT_DELETED and details.get("deleted_point_data") is None:
+                logger.error(f"Undo POINT_DELETED failed: Missing deleted_point_data.")
+                self._clear_last_action()
+                return False
+
+
         undone_successfully = False
         if action_type == UndoActionType.POINT_ADDED:
             logger.info(f"Undoing POINT_ADDED: Deleting point from track {track_idx_to_undo+1} at frame {frame_idx_to_undo}.")
-            # This reuses the existing delete_point logic, which already handles signals.
-            # We pass the specific track_index and frame_index from the stored details.
-            # Temporarily clear the last action so delete_point itself doesn't clear it again
-            # if it thinks it's a user action.
-            current_last_action = self._last_action_type, self._last_action_details
-            self._last_action_type = None # Avoid delete_point clearing its own undo state
-            
-            # Call delete_point directly on the specific track and frame
-            undone_successfully = self.delete_point_internal(track_idx_to_undo, frame_idx_to_undo)
-            
-            if not undone_successfully: # Restore if delete failed internally (shouldn't happen if logic is right)
-                self._last_action_type, self._last_action_details = current_last_action
-            else: # Actual clear after successful undo
-                self._clear_last_action()
-
-
+            undone_successfully = self._delete_point_for_undo(track_idx_to_undo, frame_idx_to_undo)
+        
         elif action_type == UndoActionType.POINT_MODIFIED:
             previous_data = details.get("previous_point_data")
-            if previous_data:
-                # Previous data is (frame, time, x, y)
-                # Restore the point directly. Find it first.
-                target_track_list: Track = self.tracks[track_idx_to_undo]
-                point_list_idx_to_restore = -1
-                for i, p_data in enumerate(target_track_list):
-                    if p_data[0] == frame_idx_to_undo:
-                        point_list_idx_to_restore = i
-                        break
-                
-                if point_list_idx_to_restore != -1:
-                    target_track_list[point_list_idx_to_restore] = previous_data
-                    # No need to re-sort as frame index doesn't change
-                    logger.info(f"Undoing POINT_MODIFIED: Restored point for track {track_idx_to_undo+1} at frame {frame_idx_to_undo} to {previous_data[2:]}.")
-                    undone_successfully = True
-                    self._clear_last_action() # Clear after successful undo
-                    
-                    # Emit signals for UI update
-                    if track_idx_to_undo == self.active_track_index:
-                        self.activeTrackDataChanged.emit()
-                    self.trackListChanged.emit() # Point count, start/end frame might not change, but data does
-                    if self.get_track_visibility_mode(track_idx_to_undo) != TrackVisibilityMode.HIDDEN:
-                        self.visualsNeedUpdate.emit()
-                else:
-                    logger.error(f"Undo POINT_MODIFIED failed: Point not found in track {track_idx_to_undo+1} at frame {frame_idx_to_undo} to restore.")
+            if previous_data and frame_idx_to_undo is not None:
+                undone_successfully = self._restore_point_for_undo(track_idx_to_undo, frame_idx_to_undo, previous_data)
             else:
-                logger.error("Undo POINT_MODIFIED failed: No previous_point_data stored.")
-        
-        if not undone_successfully and self.can_undo_last_point_action(): # If failed but didn't clear
-             self._clear_last_action() # Ensure it's cleared if undo process had an issue
+                logger.error("Undo POINT_MODIFIED failed: Missing previous_point_data or frame_idx_to_undo.")
 
+        elif action_type == UndoActionType.POINT_DELETED:
+            deleted_data = details.get("deleted_point_data")
+            if deleted_data:
+                # deleted_data is (frame, time, x, y)
+                # We need to re-add this point to the track
+                logger.info(f"Undoing POINT_DELETED: Restoring point {deleted_data} to track {track_idx_to_undo+1}.")
+                undone_successfully = self._add_point_for_undo(track_idx_to_undo, deleted_data)
+            else:
+                logger.error("Undo POINT_DELETED failed: No deleted_point_data stored.")
+        
+        if undone_successfully:
+            self._clear_last_action() # Clear after successful undo
+            # Signals are emitted by the helper methods (_delete_point_for_undo, _restore_point_for_undo, _add_point_for_undo)
+        else: # If failed but didn't clear (e.g., error in details before calling helper)
+            if self.can_undo_last_point_action(): # Check if it wasn't already cleared by a failing helper
+                 self._clear_last_action()
+        
         return undone_successfully
 
-    def delete_point_internal(self, track_index: int, frame_index: int) -> bool:
-        """
-        Internal version of delete_point that doesn't clear the undo stack.
-        Used by the undo_last_point_action method.
-        """
-        if not (0 <= track_index < len(self.tracks)):
-            return False
-        target_track_list: Track = self.tracks[track_index]
-        point_to_remove_idx: int = -1
-        for i, point_data in enumerate(target_track_list):
-            if point_data[0] == frame_index:
-                point_to_remove_idx = i
-                break
-        if point_to_remove_idx != -1:
-            del target_track_list[point_to_remove_idx]
-            # Emit signals as usual
-            if track_index == self.active_track_index:
-                self.activeTrackDataChanged.emit()
+    def _delete_point_for_undo(self, track_index: int, frame_index: int) -> bool:
+        """Internal: Deletes a point, used by undo logic for POINT_ADDED."""
+        if not (0 <= track_index < len(self.tracks)): return False
+        target_track_list = self.tracks[track_index]
+        point_idx = -1
+        for i, p_data in enumerate(target_track_list):
+            if p_data[0] == frame_index: point_idx = i; break
+        if point_idx != -1:
+            del target_track_list[point_idx]
+            if track_index == self.active_track_index: self.activeTrackDataChanged.emit()
             self.trackListChanged.emit()
-            if self.get_track_visibility_mode(track_index) != TrackVisibilityMode.HIDDEN:
-                self.visualsNeedUpdate.emit()
+            if self.get_track_visibility_mode(track_index) != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         return False
-    # --- End NEW Undo Functionality ---
 
+    def _restore_point_for_undo(self, track_index: int, frame_index: int, point_to_restore: PointData) -> bool:
+        """Internal: Restores a modified point, used by undo for POINT_MODIFIED."""
+        if not (0 <= track_index < len(self.tracks)): return False
+        target_track_list = self.tracks[track_index]
+        point_idx = -1
+        for i, p_data in enumerate(target_track_list):
+            if p_data[0] == frame_index: point_idx = i; break
+        if point_idx != -1:
+            target_track_list[point_idx] = point_to_restore
+            if track_index == self.active_track_index: self.activeTrackDataChanged.emit()
+            self.trackListChanged.emit()
+            if self.get_track_visibility_mode(track_index) != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+            return True
+        logger.error(f"_restore_point_for_undo: Point not found at frame {frame_index} in track {track_index+1}")
+        return False
+
+    # --- NEW: Internal helper to re-add a point for undoing a delete ---
+    def _add_point_for_undo(self, track_index: int, point_data_to_add: PointData) -> bool:
+        """
+        Internal helper to add a point back to a track, used by undo logic for POINT_DELETED.
+        Ensures the track remains sorted.
+        """
+        if not (0 <= track_index < len(self.tracks)):
+            logger.error(f"_add_point_for_undo: Invalid track_index {track_index}")
+            return False
+        
+        target_track_list: Track = self.tracks[track_index]
+        
+        # Check if point already exists (should not happen if logic is correct)
+        for p_data in target_track_list:
+            if p_data[0] == point_data_to_add[0]: # Compare frame index
+                logger.warning(f"_add_point_for_undo: Point for frame {point_data_to_add[0]} already exists in track {track_index+1}. Overwriting for undo.")
+                target_track_list[target_track_list.index(p_data)] = point_data_to_add
+                target_track_list.sort(key=lambda p: p[0]) # Re-sort just in case
+                break
+        else: # Point does not exist, append and sort
+            target_track_list.append(point_data_to_add)
+            target_track_list.sort(key=lambda p: p[0]) # Keep track sorted by frame
+
+        logger.info(f"Re-added point {point_data_to_add} to track {track_index+1} via undo.")
+
+        # Emit signals for UI update
+        if track_index == self.active_track_index:
+            self.activeTrackDataChanged.emit()
+        self.trackListChanged.emit()
+        if self.get_track_visibility_mode(track_index) != TrackVisibilityMode.HIDDEN:
+            self.visualsNeedUpdate.emit()
+        return True
 
     def find_closest_visible_track(self, click_x: float, click_y: float, current_frame_index: int) -> int:
-        min_dist_sq: float = config.CLICK_TOLERANCE_SQ
-        closest_track_index: int = -1
-        # logger.debug(f"Finding closest visible track to ({click_x:.1f}, {click_y:.1f}) on frame {current_frame_index}, tolerance_sq={min_dist_sq}")
-        for track_index, track_data in enumerate(self.tracks):
-            visibility_mode: TrackVisibilityMode = self.get_track_visibility_mode(track_index)
-            if visibility_mode == TrackVisibilityMode.HIDDEN: continue
-            for point_data in track_data:
-                frame_idx, _, x_coord, y_coord = point_data
-                point_marker_is_visible_now: bool = False
-                if visibility_mode == TrackVisibilityMode.INCREMENTAL:
-                    if frame_idx <= current_frame_index: point_marker_is_visible_now = True
-                elif visibility_mode == TrackVisibilityMode.ALWAYS_VISIBLE:
-                    point_marker_is_visible_now = True
-                if point_marker_is_visible_now:
-                    dx: float = click_x - x_coord; dy: float = click_y - y_coord
-                    dist_sq: float = dx*dx + dy*dy
-                    if dist_sq < min_dist_sq:
-                        min_dist_sq = dist_sq; closest_track_index = track_index
-        # if closest_track_index != -1: logger.debug(f"Closest visible track found: Index {closest_track_index} (ID: {closest_track_index+1}) with min_dist_sq={min_dist_sq:.2f}")
-        # else: logger.debug("No visible track marker found within tolerance on the current frame.")
+        min_dist_sq, closest_track_index = config.CLICK_TOLERANCE_SQ, -1
+        for i, track_data in enumerate(self.tracks):
+            vis_mode = self.get_track_visibility_mode(i)
+            if vis_mode == TrackVisibilityMode.HIDDEN: continue
+            for p_data in track_data:
+                f_idx, _, px, py = p_data
+                is_vis = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or \
+                         (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
+                if is_vis:
+                    dist_sq = (click_x - px)**2 + (click_y - py)**2
+                    if dist_sq < min_dist_sq: min_dist_sq, closest_track_index = dist_sq, i
         return closest_track_index
 
     def get_visual_elements(self, current_frame_index: int) -> List[VisualElement]:
         visual_elements: List[VisualElement] = []
         if current_frame_index < 0: return visual_elements
-        # logger.debug(f"Getting visual elements for frame {current_frame_index}")
-        for track_index, track_data in enumerate(self.tracks):
-            is_active: bool = (track_index == self.active_track_index)
-            visibility_mode: TrackVisibilityMode = self.get_track_visibility_mode(track_index)
-            track_id: int = track_index + 1
-            if visibility_mode == TrackVisibilityMode.HIDDEN: continue
-            line_style: str = config.STYLE_LINE_ACTIVE if is_active else config.STYLE_LINE_INACTIVE
-            previous_visible_point_coords: Optional[Tuple[float, float]] = None
-            for point_data in track_data:
-                frame_idx, _, x_coord, y_coord = point_data
-                point_is_visible_in_mode: bool = False
-                if visibility_mode == TrackVisibilityMode.INCREMENTAL: point_is_visible_in_mode = (frame_idx <= current_frame_index)
-                elif visibility_mode == TrackVisibilityMode.ALWAYS_VISIBLE: point_is_visible_in_mode = True
-                if point_is_visible_in_mode:
-                    is_current_frame_marker = (frame_idx == current_frame_index)
-                    if is_active: marker_style = config.STYLE_MARKER_ACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_ACTIVE_OTHER
-                    else: marker_style = config.STYLE_MARKER_INACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_INACTIVE_OTHER
-                    visual_elements.append({'type': 'marker', 'pos': (x_coord, y_coord), 'style': marker_style, 'track_id': track_id, 'frame_idx': frame_idx})
-                    if previous_visible_point_coords:
-                        prev_x, prev_y = previous_visible_point_coords
-                        visual_elements.append({'type': 'line', 'p1': (prev_x, prev_y), 'p2': (x_coord, y_coord), 'style': line_style, 'track_id': track_id})
-                    previous_visible_point_coords = (x_coord, y_coord)
-        # logger.debug(f"Generated {len(visual_elements)} visual elements.")
+        for i, track_data in enumerate(self.tracks):
+            is_act = (i == self.active_track_index)
+            vis_mode = self.get_track_visibility_mode(i)
+            if vis_mode == TrackVisibilityMode.HIDDEN: continue
+            line_stl = config.STYLE_LINE_ACTIVE if is_act else config.STYLE_LINE_INACTIVE
+            prev_vis_pt = None
+            for p_data in track_data:
+                f_idx, _, px, py = p_data
+                is_vis_now = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or \
+                             (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
+                if is_vis_now:
+                    is_curr_f = (f_idx == current_frame_index)
+                    mark_stl = (config.STYLE_MARKER_ACTIVE_CURRENT if is_curr_f else config.STYLE_MARKER_ACTIVE_OTHER) if is_act \
+                               else (config.STYLE_MARKER_INACTIVE_CURRENT if is_curr_f else config.STYLE_MARKER_INACTIVE_OTHER)
+                    visual_elements.append({'type': 'marker', 'pos': (px, py), 'style': mark_stl, 'track_id': i + 1, 'frame_idx': f_idx})
+                    if prev_vis_pt:
+                        visual_elements.append({'type': 'line', 'p1': prev_vis_pt, 'p2': (px, py), 'style': line_stl, 'track_id': i + 1})
+                    prev_vis_pt = (px, py)
         return visual_elements
 
     def find_closest_visible_point(self, click_x: float, click_y: float, current_frame_index: int) -> Optional[Tuple[int, PointData]]:
-            min_dist_sq: float = config.CLICK_TOLERANCE_SQ
-            closest_track_index: int = -1
-            closest_point_data: Optional[PointData] = None
-            # logger.debug(f"Finding closest visible point to ({click_x:.1f}, {click_y:.1f}) on frame {current_frame_index}, tolerance_sq={min_dist_sq}")
-            for track_index, track_data in enumerate(self.tracks):
-                visibility_mode: TrackVisibilityMode = self.get_track_visibility_mode(track_index)
-                if visibility_mode == TrackVisibilityMode.HIDDEN: continue
-                for point_data_tuple in track_data:
-                    frame_idx, _, x_coord, y_coord = point_data_tuple
-                    point_marker_is_visible_now: bool = False
-                    if visibility_mode == TrackVisibilityMode.INCREMENTAL: point_marker_is_visible_now = (frame_idx <= current_frame_index)
-                    elif visibility_mode == TrackVisibilityMode.ALWAYS_VISIBLE: point_marker_is_visible_now = True
-                    if point_marker_is_visible_now:
-                        dx: float = click_x - x_coord; dy: float = click_y - y_coord
-                        dist_sq: float = dx*dx + dy*dy
-                        if dist_sq < min_dist_sq:
-                            min_dist_sq = dist_sq; closest_track_index = track_index
-                            closest_point_data = point_data_tuple
-            # if closest_track_index != -1 and closest_point_data is not None: logger.debug(f"Closest visible point found: Track Index {closest_track_index}, Point Data: {closest_point_data}")
-            # else: logger.debug("No visible track marker point found within tolerance on the current frame.")
-            return (closest_track_index, closest_point_data) if closest_track_index != -1 and closest_point_data is not None else None
+        min_dist_sq, cl_track_idx, cl_point_data = config.CLICK_TOLERANCE_SQ, -1, None
+        for i, track_data in enumerate(self.tracks):
+            vis_mode = self.get_track_visibility_mode(i)
+            if vis_mode == TrackVisibilityMode.HIDDEN: continue
+            for p_data_tuple in track_data:
+                f_idx, _, px, py = p_data_tuple
+                is_vis_now = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or \
+                             (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
+                if is_vis_now:
+                    dist_sq = (click_x - px)**2 + (click_y - py)**2
+                    if dist_sq < min_dist_sq: min_dist_sq, cl_track_idx, cl_point_data = dist_sq, i, p_data_tuple
+        return (cl_track_idx, cl_point_data) if cl_track_idx != -1 and cl_point_data is not None else None
 
     def get_track_summary(self) -> List[Tuple[int, int, int, int]]:
-        # logger.debug("Generating track summary...")
-        summary: List[Tuple[int, int, int, int]] = []
+        summary = []
         for i, track in enumerate(self.tracks):
-            track_id: int = i + 1; num_points: int = len(track)
-            start_frame: int = -1; end_frame: int = -1
-            if num_points > 0: start_frame = track[0][0]; end_frame = track[-1][0]
-            summary.append((track_id, num_points, start_frame, end_frame))
-        # logger.debug(f"Generated summary for {len(summary)} tracks.")
+            n_pts = len(track)
+            s_f, e_f = (-1, -1) if not n_pts else (track[0][0], track[-1][0])
+            summary.append((i + 1, n_pts, s_f, e_f))
         return summary
 
     def get_active_track_points_for_table(self) -> Track:
         if self.active_track_index < 0 or self.active_track_index >= len(self.tracks): return []
-        points: Track = list(self.tracks[self.active_track_index])
-        # logger.debug(f"Returning {len(points)} points (copy) for active track {self.get_active_track_id()}.")
-        return points
+        return list(self.tracks[self.active_track_index])
 
     def get_all_track_data(self) -> AllTracksData:
-        # logger.debug(f"Returning deep copy of all data for {len(self.tracks)} tracks.")
         return [list(track) for track in self.tracks]
 
     def load_tracks_from_data(self, parsed_data: List[Tuple[int, int, float, float, float]],
                               video_width: int, video_height: int, video_frame_count: int, video_fps: float
                              ) -> Tuple[bool, List[str]]:
-        logger.info(f"Attempting to load {len(parsed_data)} parsed points into TrackManager...")
-        warnings_list: List[str] = []
-        loaded_tracks_dict: Dict[int, Track] = defaultdict(list)
-        time_tolerance_ms: float = (0.5 * 1000 / video_fps) if video_fps > 0 else 50.0
-        points_skipped_validation: int = 0; points_validated: int = 0
-        try:
-            logger.debug("Starting validation pass...")
-            for point_tuple in parsed_data:
-                track_id, frame_idx, time_ms, x, y = point_tuple
-                point_desc = f"Point (Track {track_id}, Frame {frame_idx})"
-                is_valid_point = True
-                if not (0 <= frame_idx < video_frame_count):
-                    msg = f"{point_desc}: Frame index {frame_idx} is outside video range [0, {video_frame_count - 1}]. Skipping point."
-                    warnings_list.append(msg); is_valid_point = False
-                if is_valid_point and not (0 <= x < video_width):
-                    msg = f"{point_desc}: X-coordinate {x:.2f} is outside video range [0, {video_width}). Skipping point."
-                    warnings_list.append(msg); is_valid_point = False
-                if is_valid_point and not (0 <= y < video_height):
-                     msg = f"{point_desc}: Y-coordinate {y:.2f} is outside video range [0, {video_height}). Skipping point."
-                     warnings_list.append(msg); is_valid_point = False
-                if is_valid_point and video_fps > 0:
-                    expected_time_ms = (frame_idx / video_fps) * 1000
-                    if abs(time_ms - expected_time_ms) > time_tolerance_ms:
-                         msg = f"{point_desc}: Warning: Time {time_ms:.1f}ms seems inconsistent with frame index (expected ~{expected_time_ms:.1f}ms for {video_fps} FPS)."
-                         warnings_list.append(msg)
-                if is_valid_point:
-                    loaded_tracks_dict[track_id].append((frame_idx, time_ms, x, y)); points_validated += 1
-                else:
-                    logger.warning(warnings_list[-1]); points_skipped_validation += 1
-            logger.info(f"Validation complete: {points_validated} points passed, {points_skipped_validation} points skipped.")
-            self.reset() # Clears existing tracks and undo state
-            sorted_track_ids = sorted(loaded_tracks_dict.keys())
-            tracks_skipped_empty = 0; loaded_track_count = 0
-            for track_id in sorted_track_ids:
-                track_points = loaded_tracks_dict[track_id]
-                if not track_points:
-                    msg = f"Skipping Track ID {track_id} as it contained no valid points after validation."
-                    warnings_list.append(msg); tracks_skipped_empty += 1; logger.warning(msg)
-                    continue
-                track_points.sort(key=lambda p: p[0])
-                self.tracks.append(track_points)
-                self.track_visibility_modes.append(TrackVisibilityMode.INCREMENTAL)
-                loaded_track_count += 1
-            self.active_track_index = 0 if self.tracks else -1
-            logger.info(f"Successfully loaded {points_validated} points into {loaded_track_count} tracks. Skipped {tracks_skipped_empty} empty tracks.")
-            self.trackListChanged.emit(); self.activeTrackDataChanged.emit(); self.visualsNeedUpdate.emit()
-            return True, warnings_list
-        except Exception as e:
-             error_msg = f"Critical internal error processing loaded track data: {e}"
-             logger.exception(error_msg)
-             self.reset()
-             return False, warnings_list + [error_msg]
+        warnings, loaded_tracks_dict = [], defaultdict(list)
+        time_tol_ms = (500 / video_fps) if video_fps > 0 else 50.0
+        valid_pts, skip_pts = 0, 0
+        for tid, fid, tms, x, y in parsed_data:
+            p_desc = f"Point (T{tid},F{fid})"
+            valid = True
+            if not (0 <= fid < video_frame_count): warnings.append(f"{p_desc}: Frame out of range. Skip."); valid=False
+            if valid and not (0 <= x < video_width): warnings.append(f"{p_desc}: X-coord out of range. Skip."); valid=False
+            if valid and not (0 <= y < video_height): warnings.append(f"{p_desc}: Y-coord out of range. Skip."); valid=False
+            if valid and video_fps > 0 and abs(tms-(fid/video_fps)*1000) > time_tol_ms: warnings.append(f"{p_desc}: Time inconsistent.")
+            if valid: loaded_tracks_dict[tid].append((fid, tms, x, y)); valid_pts+=1
+            else: logger.warning(warnings[-1]); skip_pts+=1
+        
+        self.reset()
+        skip_empty_tracks = 0; loaded_count = 0
+        for tid in sorted(loaded_tracks_dict.keys()):
+            pts = loaded_tracks_dict[tid]
+            if not pts: warnings.append(f"Track ID {tid} empty after validation. Skip."); skip_empty_tracks+=1; continue
+            pts.sort(key=lambda p:p[0])
+            self.tracks.append(pts)
+            self.track_visibility_modes.append(TrackVisibilityMode.INCREMENTAL)
+            loaded_count+=1
+        self.active_track_index = 0 if self.tracks else -1
+        self.trackListChanged.emit(); self.activeTrackDataChanged.emit(); self.visualsNeedUpdate.emit()
+        return True, warnings

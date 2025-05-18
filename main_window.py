@@ -911,7 +911,6 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Export Problem", message)
         self._update_ui_state()
 
-    # --- MODIFIED keyPressEvent for Undo ---
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         key = event.key()
         modifiers = event.modifiers()
@@ -919,6 +918,7 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = self.statusBar()
 
         if key == QtCore.Qt.Key.Key_Escape:
+            # ... (existing escape logic) ...
             if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
                self.scale_panel_controller._is_setting_scale_by_line: # type: ignore
                 self.scale_panel_controller.cancel_set_scale_by_line() # type: ignore
@@ -926,10 +926,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 accepted = True
             elif self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode():
                 self.coord_panel_controller._is_setting_origin = False # type: ignore
-                self.imageView.set_interaction_mode(InteractionMode.NORMAL) # type: ignore
+                if self.imageView: self.imageView.set_interaction_mode(InteractionMode.NORMAL) # type: ignore
                 if status_bar: status_bar.showMessage("Set origin cancelled.", 3000)
                 accepted = True
         elif key == QtCore.Qt.Key.Key_Space:
+            # ... (existing spacebar logic) ...
             if self.video_loaded and self.playPauseButton and self.playPauseButton.isEnabled():
                 nav_disabled = False
                 if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line'):
@@ -937,18 +938,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not nav_disabled: self._toggle_playback(); accepted = True
         elif key == QtCore.Qt.Key.Key_Delete or key == QtCore.Qt.Key.Key_Backspace:
             if self.video_loaded and self.track_manager.active_track_index != -1 and self.current_frame_index != -1:
+                # --- MODIFICATION: Call TrackManager's delete_point ---
+                # TrackManager.delete_point now sets up its own undo state.
                 deleted = self.track_manager.delete_point(self.track_manager.active_track_index, self.current_frame_index)
                 if status_bar: status_bar.showMessage(f"Deleted point..." if deleted else "No point to delete on this frame.", 3000)
-                # After delete, update undo action availability
+                
+                # Update undo action availability (TrackManager.delete_point emits undoStateChanged)
+                # So this direct call might be redundant if undoAction.setEnabled is connected to that signal,
+                # but it ensures immediate consistency.
                 if hasattr(self, 'undoAction') and self.undoAction:
                     self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action())
                 accepted = True
             elif self.video_loaded and self.track_manager.active_track_index == -1:
                 if status_bar: status_bar.showMessage("No track selected to delete points from.", 3000)
-                accepted = True
-            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000)
+                accepted = True # Accept to prevent further processing if no track is active
+            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000) # Fallback
         elif modifiers == QtCore.Qt.KeyboardModifier.ControlModifier and key == QtCore.Qt.Key.Key_Z:
-            if self.undoAction and self.undoAction.isEnabled():
+            if hasattr(self, 'undoAction') and self.undoAction and self.undoAction.isEnabled():
                 self._trigger_undo_point_action()
                 accepted = True
             elif status_bar:
