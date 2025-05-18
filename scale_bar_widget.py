@@ -38,6 +38,8 @@ class ScaleBarWidget(QtWidgets.QWidget):
     _border_color: QtGui.QColor # Currently fixed, could be a setting
     _current_font_size_pt: int
     _current_bar_rect_height: int
+    _current_font_metrics: QtGui.QFontMetrics
+
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
@@ -54,6 +56,8 @@ class ScaleBarWidget(QtWidgets.QWidget):
         
         # Initialize appearance from settings
         self._border_color = QtGui.QColor("black") # Fixed for now
+        # _current_font_metrics will be initialized by update_appearance_from_settings
+        self._current_font_metrics = QtGui.QFontMetrics(self.font()) # Initial placeholder
         self.update_appearance_from_settings() # Load color, font size, bar height
 
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -88,7 +92,7 @@ class ScaleBarWidget(QtWidgets.QWidget):
         current_font = self.font()
         current_font.setPointSize(self._current_font_size_pt)
         self.setFont(current_font) # Set widget's font
-        self.font_metrics = QtGui.QFontMetrics(current_font) # Update font metrics
+        self._current_font_metrics = QtGui.QFontMetrics(current_font) # Update font metrics
 
         # Get Bar Rectangle Height
         self._current_bar_rect_height = settings_manager.get_setting(settings_manager.KEY_SCALE_BAR_RECT_HEIGHT)
@@ -98,7 +102,7 @@ class ScaleBarWidget(QtWidgets.QWidget):
         
         # Recalculate text dimensions and widget height as font/bar height might have changed
         if self._bar_text_label: # Re-measure text if a label exists
-            text_rect = self.font_metrics.boundingRect(self._bar_text_label)
+            text_rect = self._current_font_metrics.boundingRect(self._bar_text_label)
             self._text_width = text_rect.width()
             self._text_height = text_rect.height()
 
@@ -125,7 +129,7 @@ class ScaleBarWidget(QtWidgets.QWidget):
                              (self._m_per_px_scene is not None and m_per_px_scene is None)
 
         self._m_per_px_scene = m_per_px_scene
-        self._view_scale_factor = max(0.0001, view_scale_factor)
+        self._view_scale_factor = max(0.0001, view_scale_factor) # Ensure positive
         self._parent_view_width = parent_view_width
 
         if self._m_per_px_scene is None or self._view_scale_factor <= 0:
@@ -140,7 +144,7 @@ class ScaleBarWidget(QtWidgets.QWidget):
             should_be_visible = self._bar_pixel_length > 0
             if self.isVisible() != should_be_visible:
                 self.setVisible(should_be_visible)
-                visibility_changed = True
+                visibility_changed = True # NOSONAR
                 logger.debug(f"Scale bar visibility changed to: {should_be_visible}")
 
             if self.isVisible(): # If it's supposed to be visible
@@ -149,7 +153,7 @@ class ScaleBarWidget(QtWidgets.QWidget):
                     self.setFixedHeight(required_widget_height)
                 
                 required_widget_width = int(max(self._bar_pixel_length + 2 * FALLBACK_SCALE_BAR_BORDER_THICKNESS, self._text_width))
-                self.setFixedWidth(max(10, required_widget_width))
+                self.setFixedWidth(max(10, required_widget_width)) # Ensure positive width
                 self.update()
             elif visibility_changed: # Became hidden
                 self.update() # Ensure it's cleared if it was visible and now isn't
@@ -162,20 +166,23 @@ class ScaleBarWidget(QtWidgets.QWidget):
            (abs(length_meters) > 0 and abs(length_meters) <= config.SCIENTIFIC_NOTATION_LOWER_THRESHOLD) :
             return f"{length_meters:.1e}"
         for factor, singular_abbr, plural_abbr in config.UNIT_PREFIXES:
-            if abs(length_meters) >= factor * 0.99:
+            if abs(length_meters) >= factor * 0.99: # Check against a slightly lower bound
                 value_in_unit = length_meters / factor
-                if factor >= 1.0:
+                # Determine precision based on unit and value magnitude
+                if factor >= 1.0:  # m, km
                     precision = 2 if abs(value_in_unit) < 10 else 1 if abs(value_in_unit) < 100 else 0
-                elif factor >= 1e-3:
+                elif factor >= 1e-3: # mm, cm
                     precision = 1 if abs(value_in_unit) < 100 else 0
-                else:
+                else: # µm, nm
                     precision = 0
+                # If value is a whole number within the precision range, don't show decimals
                 if abs(value_in_unit) >= 1 and value_in_unit == math.floor(value_in_unit) and precision > 0:
-                     if abs(value_in_unit) > 10 : precision = 0
+                     if abs(value_in_unit) > 10 : precision = 0 # Reduce precision for larger whole numbers
+
                 formatted_value = f"{value_in_unit:.{precision}f}"
-                unit_to_display = plural_abbr if plural_abbr and abs(value_in_unit) != 1.0 else singular_abbr
+                unit_to_display = plural_abbr if plural_abbr and abs(float(formatted_value)) != 1.0 else singular_abbr
                 return f"{formatted_value} {unit_to_display}"
-        return f"{length_meters:.2f} m"
+        return f"{length_meters:.2f} m" # Fallback for very small values not caught by prefixes
 
     def _calculate_bar_length_and_label(self) -> None:
         if self._m_per_px_scene is None or self._view_scale_factor <= 0 or self._parent_view_width <= 0:
@@ -188,28 +195,36 @@ class ScaleBarWidget(QtWidgets.QWidget):
                                          min(target_bar_display_width_px, SCALE_BAR_MAX_PIXEL_WIDTH))
         target_real_world_length_m = target_bar_display_width_px * m_per_view_pixel
 
-        if target_real_world_length_m <= 0:
+        if target_real_world_length_m <= 1e-12: # Avoid issues with extremely small or zero lengths
             self._bar_pixel_length = 0; self._bar_text_label = ""; self._text_width = 0; self._text_height = 0
+            logger.debug(f"Target real world length {target_real_world_length_m} too small, hiding bar.")
             return
 
         power_of_10 = 10.0 ** math.floor(math.log10(target_real_world_length_m))
-        best_length_m = power_of_10 * config.ROUND_NUMBER_SEQUENCE[0]
+        best_length_m = power_of_10 * config.ROUND_NUMBER_SEQUENCE[0] # Default to first in sequence
+
+        # Find the best "round number" length from the sequence
         for R_val in config.ROUND_NUMBER_SEQUENCE:
             current_test_length_m = power_of_10 * R_val
             if current_test_length_m <= target_real_world_length_m * 1.05: # Allow slight overshoot
                 best_length_m = current_test_length_m
             else:
-                break
-        if target_real_world_length_m < power_of_10 * config.ROUND_NUMBER_SEQUENCE[0] * 0.75 and power_of_10 > 1e-9 : # Avoid excessive shrinking
-             power_of_10_smaller = power_of_10 / 10.0
-             if power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1] > 1e-9: # ensure positive length
-                best_length_m = power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1]
-
+                # If the first R_val already overshoots, it means target_real_world_length_m
+                # is smaller than power_of_10 * ROUND_NUMBER_SEQUENCE[0].
+                # We might need to try the previous power_of_10 with the largest R_val.
+                if R_val == config.ROUND_NUMBER_SEQUENCE[0]: # First item already too large
+                     power_of_10_smaller = power_of_10 / 10.0
+                     if power_of_10_smaller > 1e-12: # Ensure positive power
+                        test_smaller_best = power_of_10_smaller * config.ROUND_NUMBER_SEQUENCE[-1]
+                        # Only use this if it's a reasonable fraction of the target
+                        if test_smaller_best > target_real_world_length_m * 0.5 : # Avoid too small a bar
+                           best_length_m = test_smaller_best
+                break # Stop if current_test_length_m is too large
 
         chosen_real_world_length_m = best_length_m
         final_bar_pixel_length = chosen_real_world_length_m / m_per_view_pixel
 
-        if final_bar_pixel_length < SCALE_BAR_MIN_PIXEL_WIDTH / 2.0:
+        if final_bar_pixel_length < SCALE_BAR_MIN_PIXEL_WIDTH / 2.0: # Heuristic: too small to be useful
              self._bar_pixel_length = 0; self._bar_text_label = ""
              logger.debug(f"Calculated scale bar pixel length {final_bar_pixel_length:.1f} too small, hiding bar.")
         else:
@@ -218,14 +233,14 @@ class ScaleBarWidget(QtWidgets.QWidget):
             logger.debug(f"Scale bar: Real length={chosen_real_world_length_m:.3g} m, Text='{self._bar_text_label}', Pixel length={self._bar_pixel_length:.1f} px")
         
         # Update text dimensions based on current font (set in update_appearance_from_settings)
-        text_rect = self.font_metrics.boundingRect(self._bar_text_label)
+        text_rect = self._current_font_metrics.boundingRect(self._bar_text_label)
         self._text_width = text_rect.width()
         self._text_height = text_rect.height() # This is height of the text itself
 
     def minimumSizeHint(self) -> QtCore.QSize:
         width = int(max(self._bar_pixel_length + 2 * FALLBACK_SCALE_BAR_BORDER_THICKNESS, self._text_width))
         height = self._calculate_widget_height()
-        return QtCore.QSize(max(10, width), height)
+        return QtCore.QSize(max(10, width), height) # Ensure positive width
 
     def sizeHint(self) -> QtCore.QSize:
         return self.minimumSizeHint()
@@ -237,7 +252,6 @@ class ScaleBarWidget(QtWidgets.QWidget):
             if self.isVisible():
                 self.update()
             logger.debug(f"ScaleBarWidget color set directly to: {color.name()}")
-
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         if not self.isVisible() or self._bar_pixel_length <= 0:
@@ -262,7 +276,7 @@ class ScaleBarWidget(QtWidgets.QWidget):
         painter.setPen(self._text_color)
         # Using QPointF for potentially fractional positions for better centering.
         # Draw text such that its bounding box top is at 0, then the bar is below it.
-        painter.drawText(QtCore.QPointF(text_x, text_baseline_y - self.font_metrics.descent()), self._bar_text_label)
+        painter.drawText(QtCore.QPointF(text_x, text_baseline_y - self._current_font_metrics.descent()), self._bar_text_label)
 
 
         # --- Draw Scale Bar Rectangle ---
@@ -284,6 +298,52 @@ class ScaleBarWidget(QtWidgets.QWidget):
         painter.setPen(pen)
         painter.drawRect(bar_rect)
         painter.end()
+
+    # --- Getter methods for Export ---
+    def get_current_bar_pixel_length(self) -> float:
+        """Returns the calculated pixel length of the scale bar."""
+        return self._bar_pixel_length
+
+    def get_current_bar_text_label(self) -> str:
+        """Returns the current text label for the scale bar."""
+        return self._bar_text_label
+
+    def get_current_bar_color(self) -> QtGui.QColor:
+        """Returns the current color of the scale bar rectangle."""
+        return self._bar_color
+
+    def get_current_text_color(self) -> QtGui.QColor:
+        """Returns the current color of the scale bar text."""
+        return self._text_color
+        
+    def get_current_border_color(self) -> QtGui.QColor:
+        """Returns the current color of the scale bar border."""
+        return self._border_color
+
+    def get_current_font(self) -> QtGui.QFont:
+        """Returns the current font used for the scale bar text."""
+        return self.font() # QWidget.font() gets the currently set font
+
+    def get_current_font_metrics(self) -> QtGui.QFontMetrics:
+        """Returns the font metrics for the current scale bar text font."""
+        return self._current_font_metrics
+
+    def get_current_bar_rect_height(self) -> int:
+        """Returns the current height of the scale bar rectangle itself (pixels)."""
+        return self._current_bar_rect_height
+
+    def get_text_margin_bottom(self) -> int:
+        """Returns the margin between the text and the scale bar rectangle."""
+        return SCALE_BAR_TEXT_MARGIN_BOTTOM
+
+    def get_border_thickness(self) -> int:
+        """Returns the thickness of the border around the scale bar rectangle."""
+        return FALLBACK_SCALE_BAR_BORDER_THICKNESS
+    
+    def get_text_dimensions(self) -> Tuple[int, int]:
+        """Returns the calculated width and height of the current text label."""
+        return self._text_width, self._text_height
+
 
 # Example Usage (unchanged, but will now reflect new settings if defaults are modified)
 if __name__ == '__main__':
@@ -311,7 +371,7 @@ if __name__ == '__main__':
             mpp = float(m_per_px_input.text()) if m_per_px_input.text() else None
             vs = float(view_scale_input.text())
             vw = int(view_width_input.text())
-            if mpp is not None and mpp <= 0: mpp = None
+            if mpp is not None and mpp <= 0: mpp = None # Treat non-positive as None
             margin = 10
             scale_bar.update_dimensions(mpp, vs, vw) # This will now use settings for height/font
             if scale_bar.isVisible():
@@ -324,15 +384,15 @@ if __name__ == '__main__':
                 logger.debug(f"Moved scale_bar to ({x_pos}, {y_pos}), size: {scale_bar.size()}")
         except ValueError as e:
             logger.error(f"Invalid input for test: {e}")
-            scale_bar.setVisible(False)
+            scale_bar.setVisible(False) # Hide on error
     update_button.clicked.connect(on_update)
     test_layout.addWidget(update_button)
     test_window.show()
-    def dummy_view_resized_event(event): # Capture the event argument
+    def dummy_view_resized_event(event: QtGui.QResizeEvent): # Capture the event argument
         QtWidgets.QGraphicsView.resizeEvent(dummy_view, event) # Call base class method
-        view_width_input.setText(str(dummy_view.viewport().width()))
+        if view_width_input: view_width_input.setText(str(dummy_view.viewport().width()))
         on_update()
-    dummy_view.resizeEvent = dummy_view_resized_event
+    dummy_view.resizeEvent = dummy_view_resized_event # type: ignore
     dummy_view.show()
-    on_update()
+    on_update() # Initial update
     sys.exit(app.exec())

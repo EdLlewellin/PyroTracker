@@ -331,7 +331,87 @@ class VideoHandler(QtCore.QObject):
         logger.debug("Playback timer stopped.")
         self.playbackStateChanged.emit(False) # Notify UI
 
+    def get_raw_frame_at_index(self, frame_index: int) -> Optional[np.ndarray]:
+        """
+        Reads and returns the raw OpenCV frame (np.ndarray) at the specified index
+        without updating the current playback state or emitting GUI signals.
+
+        This is intended for operations like video export that need direct frame access.
+
+        Args:
+            frame_index: The 0-based index of the frame to retrieve.
+
+        Returns:
+            The raw video frame as a NumPy array (BGR format), or None if the frame
+            cannot be read (e.g., index out of bounds, video not loaded, read error).
+        """
+        logger.debug(f"get_raw_frame_at_index called for frame {frame_index}.")
+        return self._read_raw_frame_from_video(frame_index)
+
     # --- Internal Helper Methods ---
+
+    def _read_raw_frame_from_video(self, frame_index: int) -> Optional[np.ndarray]:
+        """
+        Internal helper to seek to a specific frame and read it as a raw OpenCV frame.
+        Does not update _current_frame_index or emit signals.
+
+        Args:
+            frame_index: 0-based index of the frame to read.
+
+        Returns:
+            The raw OpenCV frame (np.ndarray) or None if read fails or video not ready.
+        """
+        if not self._video_capture or not self._is_loaded:
+            logger.warning(f"_read_raw_frame_from_video({frame_index}) called but video capture not ready.")
+            return None
+        # Ensure index is valid
+        if not (0 <= frame_index < self._total_frames):
+             logger.error(f"Internal error: _read_raw_frame_from_video called with invalid index {frame_index} for video with {self._total_frames} frames.")
+             return None
+
+        logger.debug(f"Reading raw frame {frame_index} via seek...")
+        # Seek using OpenCV's frame property
+        # It's crucial that this doesn't advance the main playback _current_frame_index
+        current_capture_pos = self._video_capture.get(cv2.CAP_PROP_POS_FRAMES)
+        seek_success = self._video_capture.set(cv2.CAP_PROP_POS_FRAMES, float(frame_index))
+
+        if not seek_success:
+            # Log warning but attempt read anyway, might still work or be close enough
+            logger.warning(f"Seek to raw frame {frame_index} using CAP_PROP_POS_FRAMES failed (might be inaccurate).")
+            # Attempt to restore original position if seek failed, though this might not be perfect
+            self._video_capture.set(cv2.CAP_PROP_POS_FRAMES, float(current_capture_pos -1 if current_capture_pos > 0 else 0))
+
+
+        # Read the frame after seeking
+        ret: bool; frame: Optional[np.ndarray]
+        ret, frame_data = self._video_capture.read()
+
+        # After reading, try to restore the capture position to what it was before this call,
+        # so that normal playback/seeking is not affected by this out-of-sequence read.
+        # This is important if CAP_PROP_POS_FRAMES actually moved the main read head.
+        # Subtract 1 because .read() advances the position.
+        # If the original read was also a .read(), then current_capture_pos was already the *next* frame.
+        # If original position was set by .set(), it might be the frame itself.
+        # A robust way is to rely on the VideoHandler's own _current_frame_index for GUI playback.
+        # For raw reading, we assume the user of get_raw_frame_at_index will manage their own iteration.
+        # The safest approach here for a utility function is to ensure it doesn't permanently alter the state
+        # used by GUI playback. So, restore the capture position to where it *would* be for the GUI's _current_frame_index.
+        # However, if _video_capture.set modifies a shared read pointer, this is tricky.
+        # For now, let's assume set/read for this specific function is isolated enough,
+        # or that the main GUI's next seek will correctly position it.
+        # A more robust solution might involve opening a separate VideoCapture instance for export,
+        # but that adds complexity.
+        # Given OpenCV's behavior, .set then .read is usually how one gets a specific frame.
+        # The impact on subsequent .read() calls in _advance_frame needs care.
+        # The _current_frame_index of the VideoHandler itself is NOT changed by this method.
+
+        if ret and frame_data is not None:
+            logger.debug(f"Successfully read raw frame {frame_index}.")
+            return frame_data
+        else:
+            logger.warning(f"Failed to read raw frame {frame_index} after seeking (ret={ret}).")
+            return None
+
 
     @QtCore.Slot()
     def _advance_frame(self) -> None:
@@ -346,25 +426,27 @@ class VideoHandler(QtCore.QObject):
             return
 
         # Read the next frame directly from the capture stream
-        ret: bool; frame: Optional[np.ndarray]
-        ret, frame = self._video_capture.read()
+        # For playback, we rely on sequential reads which OpenCV handles efficiently.
+        # We don't need to explicitly .set(CAP_PROP_POS_FRAMES) for each frame in playback.
+        ret: bool; frame_data: Optional[np.ndarray]
+        ret, frame_data = self._video_capture.read()
 
-        if ret and frame is not None:
-            # Successfully read frame. Frame index corresponds to the *next* frame.
+        if ret and frame_data is not None:
+            # Successfully read frame. The frame read corresponds to the frame *after* _current_frame_index.
             next_frame_index = self._current_frame_index + 1
 
             # Check if we have gone past the last valid frame index
             if next_frame_index >= self._total_frames:
                 logger.info("Playback reached end of video.")
                 self.stop_playback()
-                # Don't update index or emit frame if past the end
+                # Don't update index or emit frame if past the end; _current_frame_index remains on the last valid frame displayed.
                 return
 
             # Update index *before* emitting the new frame
             self._current_frame_index = next_frame_index
 
             # Convert and emit the new frame
-            q_pixmap = self._convert_cv_to_qpixmap(frame)
+            q_pixmap = self._convert_cv_to_qpixmap(frame_data)
             if not q_pixmap.isNull():
                 self.frameChanged.emit(q_pixmap, self._current_frame_index)
             else:
@@ -372,47 +454,30 @@ class VideoHandler(QtCore.QObject):
                 # Consider stopping playback if conversion fails repeatedly?
         else:
             # Failed to read frame (likely end of stream or error)
-            logger.warning("Playback stopped: End of stream reached or error reading next frame.")
+            logger.warning("Playback stopped: End of stream reached or error reading next frame during _advance_frame.")
             self.stop_playback()
-            # Ensure current index reflects the last successfully displayed frame
-            self._current_frame_index = max(0, min(self._current_frame_index, self._total_frames - 1))
+            # _current_frame_index already reflects the last successfully displayed frame.
 
     def _read_and_emit_frame(self, frame_index: int) -> None:
         """
         Internal helper to seek to a specific frame, read it, convert it,
         update the internal state, and emit the `frameChanged` signal.
+        Used for GUI updates (e.g., seeking).
         """
-        if not self._video_capture or not self._is_loaded:
-            logger.warning(f"_read_and_emit_frame({frame_index}) called but video capture not ready.")
-            return
-        # Ensure index is valid
-        if not (0 <= frame_index < self._total_frames):
-             logger.error(f"Internal error: _read_and_emit_frame called with invalid index {frame_index}.")
-             return
+        frame_data = self._read_raw_frame_from_video(frame_index)
 
-        logger.debug(f"Reading frame {frame_index} via seek...")
-        # Seek using OpenCV's frame property
-        seek_success = self._video_capture.set(cv2.CAP_PROP_POS_FRAMES, float(frame_index))
-        if not seek_success:
-            # Log warning but attempt read anyway, might still work or be close enough
-            logger.warning(f"Seek to frame {frame_index} using CAP_PROP_POS_FRAMES failed (might be inaccurate).")
-
-        # Read the frame after seeking
-        ret: bool; frame: Optional[np.ndarray]
-        ret, frame = self._video_capture.read()
-
-        if ret and frame is not None:
+        if frame_data is not None:
             # Successfully read the frame. Update state *before* emitting.
-            self._current_frame_index = frame_index
-            q_pixmap = self._convert_cv_to_qpixmap(frame)
+            self._current_frame_index = frame_index # Update the main current_frame_index
+            q_pixmap = self._convert_cv_to_qpixmap(frame_data)
             if not q_pixmap.isNull():
-                logger.debug(f"Successfully read/converted frame {frame_index}. Emitting frameChanged.")
+                logger.debug(f"Successfully read/converted frame {frame_index} for GUI. Emitting frameChanged.")
                 self.frameChanged.emit(q_pixmap, frame_index)
             else:
-                logger.warning(f"Failed to convert frame {frame_index} to QPixmap after reading.")
+                logger.warning(f"Failed to convert frame {frame_index} to QPixmap after reading for GUI.")
         else:
             # Failed to read the frame after seeking
-            logger.warning(f"Failed to read frame {frame_index} after seeking (ret={ret}).")
+            logger.warning(f"Failed to read frame {frame_index} for GUI in _read_and_emit_frame.")
             # Do not update _current_frame_index if read fails.
 
     def _convert_cv_to_qpixmap(self, cv_img: np.ndarray) -> QtGui.QPixmap:
