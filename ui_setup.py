@@ -220,7 +220,10 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.saveTracksAction = QtGui.QAction(save_icon, "&Save Tracks As...", main_window); main_window.saveTracksAction.setStatusTip("Save current pyroclast track data to a CSV file"); main_window.saveTracksAction.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs); main_window.saveTracksAction.triggered.connect(main_window._trigger_save_tracks); main_window.saveTracksAction.setEnabled(False)
     file_menu.addAction(main_window.saveTracksAction)
     export_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton) 
-    main_window.exportViewAction = QtGui.QAction(export_icon, "Export Current View to MP4...", main_window); main_window.exportViewAction.setStatusTip("Export the current view with overlays to an MP4 video file"); main_window.exportViewAction.setEnabled(False)
+    main_window.exportViewAction = QtGui.QAction(export_icon, "Export Video with Overlays...", main_window)
+    main_window.exportViewAction.setStatusTip("Export the current view with overlays to a video file")
+    main_window.exportViewAction.setEnabled(False) # Initial state
+    main_window.exportViewAction.triggered.connect(main_window._handle_export_video) # Connect to the new method name
     file_menu.addAction(main_window.exportViewAction)
     file_menu.addSeparator()
     info_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView)
