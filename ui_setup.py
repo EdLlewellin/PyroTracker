@@ -225,6 +225,11 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.exportViewAction.setEnabled(False) # Initial state
     main_window.exportViewAction.triggered.connect(main_window._handle_export_video) # Connect to the new method name
     file_menu.addAction(main_window.exportViewAction)
+    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon) # Example icon
+    main_window.exportFrameAction = QtGui.QAction(export_frame_icon, "Export Current Frame to PNG...", main_window)
+    main_window.exportFrameAction.setStatusTip("Export the current frame with overlays to a PNG image file")
+    main_window.exportFrameAction.setEnabled(False) # Initial state, enable when video loaded
+    file_menu.addAction(main_window.exportFrameAction)
     file_menu.addSeparator()
     info_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView)
     main_window.videoInfoAction = QtGui.QAction(info_icon, "Video Information...", main_window); main_window.videoInfoAction.setStatusTip("Show technical information about the loaded video"); main_window.videoInfoAction.setEnabled(False)
