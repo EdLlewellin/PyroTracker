@@ -125,28 +125,83 @@ class TrackDataViewController(QtCore.QObject):
                     self._track_manager.set_active_track(track_index)
                     # TrackManager signals activeTrackDataChanged, which updates points table.
 
+
     @QtCore.Slot(int, int)
     def _on_tracks_table_cell_clicked(self, row: int, column: int) -> None:
-        """Handles clicks on specific cells in the tracks table (e.g., frame links)."""
-        if not self._video_loaded: return
+        if not self._video_loaded:
+            return
 
+        id_item = self._tracks_table.item(row, config.COL_TRACK_ID)
+        if not id_item:
+            logger.debug("TableController: Cell click on non-data row or invalid ID item.")
+            return
+
+        track_id_clicked = id_item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not isinstance(track_id_clicked, int):
+            logger.warning(f"TableController: Invalid track_id data: {track_id_clicked}")
+            return
+
+        track_index_clicked = track_id_clicked - 1
+        current_modifiers = QtWidgets.QApplication.keyboardModifiers()
+        is_ctrl_click = (current_modifiers == QtCore.Qt.KeyboardModifier.ControlModifier)
+        is_active_row_in_manager = (track_index_clicked == self._track_manager.active_track_index)
+
+        if is_ctrl_click:
+            if is_active_row_in_manager:
+                # Ctrl+Click on an active row: DESELECT
+                logger.info(f"TableController: Ctrl+Clicked on active track {track_id_clicked}. Deselecting.")
+                self._track_manager.set_active_track(-1)
+                # UI sync (via activeTrackDataChanged signal) will clear table selection.
+                return # Action handled
+            else:
+                # Ctrl+Click on a NON-ACTIVE row: We want to SELECT it.
+                # Directly set the TrackManager state and let UI sync.
+                # This prevents the table's default Ctrl+click processing which might be causing the select/deselect.
+                logger.info(f"TableController: Ctrl+Clicked on non-active track {track_id_clicked}. Selecting.")
+                if self._track_manager.active_track_index != track_index_clicked:
+                    self._track_manager.set_active_track(track_index_clicked)
+                # If it was already selected but not active in manager (should not happen with sync),
+                # this also makes it active.
+                # The activeTrackDataChanged signal will trigger UI sync.
+                return # Action handled
+        
+        # If we reach here, it's a NORMAL click (no Ctrl modifier).
+        # Also handle frame link clicks here. The table's default selection will still occur for the row.
         if column == config.COL_TRACK_START_FRAME or column == config.COL_TRACK_END_FRAME:
-            item = self._tracks_table.item(row, column)
-            id_item = self._tracks_table.item(row, config.COL_TRACK_ID)
-            if item and id_item:
-                frame_text = item.text()
-                track_id = id_item.data(QtCore.Qt.ItemDataRole.UserRole)
+            frame_item_widget = self._tracks_table.item(row, column)
+            if frame_item_widget:
+                frame_text = frame_item_widget.text()
                 try:
                     target_frame_0based = int(frame_text) - 1
-                    if 0 <= target_frame_0based < self._total_frames_for_validation and isinstance(track_id, int):
-                        track_index = track_id - 1
-                        if self._track_manager.active_track_index != track_index:
-                           self._track_manager.set_active_track(track_index)
-                           self._select_track_row_by_id_in_ui(track_id) # Visual update
-                        logger.debug(f"Controller: Track table frame link clicked. Emitting seekVideoToFrame({target_frame_0based})")
+                    if 0 <= target_frame_0based < self._total_frames_for_validation:
+                        logger.debug(f"TableController: Frame link clicked for track {track_id_clicked}. "
+                                     f"Emitting seekVideoToFrame({target_frame_0based})")
                         self.seekVideoToFrame.emit(target_frame_0based)
+                        # Selection change will be handled by itemSelectionChanged if row changes
                 except (ValueError, TypeError):
-                    pass
+                    logger.warning(f"TableController: Could not parse frame number: '{frame_text}'")
+            # Allow fall-through for itemSelectionChanged to handle the row selection itself
+
+        # For normal clicks, rely on QTableWidget's default selection behavior,
+        # which emits itemSelectionChanged, then _on_track_selection_changed_in_table updates TrackManager.
+        logger.debug(f"TableController: Normal cell ({row},{column}) click on track {track_id_clicked}. "
+                     "Default selection processing (via itemSelectionChanged) will follow if not a frame link.")
+
+
+    @QtCore.Slot()
+    def _sync_tracks_table_selection_with_manager(self) -> None:
+        """
+        Ensures the tracks table's visual selection matches the TrackManager's active track.
+        This is typically called when TrackManager.activeTrackDataChanged is emitted.
+        """
+        if not hasattr(self, '_track_manager') or not hasattr(self, '_tracks_table'): # Ensure components exist
+            logger.warning("TrackDataViewController: Cannot sync selection, manager or table missing.")
+            return
+
+        active_id = self._track_manager.get_active_track_id()
+        logger.debug(f"TrackDataViewController: Syncing tracks table selection to manager's active ID: {active_id}")
+        self._select_track_row_by_id_in_ui(active_id)
+
 
     @QtCore.Slot(int, int)
     def _on_points_table_cell_clicked(self, row: int, column: int) -> None:

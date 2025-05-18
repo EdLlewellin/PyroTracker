@@ -273,6 +273,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
+            self.track_manager.activeTrackDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
 
         # --- Connect signals for ScaleManager ---
@@ -594,13 +595,19 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = self.statusBar()
         if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode(): return
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
-           self.scale_panel_controller._is_setting_scale_by_line: return
+           self.scale_panel_controller._is_setting_scale_by_line: return # type: ignore
+
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Cannot add point: No video loaded.", 3000)
             return
+        
+        # --- MODIFICATION: Check if a track is active ---
         if self.track_manager.active_track_index == -1:
-            if status_bar: status_bar.showMessage("Cannot add point: No track selected.", 3000)
+            if status_bar: status_bar.showMessage("Select a track to add points.", 3000)
+            logger.info("Attempted to add point, but no track is active.")
             return
+        # --- END MODIFICATION ---
+
         time_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
         if self.track_manager.add_point(self.current_frame_index, time_ms, x, y):
             x_d, y_d = self.coord_transformer.transform_point_for_display(x,y)
@@ -611,25 +618,56 @@ class MainWindow(QtWidgets.QMainWindow):
                 if target > self.current_frame_index: self.video_handler.seek_frame(target)
         elif status_bar: status_bar.showMessage("Failed to add point (see log).", 3000)
 
+
     @QtCore.Slot(float, float, QtCore.Qt.KeyboardModifiers)
     def _handle_modified_click(self, x: float, y: float, modifiers: QtCore.Qt.KeyboardModifiers) -> None:
         status_bar = self.statusBar()
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Cannot interact: Video/components not ready.", 3000)
             return
+
+        # Handle deselection via Ctrl+Click on blank area
+        if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
+            result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
+            if result is None: # Ctrl+Clicked on a blank area
+                if self.track_manager.active_track_index != -1:
+                    self.track_manager.set_active_track(-1) # Deselect
+                    if status_bar: status_bar.showMessage("Track deselected.", 3000)
+                    # UI updates are handled by signals from track_manager or _update_ui_state
+                else:
+                    if status_bar: status_bar.showMessage("No track to deselect.", 3000)
+                return # Handled deselection or no-op
+
+        # Existing logic for selecting/jumping with Ctrl+Click or Shift+Click on a track marker
         result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
         if result is None:
-            if status_bar: status_bar.showMessage("No track marker found near click.", 3000)
+            # This message is now only for non-Ctrl clicks if we don't deselect above
+            if modifiers != QtCore.Qt.KeyboardModifier.ControlModifier and status_bar: # Avoid double message
+                status_bar.showMessage("No track marker found near click.", 3000)
             return
-        track_idx, point_data = result; track_id = track_idx + 1; frame_idx = point_data[0]
+
+        track_idx, point_data = result
+        track_id = track_idx + 1
+        frame_idx = point_data[0]
+
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            if self.track_manager.active_track_index != track_idx: self.track_manager.set_active_track(track_idx)
-            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id))
-            if status_bar: status_bar.showMessage(f"Selected Track {track_id}.", 3000)
+            # This part now only handles SELECTION, deselection is handled above.
+            if self.track_manager.active_track_index != track_idx:
+                self.track_manager.set_active_track(track_idx)
+                if self.table_data_controller:
+                    QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id))
+                if status_bar: status_bar.showMessage(f"Selected Track {track_id}.", 3000)
+            # If it's already the active track, Ctrl+Clicking on it does nothing here (deselection handled above if it was a blank click)
+            # Or, if you want Ctrl+Click on an active track marker to also deselect, that logic could be added here.
+            # However, the current plan is Ctrl+Click on *row* or *blank area*.
+
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
-            if self.track_manager.active_track_index != track_idx: self.track_manager.set_active_track(track_idx)
-            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id))
-            if self.current_frame_index != frame_idx: self.video_handler.seek_frame(frame_idx)
+            if self.track_manager.active_track_index != track_idx:
+                self.track_manager.set_active_track(track_idx)
+            if self.table_data_controller:
+                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id))
+            if self.current_frame_index != frame_idx:
+                self.video_handler.seek_frame(frame_idx)
             if status_bar: status_bar.showMessage(f"Selected Track {track_id}, jumped to Frame {frame_idx + 1}.", 3000)
 
     @QtCore.Slot(int)
@@ -910,7 +948,7 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = self.statusBar()
         if key == QtCore.Qt.Key.Key_Escape:
             if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
-               self.scale_panel_controller._is_setting_scale_by_line:
+               self.scale_panel_controller._is_setting_scale_by_line: # type: ignore
                 self.scale_panel_controller.cancel_set_scale_by_line()
                 if status_bar: status_bar.showMessage("Set scale by line cancelled.", 3000)
                 accepted = True
@@ -928,12 +966,14 @@ class MainWindow(QtWidgets.QMainWindow):
         elif not accepted and (key == QtCore.Qt.Key.Key_Delete or key == QtCore.Qt.Key.Key_Backspace):
             if self.video_loaded and self.track_manager.active_track_index != -1 and self.current_frame_index != -1:
                 deleted = self.track_manager.delete_point(self.track_manager.active_track_index, self.current_frame_index)
-                if status_bar: status_bar.showMessage(f"Deleted point..." if deleted else "No point to delete.", 3000)
+                if status_bar: status_bar.showMessage(f"Deleted point..." if deleted else "No point to delete on this frame.", 3000)
                 accepted = True
-            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000)
+            elif self.video_loaded and self.track_manager.active_track_index == -1:
+                if status_bar: status_bar.showMessage("No track selected to delete points from.", 3000)
+                accepted = True # Accept to prevent further processing if no track is active
+            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000) # Fallback if video not loaded etc.
         if accepted: event.accept()
         else: super().keyPressEvent(event)
-
     @QtCore.Slot()
     def _show_video_info_dialog(self) -> None:
         status_bar = self.statusBar()
