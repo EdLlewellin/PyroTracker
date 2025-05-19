@@ -478,6 +478,6 @@ class TrackManager(QtCore.QObject):
             self.tracks.append(pts)
             self.track_visibility_modes.append(TrackVisibilityMode.INCREMENTAL)
             loaded_count+=1
-        self.active_track_index = 0 if self.tracks else -1
+        self.active_track_index = -1
         self.trackListChanged.emit(); self.activeTrackDataChanged.emit(); self.visualsNeedUpdate.emit()
         return True, warnings
