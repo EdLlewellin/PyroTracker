@@ -22,7 +22,7 @@ from scale_manager import ScaleManager
 # from scale_bar_widget import ScaleBarWidget
 from panel_controllers import ScalePanelController, CoordinatePanelController
 from table_controllers import TrackDataViewController
-from export_handler import ExportHandler
+from export_handler import ExportHandler, ExportResolutionMode
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -784,11 +784,62 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.viewport().update()
 
 
-    # --- MODIFIED/NEW METHODS for Export Handling ---
+    def _get_export_resolution_choice(self) -> Optional[ExportResolutionMode]:
+        """
+        Shows a dialog to the user to choose the export resolution.
+
+        Returns:
+            ExportResolutionMode or None if the dialog is cancelled.
+        """
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Choose Export Resolution")
+        dialog.setModal(True)
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        label = QtWidgets.QLabel("Select the resolution for the export:")
+        layout.addWidget(label)
+
+        radio_group = QtWidgets.QButtonGroup(dialog)
+
+        viewport_res_radio = QtWidgets.QRadioButton("Current Viewport Resolution")
+        viewport_res_radio.setChecked(True) # Default
+        radio_group.addButton(viewport_res_radio)
+        layout.addWidget(viewport_res_radio)
+
+        original_res_radio = QtWidgets.QRadioButton("Original Video Resolution")
+        if not (self.video_loaded and self.frame_width > 0 and self.frame_height > 0):
+            original_res_radio.setEnabled(False)
+            original_res_radio.setToolTip("Original video resolution is not available (no video loaded or invalid dimensions).")
+        else:
+            original_res_radio.setToolTip(f"Exports at {self.frame_width}x{self.frame_height} pixels.")
+
+        radio_group.addButton(original_res_radio)
+        layout.addWidget(original_res_radio)
+
+        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            if original_res_radio.isChecked():
+                return ExportResolutionMode.ORIGINAL_VIDEO
+            return ExportResolutionMode.VIEWPORT
+        return None
+
+
     @QtCore.Slot()
     def _trigger_export_video(self) -> None:
         if not self.video_loaded or not self._export_handler:
             QtWidgets.QMessageBox.warning(self, "Export Error", "No video loaded or export handler not ready.")
+            return
+
+        export_mode = self._get_export_resolution_choice()
+        if export_mode is None:
+            status_bar = self.statusBar()
+            if status_bar: status_bar.showMessage("Video export cancelled by user.", 3000)
+            logger.info("Video export cancelled by user at resolution choice dialog.")
             return
 
         base_video_name = "video_with_overlays"
@@ -800,7 +851,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ("avi", "MJPG", "AVI Video Files (Motion JPEG) (*.avi)"),
         ]
         file_filters = ";;".join([opt[2] for opt in export_options])
-        default_filename = f"{base_video_name}.{export_options[0][0]}"
+        default_filename_suffix = "_orig_res" if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else "_viewport_res"
+        default_filename = f"{base_video_name}{default_filename_suffix}.{export_options[0][0]}"
         start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
 
         save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(
@@ -833,7 +885,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         chosen_extension_dot = ext_part_from_path_lower
                         break
             if not chosen_fourcc_str: 
-                chosen_fourcc_str = export_options[0][1]
+                chosen_fourcc_str = export_options[0][1] # Default to first option if filter somehow fails
                 chosen_extension_dot = f".{export_options[0][0]}"
         
         current_name_part, current_ext_part = os.path.splitext(save_path)
@@ -842,7 +894,8 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.info(f"Adjusted save path for consistent extension: {save_path}")
 
         if self._export_handler:
-            self._export_handler.export_video_with_overlays(save_path, chosen_fourcc_str, chosen_extension_dot)
+            # Pass the chosen export_mode to the handler
+            self._export_handler.export_video_with_overlays(save_path, chosen_fourcc_str, chosen_extension_dot, export_mode)
 
     @QtCore.Slot()
     def _trigger_export_frame(self) -> None:
@@ -850,11 +903,19 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Export Frame Error", "No video loaded, no current frame, or export handler not ready.")
             return
 
+        export_mode = self._get_export_resolution_choice()
+        if export_mode is None:
+            status_bar = self.statusBar()
+            if status_bar: status_bar.showMessage("Frame export cancelled by user.", 3000)
+            logger.info("Frame export cancelled by user at resolution choice dialog.")
+            return
+
         base_video_name = "frame"
         if self.video_filepath:
             base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0]
         
-        default_filename = f"{base_video_name}_frame_{self.current_frame_index + 1}.png"
+        filename_suffix = "_orig_res" if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else "_viewport_res"
+        default_filename = f"{base_video_name}_frame_{self.current_frame_index + 1}{filename_suffix}.png"
         start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
 
         save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
@@ -867,9 +928,16 @@ class MainWindow(QtWidgets.QMainWindow):
             status_bar = self.statusBar()
             if status_bar: status_bar.showMessage("Frame export cancelled.", 3000)
             return
+        
+        # Ensure .png extension
+        if not save_path.lower().endswith(".png"):
+            save_path += ".png"
+            logger.info(f"Appended .png extension to save path: {save_path}")
+
 
         if self._export_handler:
-            self._export_handler.export_current_frame_to_png(save_path)
+            # Pass the chosen export_mode to the handler
+            self._export_handler.export_current_frame_to_png(save_path, export_mode)
 
     _export_progress_dialog: Optional[QtWidgets.QProgressDialog] = None
 
