@@ -578,16 +578,57 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def open_video(self) -> None:
         logger.info("Open Video action triggered.")
-        if self.video_loaded: self._release_video()
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open Video File", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
-        if not file_path:
-            status_bar = self.statusBar()
-            if status_bar: status_bar.showMessage("Video loading cancelled.", 3000)
-            return
         status_bar = self.statusBar()
-        if status_bar: status_bar.showMessage(f"Opening video: {os.path.basename(file_path)}...", 0)
-        QtWidgets.QApplication.processEvents()
-        self.video_handler.open_video(file_path)
+
+        proceed_with_file_dialog = False
+
+        if self.video_loaded:
+            logger.debug("Video currently loaded. Prompting user to confirm.")
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Confirm Open New Video",
+                "Opening a new video will close the current video. Any unsaved tracks will be lost.\n\n"
+                "Do you want to proceed?",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No  # Default to No
+            )
+
+            if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                logger.info("User chose to proceed with opening a new video.")
+                proceed_with_file_dialog = True
+            else:
+                logger.info("User cancelled opening a new video (at confirmation dialog).")
+                if status_bar:
+                    status_bar.showMessage("Open new video cancelled.", 3000)
+                return  # Do nothing, keep current video
+        else:
+            # No video loaded, proceed directly to file dialog
+            proceed_with_file_dialog = True
+
+        if proceed_with_file_dialog:
+            file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "Open Video File", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)"
+            )
+
+            if not file_path:
+                logger.info("Video loading cancelled by user (at file dialog).")
+                if status_bar:
+                    status_bar.showMessage("Video loading cancelled.", 3000)
+                # If a video was loaded and they confirmed, but then cancelled file dialog,
+                # the original video remains loaded because _release_video() hasn't been called.
+                return
+
+            # --- If a file is selected, NOW release the old video (if any) ---
+            if self.video_loaded:
+                logger.info("Releasing previously loaded video before opening new one.")
+                self._release_video()
+            # --- End of conditional release ---
+
+            if status_bar:
+                status_bar.showMessage(f"Opening video: {os.path.basename(file_path)}...", 0)
+            QtWidgets.QApplication.processEvents()
+            self.video_handler.open_video(file_path)
+
 
     def _release_video(self) -> None:
         logger.info("Releasing video resources and resetting state...")
