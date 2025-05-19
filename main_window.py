@@ -445,7 +445,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'exportViewAction') and self.exportViewAction:
             self.exportViewAction.setEnabled(is_video_loaded)
         if hasattr(self, 'exportFrameAction') and self.exportFrameAction:
-            self.exportFrameAction.setEnabled(is_video_loaded and self.current_frame_index >= 0)
+            self.exportFrameAction.setEnabled(is_video_loaded)
         
         if hasattr(self, 'undoAction') and self.undoAction: # Enable/disable undo action
             self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action() and is_video_loaded)
