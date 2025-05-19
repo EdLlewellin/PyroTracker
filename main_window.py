@@ -1143,12 +1143,50 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QApplication.processEvents()
 
     @QtCore.Slot(bool, str)
-    def _on_export_finished(self, success: bool, message: str) -> None: # From previous step
+    def _on_export_finished(self, success: bool, message: str) -> None:
         logger.info(f"MainWindow: Export process finished. Success: {success}, Message: {message}")
-        if self._export_progress_dialog: self._export_progress_dialog.close(); self._export_progress_dialog = None
-        if self.statusBar(): self.statusBar().showMessage(message, 5000 if success else 8000)
-        if not success: QtWidgets.QMessageBox.warning(self, "Export Problem", message)
+        if self._export_progress_dialog:
+            self._export_progress_dialog.close()
+            self._export_progress_dialog = None
+        
+        status_bar = self.statusBar()
+        if status_bar:
+            status_bar.showMessage(message, 5000 if success else 8000)
+        
+        if not success:
+            QtWidgets.QMessageBox.warning(self, "Export Problem", message)
+        
+        # Re-enable UI elements like export actions
         self._update_ui_state()
+
+        # --- Explicitly refresh scale bar for viewport after export ---
+        if self.video_loaded and self.imageView and self.scale_manager:
+            # Check if the scale bar is supposed to be visible via the MainWindow's checkbox
+            if hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
+                logger.debug("MainWindow: Refreshing scale bar dimensions for viewport after export finished.")
+                current_m_per_px = self.scale_manager.get_scale_m_per_px()
+                if current_m_per_px is not None:
+                    # This will use the current viewport's scale factor from imageView's transform
+                    self.imageView.update_scale_bar_dimensions(current_m_per_px)
+                    # Ensure the scale bar widget itself is set to visible if update_dimensions doesn't handle it
+                    if hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget:
+                        if not self.imageView._scale_bar_widget.isVisible() and self.imageView._scale_bar_widget.get_current_bar_pixel_length() > 0:
+                            logger.debug("MainWindow: Making scale bar visible after export refresh.")
+                            self.imageView.set_scale_bar_visibility(True) # This also calls _update_overlay_widget_positions
+                        elif self.imageView._scale_bar_widget.isVisible(): # If it was already visible, just ensure position is correct
+                             self.imageView._update_overlay_widget_positions()
+
+                else:
+                    # If scale is not set, ensure bar is hidden
+                    logger.debug("MainWindow: Scale not set after export, hiding scale bar.")
+                    self.imageView.set_scale_bar_visibility(False)
+            else:
+                # If the checkbox is not checked, ensure the bar is hidden
+                logger.debug("MainWindow: Scale bar checkbox not checked after export, hiding scale bar.")
+                self.imageView.set_scale_bar_visibility(False)
+        elif self.imageView : # If video not loaded, still ensure it's hidden
+             logger.debug("MainWindow: Video not loaded after export, hiding scale bar.")
+             self.imageView.set_scale_bar_visibility(False)
         
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
