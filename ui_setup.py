@@ -22,7 +22,6 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     logger.info("Setting up MainWindow UI elements...")
     style: QtWidgets.QStyle = main_window.style()
 
-    # ... (keep existing UI setup for leftPanelWidget, rightPanelWidget, dataTabsWidget, groups, etc.) ...
     main_window.mainSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     main_window.setCentralWidget(main_window.mainSplitter)
 
@@ -39,6 +38,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.frameSlider.setMinimum(0); main_window.frameSlider.setMaximum(0)
     main_window.frameSlider.setValue(0); main_window.frameSlider.setTickPosition(QtWidgets.QSlider.TickPosition.NoTicks)
     video_controls_layout.addWidget(main_window.frameSlider)
+
     frame_nav_layout = QtWidgets.QHBoxLayout()
     main_window.play_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaPlay)
     main_window.stop_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaStop)
@@ -46,12 +46,58 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.playPauseButton.setToolTip("Play/Pause Video (Space)")
     main_window.prevFrameButton = QtWidgets.QPushButton("<< Prev"); main_window.prevFrameButton.setToolTip("Previous Frame")
     main_window.nextFrameButton = QtWidgets.QPushButton("Next >>"); main_window.nextFrameButton.setToolTip("Next Frame")
-    main_window.frameLabel = QtWidgets.QLabel("Frame: - / -"); main_window.frameLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); main_window.frameLabel.setMinimumWidth(100)
-    main_window.timeLabel = QtWidgets.QLabel("Time: --:--.--- / --:--.---"); main_window.timeLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); main_window.timeLabel.setMinimumWidth(210)
-    main_window.fpsLabel = QtWidgets.QLabel("FPS: ---.--"); main_window.fpsLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); main_window.fpsLabel.setMinimumWidth(80); main_window.fpsLabel.setToolTip("Video Frames Per Second")
-    main_window.filenameLabel = QtWidgets.QLabel("File: -"); main_window.filenameLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter); main_window.filenameLabel.setMinimumWidth(150); main_window.filenameLabel.setStyleSheet("QLabel { color : grey; }"); main_window.filenameLabel.setToolTip("Currently loaded video file")
-    frame_nav_layout.addWidget(main_window.playPauseButton); frame_nav_layout.addSpacing(10); frame_nav_layout.addWidget(main_window.prevFrameButton); frame_nav_layout.addWidget(main_window.nextFrameButton)
-    frame_nav_layout.addStretch(); frame_nav_layout.addWidget(main_window.frameLabel); frame_nav_layout.addSpacing(5); frame_nav_layout.addWidget(main_window.timeLabel); frame_nav_layout.addSpacing(5); frame_nav_layout.addWidget(main_window.fpsLabel); frame_nav_layout.addSpacing(10); frame_nav_layout.addWidget(main_window.filenameLabel)
+
+    frame_nav_layout.addWidget(main_window.playPauseButton)
+    frame_nav_layout.addSpacing(10)
+    frame_nav_layout.addWidget(main_window.prevFrameButton)
+    frame_nav_layout.addWidget(main_window.nextFrameButton)
+    frame_nav_layout.addStretch()
+
+    # --- MODIFIED: Frame Display (Split into QLabel and QLineEdit) ---
+    frame_nav_layout.addWidget(QtWidgets.QLabel("Frame:"))
+    main_window.currentFrameLineEdit = QtWidgets.QLineEdit("-")
+    main_window.currentFrameLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    main_window.currentFrameLineEdit.setMaximumWidth(60) # Adjusted width
+    main_window.currentFrameLineEdit.setToolTip("Current frame (Press Enter to seek)")
+    main_window.currentFrameLineEdit.setReadOnly(True) # Start as read-only
+    frame_nav_layout.addWidget(main_window.currentFrameLineEdit)
+
+    main_window.totalFramesLabel = QtWidgets.QLabel("/ -")
+    main_window.totalFramesLabel.setMinimumWidth(50)
+    main_window.totalFramesLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    frame_nav_layout.addWidget(main_window.totalFramesLabel)
+    frame_nav_layout.addSpacing(10) # Increased spacing
+
+    # --- MODIFIED: Time Display (Split into QLabel and QLineEdit) ---
+    frame_nav_layout.addWidget(QtWidgets.QLabel("Time:"))
+    main_window.currentTimeLineEdit = QtWidgets.QLineEdit("--:--.---")
+    main_window.currentTimeLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    main_window.currentTimeLineEdit.setMaximumWidth(75) # Adjusted width
+    main_window.currentTimeLineEdit.setToolTip("Current time (Enter MM:SS.mmm or SSS.mmm to seek)")
+    main_window.currentTimeLineEdit.setReadOnly(True) # Start as read-only
+    frame_nav_layout.addWidget(main_window.currentTimeLineEdit)
+
+    main_window.totalTimeLabel = QtWidgets.QLabel("/ --:--.---")
+    main_window.totalTimeLabel.setMinimumWidth(90) # Adjusted width
+    main_window.totalTimeLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    frame_nav_layout.addWidget(main_window.totalTimeLabel)
+    frame_nav_layout.addSpacing(10) # Increased spacing
+    # --- END MODIFIED Frame and Time display ---
+
+    main_window.fpsLabel = QtWidgets.QLabel("FPS: ---.--")
+    main_window.fpsLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+    main_window.fpsLabel.setMinimumWidth(80)
+    main_window.fpsLabel.setToolTip("Video Frames Per Second")
+    frame_nav_layout.addWidget(main_window.fpsLabel)
+    frame_nav_layout.addSpacing(10)
+
+    main_window.filenameLabel = QtWidgets.QLabel("File: -")
+    main_window.filenameLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    main_window.filenameLabel.setMinimumWidth(150)
+    main_window.filenameLabel.setStyleSheet("QLabel { color : grey; }")
+    main_window.filenameLabel.setToolTip("Currently loaded video file")
+    frame_nav_layout.addWidget(main_window.filenameLabel)
+    
     video_controls_layout.addLayout(frame_nav_layout)
     leftPanelLayout.addWidget(video_controls_group, stretch=0)
     main_window.mainSplitter.addWidget(main_window.leftPanelWidget)
@@ -59,8 +105,8 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     # --- Right Panel (Track Controls and Data Tabs) ---
     main_window.rightPanelWidget = QtWidgets.QWidget()
-    main_window.rightPanelWidget.setMaximumWidth(400)
-    main_window.rightPanelWidget.setMinimumWidth(300)
+    main_window.rightPanelWidget.setMaximumWidth(450) # Slightly wider to accommodate changes
+    main_window.rightPanelWidget.setMinimumWidth(380) # Slightly wider
     rightPanelLayout = QtWidgets.QVBoxLayout(main_window.rightPanelWidget)
     rightPanelLayout.setContentsMargins(5, 5, 5, 5)
     rightPanelLayout.setSpacing(6)

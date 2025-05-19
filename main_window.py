@@ -9,43 +9,27 @@ from typing import Optional, List, Tuple, Dict, Any
 from metadata_dialog import MetadataDialog
 import config
 from interactive_image_view import InteractiveImageView, InteractionMode
-# Ensure UndoActionType is imported if TrackManager uses it in type hints accessible here
 from track_manager import TrackManager, TrackVisibilityMode, PointData, VisualElement, UndoActionType
 import file_io
 from video_handler import VideoHandler
-import ui_setup
+import ui_setup # This will setup the new QLineEdit and QLabel attributes
 from coordinates import CoordinateSystem, CoordinateTransformer
 import settings_manager
 from preferences_dialog import PreferencesDialog
 from scale_manager import ScaleManager
-# ScaleBarWidget is used by ImageView, not directly instantiated here typically
-# from scale_bar_widget import ScaleBarWidget
 from panel_controllers import ScalePanelController, CoordinatePanelController
 from table_controllers import TrackDataViewController
 from export_handler import ExportHandler, ExportResolutionMode
 
-# Get a logger for this module
 logger = logging.getLogger(__name__)
 
-# Determine the base directory of the script reliably
 basedir = os.path.dirname(os.path.abspath(__file__))
 ICON_PATH = os.path.join(basedir, "PyroTracker.ico")
 
 class MainWindow(QtWidgets.QMainWindow):
-    """
-    Main application window for PyroTracker.
-
-    Orchestrates interactions between UI elements, ImageView, TrackManager,
-    VideoHandler, CoordinateTransformer, and SettingsManager. Handles UI updates,
-    interaction modes, track management UI, drawing track visuals, and user actions.
-    Delegates video loading/playback/navigation to VideoHandler.
-    Delegates file I/O for tracks to file_io.
-    Delegates UI layout setup to ui_setup.
-    """
-    # --- Instance Variable Type Hinting ---
-    # Core Components
+    # --- Instance Variable Type Hinting (ensure these match ui_setup.py) ---
     track_manager: TrackManager
-    imageView: InteractiveImageView # Assigned by ui_setup
+    imageView: InteractiveImageView
     video_handler: VideoHandler
     coord_transformer: CoordinateTransformer
     scale_manager: ScaleManager
@@ -54,22 +38,18 @@ class MainWindow(QtWidgets.QMainWindow):
     table_data_controller: Optional[TrackDataViewController]
     _export_handler: Optional[ExportHandler] = None
 
-    # Video State (Mirrored from VideoHandler for easier UI updates)
-    total_frames: int
-    current_frame_index: int
-    video_loaded: bool
-    is_playing: bool
-    fps: float
-    total_duration_ms: float
-    video_filepath: str
-    frame_width: int
-    frame_height: int
+    total_frames: int = 0
+    current_frame_index: int = -1
+    video_loaded: bool = False
+    is_playing: bool = False
+    fps: float = 0.0
+    total_duration_ms: float = 0.0
+    video_filepath: str = ""
+    frame_width: int = 0
+    frame_height: int = 0
+    _auto_advance_enabled: bool = False
+    _auto_advance_frames: int = 1
 
-    # Auto-Advance State
-    _auto_advance_enabled: bool
-    _auto_advance_frames: int
-
-    # UI Elements (These are assigned by ui_setup.setup_main_window_ui)
     mainSplitter: QtWidgets.QSplitter
     leftPanelWidget: QtWidgets.QWidget
     rightPanelWidget: QtWidgets.QWidget
@@ -77,8 +57,14 @@ class MainWindow(QtWidgets.QMainWindow):
     playPauseButton: QtWidgets.QPushButton
     prevFrameButton: QtWidgets.QPushButton
     nextFrameButton: QtWidgets.QPushButton
-    frameLabel: QtWidgets.QLabel
-    timeLabel: QtWidgets.QLabel
+    
+    # --- UPDATED UI Element Attributes for Frame/Time Display ---
+    currentFrameLineEdit: QtWidgets.QLineEdit 
+    totalFramesLabel: QtWidgets.QLabel     
+    currentTimeLineEdit: QtWidgets.QLineEdit
+    totalTimeLabel: QtWidgets.QLabel      
+    # --- END UPDATED ---
+    
     fpsLabel: QtWidgets.QLabel
     filenameLabel: QtWidgets.QLabel
     dataTabsWidget: QtWidgets.QTabWidget
@@ -120,7 +106,6 @@ class MainWindow(QtWidgets.QMainWindow):
     cursorPosLabelBL_m: Optional[QtWidgets.QLabel] = None
     cursorPosLabelCustom_m: Optional[QtWidgets.QLabel] = None
 
-    # Drawing Pens (Configured based on settings)
     pen_origin_marker: QtGui.QPen
     pen_marker_active_current: QtGui.QPen
     pen_marker_active_other: QtGui.QPen
@@ -129,8 +114,11 @@ class MainWindow(QtWidgets.QMainWindow):
     pen_line_active: QtGui.QPen
     pen_line_inactive: QtGui.QPen
 
+    _export_progress_dialog: Optional[QtWidgets.QProgressDialog] = None
+    # Properties to store original text during editing are no longer needed at class level
+    # if we directly populate with current value on focus.
+
     def __init__(self) -> None:
-        """Initializes the MainWindow, sets up components, pens, delegates UI setup, and connects signals."""
         super().__init__()
         logger.info("Initializing MainWindow...")
         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}")
@@ -138,42 +126,40 @@ class MainWindow(QtWidgets.QMainWindow):
         if os.path.exists(ICON_PATH):
             self.setWindowIcon(QtGui.QIcon(ICON_PATH))
 
-        # Initialize core components
         self.video_handler = VideoHandler(self)
         self.track_manager = TrackManager(self)
         self.coord_transformer = CoordinateTransformer()
         self.scale_manager = ScaleManager(self)
-
-        # Initialize video state variables
-        self.total_frames = 0
-        self.current_frame_index = -1
-        self.video_loaded = False
-        self.is_playing = False
-        self.fps = 0.0
-        self.total_duration_ms = 0.0
-        self.video_filepath = ""
-        self.frame_width = 0
-        self.frame_height = 0
-
-        self._auto_advance_enabled = False
-        self._auto_advance_frames = 1
-
         self._setup_pens()
-
+        
         screen_geometry = QtGui.QGuiApplication.primaryScreen().availableGeometry()
         self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
 
         ui_setup.setup_main_window_ui(self)
 
+        if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
+            self.currentFrameLineEdit.editingFinished.connect(self._handle_frame_input_finished)
+            self.currentFrameLineEdit.installEventFilter(self)
+            logger.debug("Connected currentFrameLineEdit editingFinished signal and event filter.")
+        else:
+            logger.error("currentFrameLineEdit is not a QLineEdit or not found after UI setup.")
+
+        if hasattr(self, 'currentTimeLineEdit') and isinstance(self.currentTimeLineEdit, QtWidgets.QLineEdit):
+            self.currentTimeLineEdit.editingFinished.connect(self._handle_time_input_finished)
+            self.currentTimeLineEdit.installEventFilter(self)
+            logger.debug("Connected currentTimeLineEdit editingFinished signal and event filter.")
+        else:
+            logger.error("currentTimeLineEdit is not a QLineEdit or not found after UI setup.")
+            
+        # ... (rest of your __init__ method - ensure it's complete)
         if hasattr(self, 'undoAction') and self.undoAction:
             self.undoAction.triggered.connect(self._trigger_undo_point_action)
-            self.undoAction.setEnabled(False) # Initially disabled
+            self.undoAction.setEnabled(False) 
             logger.debug("Undo action connected and initially disabled.")
         else:
             logger.warning("Undo action (self.undoAction) not found after UI setup.")
 
-        # --- Connect TrackManager's undoStateChanged signal ---
         if self.track_manager and hasattr(self, 'undoAction') and self.undoAction:
             self.track_manager.undoStateChanged.connect(self.undoAction.setEnabled)
             logger.debug("Connected TrackManager.undoStateChanged to undoAction.setEnabled.")
@@ -188,13 +174,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 scale_manager=self.scale_manager,
                 image_view=self.imageView,
                 main_window_ref=self,
-                scale_m_per_px_input=self.scale_m_per_px_input,
-                scale_px_per_m_input=self.scale_px_per_m_input,
-                set_scale_by_feature_button=self.setScaleByFeatureButton,
-                show_scale_line_checkbox=self.showScaleLineCheckBox,
-                scale_reset_button=self.scale_reset_button,
-                scale_display_meters_checkbox=self.scale_display_meters_checkbox,
-                show_scale_bar_checkbox=self.showScaleBarCheckBox,
+                scale_m_per_px_input=self.scale_m_per_px_input, # type: ignore
+                scale_px_per_m_input=self.scale_px_per_m_input, # type: ignore
+                set_scale_by_feature_button=self.setScaleByFeatureButton, # type: ignore
+                show_scale_line_checkbox=self.showScaleLineCheckBox, # type: ignore
+                scale_reset_button=self.scale_reset_button, # type: ignore
+                scale_display_meters_checkbox=self.scale_display_meters_checkbox, # type: ignore
+                show_scale_bar_checkbox=self.showScaleBarCheckBox, # type: ignore
                 parent=self
             )
             if self.statusBar():
@@ -212,16 +198,16 @@ class MainWindow(QtWidgets.QMainWindow):
             'cursorPosLabelCustom', 'cursorPosLabelTL_m', 'cursorPosLabelBL_m', 'cursorPosLabelCustom_m',
             'imageView', 'scale_manager'
         ]):
-            cursor_labels_px = { "TL": self.cursorPosLabelTL, "BL": self.cursorPosLabelBL, "Custom": self.cursorPosLabelCustom }
-            cursor_labels_m = { "TL": self.cursorPosLabelTL_m, "BL": self.cursorPosLabelBL_m, "Custom": self.cursorPosLabelCustom_m }
+            cursor_labels_px_dict = { "TL": self.cursorPosLabelTL, "BL": self.cursorPosLabelBL, "Custom": self.cursorPosLabelCustom }
+            cursor_labels_m_dict = { "TL": self.cursorPosLabelTL_m, "BL": self.cursorPosLabelBL_m, "Custom": self.cursorPosLabelCustom_m } # type: ignore
             self.coord_panel_controller = CoordinatePanelController(
                 coord_transformer=self.coord_transformer, image_view=self.imageView,
-                scale_manager=self.scale_manager, coord_system_group=self.coordSystemGroup,
-                coord_top_left_radio=self.coordTopLeftRadio, coord_bottom_left_radio=self.coordBottomLeftRadio,
-                coord_custom_radio=self.coordCustomRadio, coord_top_left_origin_label=self.coordTopLeftOriginLabel,
-                coord_bottom_left_origin_label=self.coordBottomLeftOriginLabel, coord_custom_origin_label=self.coordCustomOriginLabel,
-                set_origin_button=self.setOriginButton, show_origin_checkbox=self.showOriginCheckBox,
-                cursor_pos_labels_px=cursor_labels_px, cursor_pos_labels_m=cursor_labels_m, parent=self
+                scale_manager=self.scale_manager, coord_system_group=self.coordSystemGroup, # type: ignore
+                coord_top_left_radio=self.coordTopLeftRadio, coord_bottom_left_radio=self.coordBottomLeftRadio, # type: ignore
+                coord_custom_radio=self.coordCustomRadio, coord_top_left_origin_label=self.coordTopLeftOriginLabel, # type: ignore
+                coord_bottom_left_origin_label=self.coordBottomLeftOriginLabel, coord_custom_origin_label=self.coordCustomOriginLabel, # type: ignore
+                set_origin_button=self.setOriginButton, show_origin_checkbox=self.showOriginCheckBox, # type: ignore
+                cursor_pos_labels_px=cursor_labels_px_dict, cursor_pos_labels_m=cursor_labels_m_dict, parent=self
             )
             logger.debug("CoordinatePanelController initialized.")
         else:
@@ -238,9 +224,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 video_handler=self.video_handler,
                 scale_manager=self.scale_manager,
                 coord_transformer=self.coord_transformer,
-                tracks_table_widget=self.tracksTableWidget,
-                points_table_widget=self.pointsTableWidget,
-                points_tab_label=self.pointsTabLabel,
+                tracks_table_widget=self.tracksTableWidget, # type: ignore
+                points_table_widget=self.pointsTableWidget, # type: ignore
+                points_tab_label=self.pointsTabLabel, # type: ignore
                 parent=self
             )
             logger.debug("TrackDataViewController initialized.")
@@ -252,25 +238,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if status_bar_instance:
             status_bar_instance.showMessage("Ready. Load a video via File -> Open Video...")
 
-        # --- Instantiate ExportHandler ---
         self._export_handler = ExportHandler(
-            video_handler=self.video_handler,
-            track_manager=self.track_manager,
-            scale_manager=self.scale_manager,
-            coord_transformer=self.coord_transformer,
-            image_view=self.imageView,
-            main_window=self, # Pass self if ExportHandler needs to create dialogs with MainWindow as parent
-            parent=self
-        )
+            video_handler=self.video_handler, track_manager=self.track_manager,
+            scale_manager=self.scale_manager, coord_transformer=self.coord_transformer,
+            image_view=self.imageView, main_window=self, parent=self )
         logger.debug("ExportHandler initialized in MainWindow.")
 
-        # --- Connect signals for VideoHandler ---
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
-
-        # --- Connect signals for ImageView ---
         if self.imageView:
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
@@ -280,63 +257,40 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.sceneMouseMoved.connect(self.coord_panel_controller._on_handle_mouse_moved)
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
-
-        # --- Connect signals for TrackManager ---
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
-
-        # --- Connect signals for ScaleManager ---
-        if self.scale_panel_controller:
-            self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
-        if self.table_data_controller:
-            self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
-        if self.coord_panel_controller:
-             self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
-
-        # --- Connect signals for CoordinatePanelController ---
+        if self.scale_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
+        if self.table_data_controller: self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
+        if self.coord_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
         if self.coord_panel_controller:
             self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
-            if self.table_data_controller:
-                 self.coord_panel_controller.pointsTableNeedsUpdate.connect(self.table_data_controller.update_points_table_ui)
-            if status_bar_instance:
-                self.coord_panel_controller.statusBarMessage.connect(status_bar_instance.showMessage)
-
-        # --- Connect signals for TrackDataViewController ---
+            if self.table_data_controller: self.coord_panel_controller.pointsTableNeedsUpdate.connect(self.table_data_controller.update_points_table_ui)
+            if status_bar_instance: self.coord_panel_controller.statusBarMessage.connect(status_bar_instance.showMessage)
         if self.table_data_controller:
             self.table_data_controller.seekVideoToFrame.connect(self.video_handler.seek_frame)
             self.table_data_controller.updateMainWindowUIState.connect(self._update_ui_state)
-            if status_bar_instance:
-                self.table_data_controller.statusBarMessage.connect(status_bar_instance.showMessage)
-            if hasattr(self.tracksTableWidget, 'horizontalHeader') and \
-               hasattr(self.tracksTableWidget.horizontalHeader(), 'sectionClicked'):
-                 self.tracksTableWidget.horizontalHeader().sectionClicked.connect(
-                     self.table_data_controller.handle_visibility_header_clicked
-                 )
-
-        # --- Connect UI element signals ---
-        if self.frameSlider: self.frameSlider.valueChanged.connect(self._slider_value_changed)
-        if self.playPauseButton: self.playPauseButton.clicked.connect(self._toggle_playback)
-        if self.prevFrameButton: self.prevFrameButton.clicked.connect(self._show_previous_frame)
-        if self.nextFrameButton: self.nextFrameButton.clicked.connect(self._show_next_frame)
-        if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled)
-        if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed)
-        if self.videoInfoAction: self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
-        if self.preferencesAction: self.preferencesAction.triggered.connect(self._show_preferences_dialog)
+            if status_bar_instance: self.table_data_controller.statusBarMessage.connect(status_bar_instance.showMessage)
+            if hasattr(self.tracksTableWidget, 'horizontalHeader') and hasattr(self.tracksTableWidget.horizontalHeader(), 'sectionClicked'): # type: ignore
+                 self.tracksTableWidget.horizontalHeader().sectionClicked.connect(self.table_data_controller.handle_visibility_header_clicked) # type: ignore
+        if self.frameSlider: self.frameSlider.valueChanged.connect(self._slider_value_changed) # type: ignore
+        if self.playPauseButton: self.playPauseButton.clicked.connect(self._toggle_playback) # type: ignore
+        if self.prevFrameButton: self.prevFrameButton.clicked.connect(self._show_previous_frame) # type: ignore
+        if self.nextFrameButton: self.nextFrameButton.clicked.connect(self._show_next_frame) # type: ignore
+        if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled) # type: ignore
+        if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed) # type: ignore
+        if self.videoInfoAction: self.videoInfoAction.triggered.connect(self._show_video_info_dialog) # type: ignore
+        if self.preferencesAction: self.preferencesAction.triggered.connect(self._show_preferences_dialog) # type: ignore
         if self.newTrackAction:
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
-
-        # --- MODIFIED: Connect Export Actions to ExportHandler ---
-        if hasattr(self, 'exportViewAction') and self.exportViewAction and self._export_handler:
-            self.exportViewAction.triggered.connect(self._trigger_export_video) # New slot in MainWindow
-        if hasattr(self, 'exportFrameAction') and self.exportFrameAction and self._export_handler:
-            self.exportFrameAction.triggered.connect(self._trigger_export_frame) # New slot in MainWindow
-
-        # --- Connect signals from ExportHandler ---
+        if hasattr(self, 'exportViewAction') and self.exportViewAction and self._export_handler: # type: ignore
+            self.exportViewAction.triggered.connect(self._trigger_export_video) # type: ignore
+        if hasattr(self, 'exportFrameAction') and self.exportFrameAction and self._export_handler: # type: ignore
+            self.exportFrameAction.triggered.connect(self._trigger_export_frame) # type: ignore
         if self._export_handler:
             self._export_handler.exportStarted.connect(self._on_export_started)
             self._export_handler.exportProgress.connect(self._on_export_progress)
@@ -348,8 +302,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table_data_controller.update_points_table_ui()
         if self.coord_panel_controller: self.coord_panel_controller.update_ui_display()
         if self.scale_panel_controller: self.scale_panel_controller.update_ui_from_manager()
-
         logger.info("MainWindow initialization complete.")
+
 
     def _setup_pens(self) -> None:
         logger.debug("Setting up QPen objects using current settings...")
@@ -384,16 +338,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pen_origin_marker = _create_pen(color_origin_marker, origin_pen_width, settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_ORIGIN_MARKER_COLOR])
         logger.debug("QPen setup complete using settings.")
 
+
     def _reset_ui_after_video_close(self) -> None:
         logger.debug("Resetting UI elements for no video loaded state.")
         status_bar = self.statusBar()
         if status_bar: status_bar.clearMessage()
-        if self.frameLabel: self.frameLabel.setText("Frame: - / -")
-        if self.timeLabel: self.timeLabel.setText("Time: --:--.--- / --:--.---")
+
+        # Reset new QLineEdits and QLabels for frame/time
+        if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
+            self.currentFrameLineEdit.blockSignals(True)
+            self.currentFrameLineEdit.setReadOnly(True)
+            self.currentFrameLineEdit.setText("-")
+            self.currentFrameLineEdit.deselect()
+            self.currentFrameLineEdit.blockSignals(False)
+        if hasattr(self, 'totalFramesLabel') and isinstance(self.totalFramesLabel, QtWidgets.QLabel):
+            self.totalFramesLabel.setText("/ -")
+
+        if hasattr(self, 'currentTimeLineEdit') and isinstance(self.currentTimeLineEdit, QtWidgets.QLineEdit):
+            self.currentTimeLineEdit.blockSignals(True)
+            self.currentTimeLineEdit.setReadOnly(True)
+            self.currentTimeLineEdit.setText("--:--.---")
+            self.currentTimeLineEdit.deselect()
+            self.currentTimeLineEdit.blockSignals(False)
+        if hasattr(self, 'totalTimeLabel') and isinstance(self.totalTimeLabel, QtWidgets.QLabel):
+            self.totalTimeLabel.setText("/ --:--.---")
+        
         if self.fpsLabel: self.fpsLabel.setText("FPS: ---.--")
         if self.filenameLabel:
              self.filenameLabel.setText("File: -")
              self.filenameLabel.setToolTip("No video loaded")
+        
         if self.frameSlider:
             self.frameSlider.blockSignals(True)
             self.frameSlider.setValue(0)
@@ -405,14 +379,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageView.resetInitialLoadFlag()
             self.imageView.set_scale_bar_visibility(False)
             self.imageView.set_interaction_mode(InteractionMode.NORMAL)
+        
         self.coord_transformer = CoordinateTransformer()
         if self.coord_panel_controller:
-            self.coord_panel_controller._coord_transformer = self.coord_transformer # type: ignore
+            self.coord_panel_controller._coord_transformer = self.coord_transformer
+        
         self.scale_manager.reset()
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(False)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(False)
         if self.table_data_controller: self.table_data_controller.set_video_loaded_status(False)
+        
         self._update_ui_state()
+
 
     def _update_ui_state(self) -> None:
         is_video_loaded: bool = self.video_loaded
@@ -455,14 +433,125 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
         if self.table_data_controller: self.table_data_controller.set_video_loaded_status(is_video_loaded, self.total_frames if is_video_loaded else 0)
 
+
     def _update_ui_for_frame(self, frame_index: int) -> None:
-        if not self.video_loaded: return
+        """Updates UI elements that display current frame and time information."""
+        if not self.video_loaded:
+            # Reset frame display
+            if hasattr(self, 'currentFrameLineEdit'):
+                self.currentFrameLineEdit.blockSignals(True)
+                self.currentFrameLineEdit.setReadOnly(True)
+                self.currentFrameLineEdit.setText("-")
+                self.currentFrameLineEdit.deselect()
+                self.currentFrameLineEdit.blockSignals(False)
+            if hasattr(self, 'totalFramesLabel'):
+                self.totalFramesLabel.setText("/ -")
+            # Reset time display
+            if hasattr(self, 'currentTimeLineEdit'):
+                self.currentTimeLineEdit.blockSignals(True)
+                self.currentTimeLineEdit.setReadOnly(True)
+                self.currentTimeLineEdit.setText("--:--.---")
+                self.currentTimeLineEdit.deselect()
+                self.currentTimeLineEdit.blockSignals(False)
+            if hasattr(self, 'totalTimeLabel'):
+                self.totalTimeLabel.setText("/ --:--.---")
+            return
+
         if self.frameSlider:
-            self.frameSlider.blockSignals(True); self.frameSlider.setValue(frame_index); self.frameSlider.blockSignals(False)
-        if self.frameLabel: self.frameLabel.setText(f"Frame: {frame_index + 1} / {self.total_frames}")
-        if self.timeLabel:
+            self.frameSlider.blockSignals(True)
+            self.frameSlider.setValue(frame_index)
+            self.frameSlider.blockSignals(False)
+
+        # Update Frame Display
+        if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
+            self.currentFrameLineEdit.blockSignals(True)
+            self.currentFrameLineEdit.setReadOnly(True) 
+            self.currentFrameLineEdit.setText(str(frame_index + 1))
+            self.currentFrameLineEdit.deselect()
+            self.currentFrameLineEdit.blockSignals(False)
+        if hasattr(self, 'totalFramesLabel') and isinstance(self.totalFramesLabel, QtWidgets.QLabel):
+            self.totalFramesLabel.setText(f"/ {self.total_frames}")
+
+        # Update Time Display
+        if hasattr(self, 'currentTimeLineEdit') and isinstance(self.currentTimeLineEdit, QtWidgets.QLineEdit):
             current_ms = (frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
-            self.timeLabel.setText(f"Time: {self._format_time(current_ms)} / {self._format_time(self.total_duration_ms)}")
+            self.currentTimeLineEdit.blockSignals(True)
+            self.currentTimeLineEdit.setReadOnly(True)
+            self.currentTimeLineEdit.setText(self._format_time(current_ms))
+            self.currentTimeLineEdit.deselect()
+            self.currentTimeLineEdit.blockSignals(False)
+        if hasattr(self, 'totalTimeLabel') and isinstance(self.totalTimeLabel, QtWidgets.QLabel):
+            self.totalTimeLabel.setText(f"/ {self._format_time(self.total_duration_ms)}")
+
+    @QtCore.Slot()
+    def _handle_frame_input_finished(self) -> None:
+        if not self.video_loaded or not hasattr(self, 'currentFrameLineEdit') or not isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
+            return
+
+        line_edit = self.currentFrameLineEdit
+        # Check if processing is already done (e.g., by FocusOut then Enter)
+        if line_edit.isReadOnly(): 
+            return
+
+        status_bar = self.statusBar()
+        input_text = line_edit.text().strip()
+        
+        try:
+            target_frame_1_based = int(input_text)
+            target_frame_0_based = target_frame_1_based - 1
+
+            if 0 <= target_frame_0_based < self.total_frames:
+                logger.info(f"User entered frame: {target_frame_1_based}. Seeking to {target_frame_0_based}.")
+                if self.current_frame_index != target_frame_0_based:
+                    self.video_handler.seek_frame(target_frame_0_based)
+                # If same frame, _update_ui_for_frame will be called by _handle_frame_changed or directly below
+            else:
+                logger.warning(f"Invalid frame number entered: {target_frame_1_based}. Range is 1-{self.total_frames}.")
+                if status_bar: status_bar.showMessage(f"Invalid frame. Must be 1-{self.total_frames}.", 3000)
+        except ValueError:
+            logger.warning(f"Non-numeric frame input: '{input_text}'.")
+            if status_bar: status_bar.showMessage("Invalid frame input: Not a number.", 3000)
+        finally:
+            # Always update UI to reflect current state (either new or reverted)
+            # and set QLineEdit back to read-only, then clear focus.
+            self._update_ui_for_frame(self.current_frame_index) # Ensures correct format and read-only
+            line_edit.clearFocus()
+
+
+    @QtCore.Slot()
+    def _handle_time_input_finished(self) -> None:
+        if not self.video_loaded or not hasattr(self, 'currentTimeLineEdit') or not isinstance(self.currentTimeLineEdit, QtWidgets.QLineEdit):
+            return
+
+        line_edit = self.currentTimeLineEdit
+        if line_edit.isReadOnly():
+            return
+
+        status_bar = self.statusBar()
+        input_text = line_edit.text().strip()
+        
+        try:
+            target_ms = self.video_handler.parse_time_to_ms(input_text)
+            if target_ms is not None:
+                target_frame_0_based = self.video_handler.time_ms_to_frame_index(target_ms)
+                if target_frame_0_based is not None:
+                    logger.info(f"User entered time '{input_text}' ({target_ms:.0f}ms). Seeking to frame {target_frame_0_based}.")
+                    if self.current_frame_index != target_frame_0_based:
+                        self.video_handler.seek_frame(target_frame_0_based)
+                else: # Should be caught by parse_time_to_ms for duration
+                    logger.warning(f"Could not convert parsed time {target_ms:.0f}ms to a valid frame index.")
+                    if status_bar: status_bar.showMessage("Time is out of video duration.", 3000)
+            else:
+                logger.warning(f"Invalid time input: '{input_text}'.")
+                if status_bar: status_bar.showMessage(f"Invalid time format or out of range [0 - {self._format_time(self.total_duration_ms)}].", 4000)
+        except Exception as e: # Catch any unexpected errors during parsing/conversion
+            logger.error(f"Error processing time input '{input_text}': {e}")
+            if status_bar: status_bar.showMessage("Error processing time input.", 3000)
+        finally:
+            # Always update UI and clear focus
+            self._update_ui_for_frame(self.current_frame_index)
+            line_edit.clearFocus()
+
 
     @QtCore.Slot()
     def open_video(self) -> None:
@@ -784,200 +873,125 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.viewport().update()
 
 
-    def _get_export_resolution_choice(self) -> Optional[ExportResolutionMode]:
-        """
-        Shows a dialog to the user to choose the export resolution.
-
-        Returns:
-            ExportResolutionMode or None if the dialog is cancelled.
-        """
+    def _get_export_resolution_choice(self) -> Optional[ExportResolutionMode]: # From previous step
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Choose Export Resolution")
         dialog.setModal(True)
-
         layout = QtWidgets.QVBoxLayout(dialog)
-
         label = QtWidgets.QLabel("Select the resolution for the export:")
         layout.addWidget(label)
-
         radio_group = QtWidgets.QButtonGroup(dialog)
-
         viewport_res_radio = QtWidgets.QRadioButton("Current Viewport Resolution")
-        viewport_res_radio.setChecked(True) # Default
+        viewport_res_radio.setChecked(True)
         radio_group.addButton(viewport_res_radio)
         layout.addWidget(viewport_res_radio)
-
         original_res_radio = QtWidgets.QRadioButton("Original Video Resolution")
         if not (self.video_loaded and self.frame_width > 0 and self.frame_height > 0):
             original_res_radio.setEnabled(False)
             original_res_radio.setToolTip("Original video resolution is not available (no video loaded or invalid dimensions).")
         else:
             original_res_radio.setToolTip(f"Exports at {self.frame_width}x{self.frame_height} pixels.")
-
         radio_group.addButton(original_res_radio)
         layout.addWidget(original_res_radio)
-
         button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
-
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             if original_res_radio.isChecked():
                 return ExportResolutionMode.ORIGINAL_VIDEO
             return ExportResolutionMode.VIEWPORT
         return None
 
-
     @QtCore.Slot()
-    def _trigger_export_video(self) -> None:
+    def _trigger_export_video(self) -> None: # From previous step, ensure it's using ExportResolutionMode
         if not self.video_loaded or not self._export_handler:
             QtWidgets.QMessageBox.warning(self, "Export Error", "No video loaded or export handler not ready.")
             return
-
         export_mode = self._get_export_resolution_choice()
         if export_mode is None:
-            status_bar = self.statusBar()
-            if status_bar: status_bar.showMessage("Video export cancelled by user.", 3000)
-            logger.info("Video export cancelled by user at resolution choice dialog.")
+            if self.statusBar(): self.statusBar().showMessage("Video export cancelled by user.", 3000)
             return
-
+        # ... (rest of the _trigger_export_video from previous step, ensuring export_mode is passed)
         base_video_name = "video_with_overlays"
         if self.video_filepath:
             base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0] + "_tracked"
-
-        export_options = [
-            ("mp4", "mp4v", "MP4 Video Files (*.mp4)"),
-            ("avi", "MJPG", "AVI Video Files (Motion JPEG) (*.avi)"),
-        ]
+        export_options = [("mp4", "mp4v", "MP4 Video Files (*.mp4)"), ("avi", "MJPG", "AVI Video Files (Motion JPEG) (*.avi)")]
         file_filters = ";;".join([opt[2] for opt in export_options])
         default_filename_suffix = "_orig_res" if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else "_viewport_res"
         default_filename = f"{base_video_name}{default_filename_suffix}.{export_options[0][0]}"
         start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
-
-        save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export Video with Overlays",
-            os.path.join(start_dir, default_filename),
-            file_filters
-        )
-
+        save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(self, "Export Video with Overlays", os.path.join(start_dir, default_filename), file_filters)
         if not save_path:
-            status_bar = self.statusBar()
-            if status_bar: status_bar.showMessage("Video export cancelled.", 3000)
-            logger.info("Video export cancelled by user at file dialog.")
+            if self.statusBar(): self.statusBar().showMessage("Video export cancelled.", 3000)
             return
-
-        chosen_fourcc_str = ""
-        chosen_extension_dot = ""
+        chosen_fourcc_str = ""; chosen_extension_dot = ""
         for ext, fcc, desc in export_options:
-            if desc == selected_filter_desc:
-                chosen_fourcc_str = fcc
-                chosen_extension_dot = f".{ext}"
-                break
-        
-        if not chosen_fourcc_str: 
+            if desc == selected_filter_desc: chosen_fourcc_str = fcc; chosen_extension_dot = f".{ext}"; break
+        if not chosen_fourcc_str:
             _name_part, ext_part_from_path = os.path.splitext(save_path)
             if ext_part_from_path:
                 ext_part_from_path_lower = ext_part_from_path.lower()
                 for ext, fcc, desc in export_options:
-                    if f".{ext}" == ext_part_from_path_lower:
-                        chosen_fourcc_str = fcc
-                        chosen_extension_dot = ext_part_from_path_lower
-                        break
-            if not chosen_fourcc_str: 
-                chosen_fourcc_str = export_options[0][1] # Default to first option if filter somehow fails
-                chosen_extension_dot = f".{export_options[0][0]}"
-        
+                    if f".{ext}" == ext_part_from_path_lower: chosen_fourcc_str = fcc; chosen_extension_dot = ext_part_from_path_lower; break
+            if not chosen_fourcc_str: chosen_fourcc_str = export_options[0][1]; chosen_extension_dot = f".{export_options[0][0]}"
         current_name_part, current_ext_part = os.path.splitext(save_path)
-        if current_ext_part.lower() != chosen_extension_dot.lower():
-            save_path = current_name_part + chosen_extension_dot
-            logger.info(f"Adjusted save path for consistent extension: {save_path}")
+        if current_ext_part.lower() != chosen_extension_dot.lower(): save_path = current_name_part + chosen_extension_dot
+        if self._export_handler: self._export_handler.export_video_with_overlays(save_path, chosen_fourcc_str, chosen_extension_dot, export_mode)
 
-        if self._export_handler:
-            # Pass the chosen export_mode to the handler
-            self._export_handler.export_video_with_overlays(save_path, chosen_fourcc_str, chosen_extension_dot, export_mode)
 
     @QtCore.Slot()
-    def _trigger_export_frame(self) -> None:
+    def _trigger_export_frame(self) -> None: # From previous step, ensure it's using ExportResolutionMode
         if not self.video_loaded or self.current_frame_index < 0 or not self._export_handler:
             QtWidgets.QMessageBox.warning(self, "Export Frame Error", "No video loaded, no current frame, or export handler not ready.")
             return
-
         export_mode = self._get_export_resolution_choice()
         if export_mode is None:
-            status_bar = self.statusBar()
-            if status_bar: status_bar.showMessage("Frame export cancelled by user.", 3000)
-            logger.info("Frame export cancelled by user at resolution choice dialog.")
+            if self.statusBar(): self.statusBar().showMessage("Frame export cancelled by user.", 3000)
             return
-
+        # ... (rest of the _trigger_export_frame from previous step, ensuring export_mode is passed)
         base_video_name = "frame"
-        if self.video_filepath:
-            base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0]
-        
+        if self.video_filepath: base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0]
         filename_suffix = "_orig_res" if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else "_viewport_res"
         default_filename = f"{base_video_name}_frame_{self.current_frame_index + 1}{filename_suffix}.png"
         start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
-
-        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Export Current Frame to PNG",
-            os.path.join(start_dir, default_filename),
-            "PNG Image Files (*.png);;All Files (*)"
-        )
-
+        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export Current Frame to PNG", os.path.join(start_dir, default_filename), "PNG Image Files (*.png);;All Files (*)")
         if not save_path:
-            status_bar = self.statusBar()
-            if status_bar: status_bar.showMessage("Frame export cancelled.", 3000)
+            if self.statusBar(): self.statusBar().showMessage("Frame export cancelled.", 3000)
             return
-        
-        # Ensure .png extension
-        if not save_path.lower().endswith(".png"):
-            save_path += ".png"
-            logger.info(f"Appended .png extension to save path: {save_path}")
+        if not save_path.lower().endswith(".png"): save_path += ".png"
+        if self._export_handler: self._export_handler.export_current_frame_to_png(save_path, export_mode)
 
-
-        if self._export_handler:
-            # Pass the chosen export_mode to the handler
-            self._export_handler.export_current_frame_to_png(save_path, export_mode)
-
-    _export_progress_dialog: Optional[QtWidgets.QProgressDialog] = None
-
+    # Ensure _on_export_started, _on_export_progress, _on_export_finished are present
     @QtCore.Slot()
-    def _on_export_started(self) -> None:
+    def _on_export_started(self) -> None: # From previous step
         logger.info("MainWindow: Export process started.")
         if self.exportViewAction: self.exportViewAction.setEnabled(False)
         if self.exportFrameAction: self.exportFrameAction.setEnabled(False)
-
         self._export_progress_dialog = QtWidgets.QProgressDialog("Exporting...", "Cancel", 0, 100, self)
         self._export_progress_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
         self._export_progress_dialog.setWindowTitle("Export Progress")
         self._export_progress_dialog.setValue(0)
         self._export_progress_dialog.show()
-        status_bar = self.statusBar()
-        if status_bar: status_bar.showMessage("Exporting...", 0) 
+        if self.statusBar(): self.statusBar().showMessage("Exporting...", 0)
 
     @QtCore.Slot(str, int, int)
-    def _on_export_progress(self, message: str, current_value: int, max_value: int) -> None:
+    def _on_export_progress(self, message: str, current_value: int, max_value: int) -> None: # From previous step
         if self._export_progress_dialog:
-            if self._export_progress_dialog.maximum() != max_value:
-                self._export_progress_dialog.setMaximum(max_value)
+            if self._export_progress_dialog.maximum() != max_value: self._export_progress_dialog.setMaximum(max_value)
             self._export_progress_dialog.setValue(current_value)
             self._export_progress_dialog.setLabelText(message)
-            if self._export_progress_dialog.wasCanceled():
-                logger.info("MainWindow: Export cancel detected by progress dialog.")
+            if self._export_progress_dialog.wasCanceled(): logger.info("MainWindow: Export cancel detected by progress dialog.")
         QtWidgets.QApplication.processEvents()
 
     @QtCore.Slot(bool, str)
-    def _on_export_finished(self, success: bool, message: str) -> None:
+    def _on_export_finished(self, success: bool, message: str) -> None: # From previous step
         logger.info(f"MainWindow: Export process finished. Success: {success}, Message: {message}")
-        if self._export_progress_dialog:
-            self._export_progress_dialog.close()
-            self._export_progress_dialog = None
-
-        status_bar = self.statusBar()
-        if status_bar: status_bar.showMessage(message, 5000 if success else 8000)
-        if not success:
-            QtWidgets.QMessageBox.warning(self, "Export Problem", message)
+        if self._export_progress_dialog: self._export_progress_dialog.close(); self._export_progress_dialog = None
+        if self.statusBar(): self.statusBar().showMessage(message, 5000 if success else 8000)
+        if not success: QtWidgets.QMessageBox.warning(self, "Export Problem", message)
         self._update_ui_state()
+        
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         key = event.key()
@@ -1034,7 +1048,54 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    # --- NEW Method to Trigger Undo ---
+
+    # --- Event Filter for QLineEdit focus ---
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if self.video_loaded and isinstance(watched, QtWidgets.QLineEdit):
+            line_edit_to_process: Optional[QtWidgets.QLineEdit] = None
+            is_frame_edit = False
+            is_time_edit = False
+
+            if hasattr(self, 'currentFrameLineEdit') and watched is self.currentFrameLineEdit:
+                line_edit_to_process = self.currentFrameLineEdit
+                is_frame_edit = True
+            elif hasattr(self, 'currentTimeLineEdit') and watched is self.currentTimeLineEdit:
+                line_edit_to_process = self.currentTimeLineEdit
+                is_time_edit = True
+
+            if line_edit_to_process:
+                if event.type() == QtCore.QEvent.Type.FocusIn:
+                    line_edit_to_process.setReadOnly(False)
+                    # Populate with current value only, for editing
+                    if is_frame_edit and self.current_frame_index >= 0:
+                        line_edit_to_process.setText(str(self.current_frame_index + 1))
+                    elif is_time_edit and self.current_frame_index >= 0:
+                        current_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
+                        line_edit_to_process.setText(self._format_time(current_ms))
+                    else: # No video or invalid frame, make sure it's empty for editing
+                        line_edit_to_process.setText("") 
+                    
+                    line_edit_to_process.selectAll()
+                    logger.debug(f"FocusIn on {line_edit_to_process.objectName()}, set to writable, content selected.")
+                    return False # Important: Allow the event to propagate for normal focus handling
+
+                elif event.type() == QtCore.QEvent.Type.FocusOut:
+                    # If the QLineEdit is still writable when focus is lost (e.g. user clicks away)
+                    # then editingFinished might not have been triggered by Enter.
+                    # We should process the input and reset its state.
+                    if not line_edit_to_process.isReadOnly():
+                        logger.debug(f"FocusOut on {line_edit_to_process.objectName()} while writable. Processing content.")
+                        if is_frame_edit:
+                            # Trigger the same logic as if Enter was pressed
+                            self._handle_frame_input_finished() 
+                        elif is_time_edit:
+                            self._handle_time_input_finished()
+                        # The _handle_..._input_finished methods now ensure readOnly(True) and clearFocus()
+                    return False # Let the event propagate for normal focus out handling
+        return super().eventFilter(watched, event)
+
+
+    # --- Method to Trigger Undo ---
     @QtCore.Slot()
     def _trigger_undo_point_action(self) -> None:
         """Triggers the undo action in the TrackManager."""
