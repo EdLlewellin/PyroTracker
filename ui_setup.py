@@ -53,7 +53,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     frame_nav_layout.addWidget(main_window.nextFrameButton)
     frame_nav_layout.addStretch()
 
-    # --- MODIFIED: Frame Display (Split into QLabel and QLineEdit) ---
+    # --- Frame Display (Split into QLabel and QLineEdit) ---
     frame_nav_layout.addWidget(QtWidgets.QLabel("Frame:"))
     main_window.currentFrameLineEdit = QtWidgets.QLineEdit("-")
     main_window.currentFrameLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
@@ -68,7 +68,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     frame_nav_layout.addWidget(main_window.totalFramesLabel)
     frame_nav_layout.addSpacing(10) # Increased spacing
 
-    # --- MODIFIED: Time Display (Split into QLabel and QLineEdit) ---
+    # --- Time Display (Split into QLabel and QLineEdit) ---
     frame_nav_layout.addWidget(QtWidgets.QLabel("Time:"))
     main_window.currentTimeLineEdit = QtWidgets.QLineEdit("--:--.---")
     main_window.currentTimeLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
@@ -82,34 +82,16 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.totalTimeLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
     frame_nav_layout.addWidget(main_window.totalTimeLabel)
     frame_nav_layout.addSpacing(10) # Increased spacing
-    # --- END MODIFIED Frame and Time display ---
 
-    main_window.fpsLabel = QtWidgets.QLabel("FPS: ---.--")
-    main_window.fpsLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-    main_window.fpsLabel.setMinimumWidth(80)
-    main_window.fpsLabel.setToolTip("Video Frames Per Second")
-    frame_nav_layout.addWidget(main_window.fpsLabel)
-    frame_nav_layout.addSpacing(5)
-
+    # --- Zoom Level Display and Input
     frame_nav_layout.addWidget(QtWidgets.QLabel("Zoom:"))
     main_window.zoomLevelLineEdit = QtWidgets.QLineEdit("---.-") # Placeholder
     main_window.zoomLevelLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
     main_window.zoomLevelLineEdit.setMaximumWidth(70) # e.g., for "1234.5"
     main_window.zoomLevelLineEdit.setToolTip("Current zoom (100% = fit to view). Enter value and press Enter.")
     main_window.zoomLevelLineEdit.setReadOnly(True) # Initially read-only
-    # Ensure the attribute is declared on MainWindow for type hinting,
-    # it will be assigned here. In main_window.py, you'd add:
-    # zoomLevelLineEdit: Optional[QtWidgets.QLineEdit] = None
     frame_nav_layout.addWidget(main_window.zoomLevelLineEdit)
     frame_nav_layout.addWidget(QtWidgets.QLabel("%"))
-    frame_nav_layout.addSpacing(10)
-
-    main_window.filenameLabel = QtWidgets.QLabel("File: -")
-    main_window.filenameLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.filenameLabel.setMinimumWidth(150)
-    main_window.filenameLabel.setStyleSheet("QLabel { color : grey; }")
-    main_window.filenameLabel.setToolTip("Currently loaded video file")
-    frame_nav_layout.addWidget(main_window.filenameLabel)
     
     video_controls_layout.addLayout(frame_nav_layout)
     leftPanelLayout.addWidget(video_controls_group, stretch=0)

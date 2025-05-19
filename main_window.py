@@ -62,8 +62,6 @@ class MainWindow(QtWidgets.QMainWindow):
     currentTimeLineEdit: QtWidgets.QLineEdit
     totalTimeLabel: QtWidgets.QLabel      
     zoomLevelLineEdit: Optional[QtWidgets.QLineEdit] = None
-    fpsLabel: QtWidgets.QLabel
-    filenameLabel: QtWidgets.QLabel
     dataTabsWidget: QtWidgets.QTabWidget
     tracksTableWidget: QtWidgets.QTableWidget
     pointsTabLabel: QtWidgets.QLabel
@@ -348,6 +346,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _reset_ui_after_video_close(self) -> None:
         logger.debug("Resetting UI elements for no video loaded state.")
+        self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}")
         status_bar = self.statusBar()
         if status_bar: status_bar.clearMessage()
 
@@ -377,11 +376,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.zoomLevelLineEdit.deselect()
             self.zoomLevelLineEdit.clearFocus()
             self.zoomLevelLineEdit.blockSignals(False)
-
-        if self.fpsLabel: self.fpsLabel.setText("FPS: ---.--")
-        if self.filenameLabel:
-             self.filenameLabel.setText("File: -")
-             self.filenameLabel.setToolTip("No video loaded")
         
         if self.frameSlider:
             self.frameSlider.blockSignals(True)
@@ -769,10 +763,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.total_frames = video_info.get('total_frames', 0); self.video_loaded = True; self.fps = video_info.get('fps', 0.0)
         self.total_duration_ms = video_info.get('duration_ms', 0.0); self.video_filepath = video_info.get('filepath', '')
         self.frame_width = video_info.get('width', 0); self.frame_height = video_info.get('height', 0); self.is_playing = False
+        self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {video_info.get('filename', 'N/A')}")
         self.coord_transformer.set_video_height(self.frame_height)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_height(self.frame_height)
-        if self.filenameLabel: self.filenameLabel.setText(f"File: {video_info.get('filename', 'N/A')}"); self.filenameLabel.setToolTip(video_info.get('filepath', ''))
-        if self.fpsLabel: self.fpsLabel.setText(f"FPS: {self.fps:.2f}" if self.fps > 0 else "FPS: N/A")
         self.track_manager.reset() # Resets tracks and undo state
         if self.frameSlider: self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0); self.frameSlider.setValue(0)
         if self.imageView: self.imageView.resetInitialLoadFlag()
