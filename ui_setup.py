@@ -89,6 +89,19 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.fpsLabel.setMinimumWidth(80)
     main_window.fpsLabel.setToolTip("Video Frames Per Second")
     frame_nav_layout.addWidget(main_window.fpsLabel)
+    frame_nav_layout.addSpacing(5)
+
+    frame_nav_layout.addWidget(QtWidgets.QLabel("Zoom:"))
+    main_window.zoomLevelLineEdit = QtWidgets.QLineEdit("---.-") # Placeholder
+    main_window.zoomLevelLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    main_window.zoomLevelLineEdit.setMaximumWidth(70) # e.g., for "1234.5"
+    main_window.zoomLevelLineEdit.setToolTip("Current zoom (100% = fit to view). Enter value and press Enter.")
+    main_window.zoomLevelLineEdit.setReadOnly(True) # Initially read-only
+    # Ensure the attribute is declared on MainWindow for type hinting,
+    # it will be assigned here. In main_window.py, you'd add:
+    # zoomLevelLineEdit: Optional[QtWidgets.QLineEdit] = None
+    frame_nav_layout.addWidget(main_window.zoomLevelLineEdit)
+    frame_nav_layout.addWidget(QtWidgets.QLabel("%"))
     frame_nav_layout.addSpacing(10)
 
     main_window.filenameLabel = QtWidgets.QLabel("File: -")

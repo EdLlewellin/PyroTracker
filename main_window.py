@@ -57,14 +57,11 @@ class MainWindow(QtWidgets.QMainWindow):
     playPauseButton: QtWidgets.QPushButton
     prevFrameButton: QtWidgets.QPushButton
     nextFrameButton: QtWidgets.QPushButton
-    
-    # --- UPDATED UI Element Attributes for Frame/Time Display ---
     currentFrameLineEdit: QtWidgets.QLineEdit 
     totalFramesLabel: QtWidgets.QLabel     
     currentTimeLineEdit: QtWidgets.QLineEdit
     totalTimeLabel: QtWidgets.QLabel      
-    # --- END UPDATED ---
-    
+    zoomLevelLineEdit: Optional[QtWidgets.QLineEdit] = None
     fpsLabel: QtWidgets.QLabel
     filenameLabel: QtWidgets.QLabel
     dataTabsWidget: QtWidgets.QTabWidget
@@ -151,8 +148,18 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.debug("Connected currentTimeLineEdit editingFinished signal and event filter.")
         else:
             logger.error("currentTimeLineEdit is not a QLineEdit or not found after UI setup.")
-            
-        # ... (rest of your __init__ method - ensure it's complete)
+
+        if hasattr(self, 'zoomLevelLineEdit') and isinstance(self.zoomLevelLineEdit, QtWidgets.QLineEdit):
+            self.zoomLevelLineEdit.editingFinished.connect(self._handle_zoom_input_finished)
+            self.zoomLevelLineEdit.installEventFilter(self) # Use the same event filter
+            logger.debug("Connected zoomLevelLineEdit editingFinished signal and event filter.")
+        else:
+            logger.error("zoomLevelLineEdit is not a QLineEdit or not found after UI setup.")
+        
+        if self.imageView:
+            # Connect viewTransformChanged to update zoom display
+            self.imageView.viewTransformChanged.connect(self._update_zoom_display)
+
         if hasattr(self, 'undoAction') and self.undoAction:
             self.undoAction.triggered.connect(self._trigger_undo_point_action)
             self.undoAction.setEnabled(False) 
@@ -362,7 +369,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.currentTimeLineEdit.blockSignals(False)
         if hasattr(self, 'totalTimeLabel') and isinstance(self.totalTimeLabel, QtWidgets.QLabel):
             self.totalTimeLabel.setText("/ --:--.---")
-        
+
+        if hasattr(self, 'zoomLevelLineEdit') and self.zoomLevelLineEdit is not None:
+            self.zoomLevelLineEdit.blockSignals(True)
+            self.zoomLevelLineEdit.setReadOnly(True)
+            self.zoomLevelLineEdit.setText("---.-")
+            self.zoomLevelLineEdit.deselect()
+            self.zoomLevelLineEdit.clearFocus()
+            self.zoomLevelLineEdit.blockSignals(False)
+
         if self.fpsLabel: self.fpsLabel.setText("FPS: ---.--")
         if self.filenameLabel:
              self.filenameLabel.setText("File: -")
@@ -406,6 +421,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         can_play: bool = is_video_loaded and self.fps > 0 and nav_enabled_during_action
         if self.playPauseButton: self.playPauseButton.setEnabled(can_play)
+
+        # Enable/disable frame and time input fields
+        if hasattr(self, 'currentFrameLineEdit') and self.currentFrameLineEdit is not None:
+            self.currentFrameLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
+        if hasattr(self, 'currentTimeLineEdit') and self.currentTimeLineEdit is not None:
+            self.currentTimeLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
+
+        # --- NEW: Enable/Disable Zoom Level LineEdit ---
+        if hasattr(self, 'zoomLevelLineEdit') and self.zoomLevelLineEdit is not None:
+            self.zoomLevelLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
+            if not is_video_loaded: # Also ensure text is reset if video becomes unloaded
+                self.zoomLevelLineEdit.setText("---.-")
+        # --- END NEW ---
 
         if self.newTrackAction: self.newTrackAction.setEnabled(is_video_loaded)
         if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
@@ -640,6 +668,101 @@ class MainWindow(QtWidgets.QMainWindow):
     def _toggle_playback(self) -> None:
         if self.video_loaded and self.fps > 0: self.video_handler.toggle_playback()
 
+    @QtCore.Slot()
+    def _update_zoom_display(self) -> None:
+        """Updates the zoomLevelLineEdit with the current zoom percentage."""
+        if not self.video_loaded or not hasattr(self, 'imageView') or \
+           not hasattr(self, 'zoomLevelLineEdit') or self.zoomLevelLineEdit is None:
+            if hasattr(self, 'zoomLevelLineEdit') and self.zoomLevelLineEdit is not None:
+                 self.zoomLevelLineEdit.setText("---.-")
+            return
+
+        # Only update if the line edit does not have focus, to avoid disrupting user input
+        if self.zoomLevelLineEdit.hasFocus():
+            return
+
+        try:
+            min_scale = self.imageView.get_min_view_scale()
+            if min_scale <= 0: # Avoid division by zero or negative scales
+                logger.warning("Cannot update zoom display: ImageView min_scale is invalid.")
+                self.zoomLevelLineEdit.setText("---.-")
+                return
+
+            current_view_scale = self.imageView.transform().m11()
+            zoom_percentage = (current_view_scale / min_scale) * 100.0
+            
+            self.zoomLevelLineEdit.blockSignals(True)
+            self.zoomLevelLineEdit.setText(f"{zoom_percentage:.1f}")
+            self.zoomLevelLineEdit.blockSignals(False)
+            # logger.debug(f"Zoom display updated to: {zoom_percentage:.1f}%")
+        except Exception as e:
+            logger.error(f"Error updating zoom display: {e}")
+            self.zoomLevelLineEdit.setText("ERR")
+
+
+    @QtCore.Slot()
+    def _handle_zoom_input_finished(self) -> None:
+        """Handles the editingFinished signal from zoomLevelLineEdit."""
+        if not self.video_loaded or \
+           not hasattr(self, 'imageView') or \
+           not hasattr(self, 'zoomLevelLineEdit') or self.zoomLevelLineEdit is None:
+            return
+
+        line_edit = self.zoomLevelLineEdit
+        if line_edit.isReadOnly(): # Should have been made writable on focus
+            return
+
+        status_bar = self.statusBar()
+        input_text = line_edit.text().strip()
+
+        try:
+            entered_percentage = float(input_text)
+            
+            min_view_scale = self.imageView.get_min_view_scale()
+            max_view_scale = self.imageView.get_max_view_scale()
+
+            if min_view_scale <= 0:
+                logger.error("Cannot process zoom input: ImageView min_scale is invalid.")
+                if status_bar: status_bar.showMessage("Error: Cannot determine zoom limits.", 3000)
+                self._update_zoom_display() # Revert to current actual zoom
+                line_edit.clearFocus()
+                return
+
+            min_percentage = 100.0 
+            # Allow a tiny bit of flexibility for max due to float precision
+            max_percentage = (max_view_scale / min_view_scale) * 100.0 + 0.01 
+
+            if not (min_percentage <= entered_percentage <= max_percentage):
+                logger.warning(f"Invalid zoom percentage: {entered_percentage}%. Must be between {min_percentage:.1f}% and {max_percentage:.1f}%.")
+                if status_bar: status_bar.showMessage(f"Zoom must be {min_percentage:.0f}% - {max_percentage:.0f}%.", 3000)
+                # Revert to current actual zoom
+                self._update_zoom_display()
+            else:
+                current_view_scale = self.imageView.transform().m11()
+                target_view_scale = (entered_percentage / 100.0) * min_view_scale
+                
+                if not math.isclose(current_view_scale, target_view_scale, rel_tol=1e-3): # Only zoom if significantly different
+                    zoom_factor_to_apply = target_view_scale / current_view_scale
+                    viewport_center = self.imageView.viewport().rect().center()
+                    
+                    logger.info(f"User entered zoom: {entered_percentage:.1f}%. Target scale: {target_view_scale:.4f}. Applying factor: {zoom_factor_to_apply:.4f}")
+                    self.imageView._zoom(zoom_factor_to_apply, viewport_center) # _zoom emits viewTransformChanged
+                else:
+                    logger.debug(f"Entered zoom {entered_percentage:.1f}% results in current scale. No change applied.")
+                    # Ensure display is updated even if no zoom, to format correctly
+                    self._update_zoom_display()
+
+
+        except ValueError:
+            logger.warning(f"Non-numeric zoom input: '{input_text}'.")
+            if status_bar: status_bar.showMessage("Invalid zoom input: Not a number.", 3000)
+            self._update_zoom_display() # Revert
+        finally:
+            # The _update_zoom_display will be called by viewTransformChanged if zoom occurs.
+            # If no zoom or error, it's called above.
+            line_edit.setReadOnly(True) # Set back to read-only after processing
+            line_edit.clearFocus() # Remove focus
+
     @QtCore.Slot(dict)
     def _handle_video_loaded(self, video_info: Dict[str, Any]) -> None:
         logger.info(f"Received videoLoaded signal: {video_info.get('filename', 'N/A')}")
@@ -657,6 +780,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(True)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(True); self.coord_panel_controller.update_ui_display()
         if self.table_data_controller: self.table_data_controller.set_video_loaded_status(True, self.total_frames)
+        self._update_zoom_display() # This will calculate and set the initial 100%
         self._update_ui_state() # Will also update undoAction enabled state
         status_msg = (f"Loaded '{video_info.get('filename', 'N/A')}' ({self.total_frames} frames, {self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
         status_bar = self.statusBar()
@@ -1049,12 +1173,12 @@ class MainWindow(QtWidgets.QMainWindow):
             super().keyPressEvent(event)
 
 
-    # --- Event Filter for QLineEdit focus ---
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
         if self.video_loaded and isinstance(watched, QtWidgets.QLineEdit):
             line_edit_to_process: Optional[QtWidgets.QLineEdit] = None
             is_frame_edit = False
             is_time_edit = False
+            is_zoom_edit = False # New flag
 
             if hasattr(self, 'currentFrameLineEdit') and watched is self.currentFrameLineEdit:
                 line_edit_to_process = self.currentFrameLineEdit
@@ -1062,6 +1186,11 @@ class MainWindow(QtWidgets.QMainWindow):
             elif hasattr(self, 'currentTimeLineEdit') and watched is self.currentTimeLineEdit:
                 line_edit_to_process = self.currentTimeLineEdit
                 is_time_edit = True
+            # --- NEW: Check for zoomLevelLineEdit ---
+            elif hasattr(self, 'zoomLevelLineEdit') and watched is self.zoomLevelLineEdit:
+                line_edit_to_process = self.zoomLevelLineEdit
+                is_zoom_edit = True
+            # --- END NEW ---
 
             if line_edit_to_process:
                 if event.type() == QtCore.QEvent.Type.FocusIn:
@@ -1072,28 +1201,40 @@ class MainWindow(QtWidgets.QMainWindow):
                     elif is_time_edit and self.current_frame_index >= 0:
                         current_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
                         line_edit_to_process.setText(self._format_time(current_ms))
+                    # --- NEW: Populate zoomLevelLineEdit on focus ---
+                    elif is_zoom_edit:
+                        if self.imageView and self.imageView.get_min_view_scale() > 0:
+                            current_view_scale = self.imageView.transform().m11()
+                            min_scale = self.imageView.get_min_view_scale()
+                            zoom_percentage = (current_view_scale / min_scale) * 100.0
+                            line_edit_to_process.setText(f"{zoom_percentage:.1f}")
+                        else:
+                            line_edit_to_process.setText("---.-")
+                    # --- END NEW ---
                     else: # No video or invalid frame, make sure it's empty for editing
                         line_edit_to_process.setText("") 
                     
                     line_edit_to_process.selectAll()
                     logger.debug(f"FocusIn on {line_edit_to_process.objectName()}, set to writable, content selected.")
-                    return False # Important: Allow the event to propagate for normal focus handling
+                    return False 
 
                 elif event.type() == QtCore.QEvent.Type.FocusOut:
-                    # If the QLineEdit is still writable when focus is lost (e.g. user clicks away)
-                    # then editingFinished might not have been triggered by Enter.
-                    # We should process the input and reset its state.
                     if not line_edit_to_process.isReadOnly():
                         logger.debug(f"FocusOut on {line_edit_to_process.objectName()} while writable. Processing content.")
                         if is_frame_edit:
-                            # Trigger the same logic as if Enter was pressed
                             self._handle_frame_input_finished() 
                         elif is_time_edit:
                             self._handle_time_input_finished()
-                        # The _handle_..._input_finished methods now ensure readOnly(True) and clearFocus()
-                    return False # Let the event propagate for normal focus out handling
+                        # --- NEW: Handle zoomLevelLineEdit focus out ---
+                        elif is_zoom_edit:
+                            # Typically, editingFinished is preferred. 
+                            # If content changed, could call _handle_zoom_input_finished.
+                            # For now, just ensure it becomes read-only and updates to current view.
+                            self._update_zoom_display() # Update to actual current zoom
+                            line_edit_to_process.setReadOnly(True)
+                        # --- END NEW ---
+                    return False 
         return super().eventFilter(watched, event)
-
 
     # --- Method to Trigger Undo ---
     @QtCore.Slot()

@@ -755,6 +755,23 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     def get_current_view_scale_factor(self) -> float:
         return self.transform().m11()
 
+    def get_min_view_scale(self) -> float:
+        """
+        Returns the minimum scale factor for the view (fit to view).
+        This corresponds to 100% zoom out.
+        """
+        # Ensure _min_scale is up-to-date if called before a pixmap is fully processed
+        # or if the viewport changed without a pixmap update.
+        if self._pixmap_item and self.sceneRect().isValid():
+            self._calculate_zoom_limits() # Recalculate to be safe, though usually set on pixmap/resize
+        return self._min_scale
+
+    def get_max_view_scale(self) -> float:
+        """
+        Returns the maximum allowed scale factor for the view.
+        """
+        return self._max_scale
+
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         button: QtCore.Qt.MouseButton = event.button()
         logger.debug(f"Mouse press event: Button={button}, Pos={event.pos()}, Mode={self._current_mode.name}")
