@@ -174,24 +174,36 @@ class ExportHandler(QtCore.QObject):
     def _render_overlays_on_painter(self,
                                    painter: QtGui.QPainter,
                                    current_frame_index: int, # This is the original video frame index
-                                   export_qimage_rect: QtCore.QRectF,
-                                   visible_scene_rect: QtCore.QRectF,
+                                   export_qimage_rect: QtCore.QRectF, # The target QImage's full rectangle
+                                   visible_scene_rect: QtCore.QRectF, # The portion of the scene visible in the export view
                                    export_mode: ExportResolutionMode
                                    ) -> None:
-        if not self._track_manager or not self._coord_transformer or not self._scale_manager or not self._image_view or not self._main_window:
+        if not self._track_manager or not self._coord_transformer or \
+           not self._scale_manager or not self._image_view or \
+           not self._main_window or not self._video_handler: # Added _video_handler check
             logger.error("Overlay rendering skipped: one or more required managers/views are missing.")
             return
 
+        # Save painter state to restore after drawing scene-based overlays
         painter.save()
 
+        # Set up painter for scene-based overlays (tracks, origin, defined scale line)
+        # The window-viewport transform maps the visible_scene_rect to the export_qimage_rect
         if not visible_scene_rect.isEmpty():
             painter.setWindow(visible_scene_rect.toRect())
             painter.setViewport(export_qimage_rect.toRect())
         else:
-            logger.warning("Visible scene rect is empty, overlay rendering may be incorrect.")
+            # Fallback if scene rect is empty (e.g., viewport export of an empty view)
+            # This might happen if exporting before any frame is shown in viewport mode.
+            logger.warning("Visible scene rect is empty for export. Overlay scaling might be incorrect.")
+            # Set a 1:1 mapping for scene-based items if scene rect is invalid
             painter.setWindow(export_qimage_rect.toRect())
             painter.setViewport(export_qimage_rect.toRect())
 
+
+        # --- Draw Track-related Overlays (Tracks, Origin, Defined Scale Line) ---
+        # (Existing code for drawing tracks, origin marker, and defined scale line)
+        # ... (ensure this existing code remains and functions as before) ...
         marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
         track_elements = self._track_manager.get_visual_elements(current_frame_index)
         pens = {
@@ -206,7 +218,7 @@ class ExportHandler(QtCore.QObject):
             pen_to_use = pens.get(el.get('style'))
             if not pen_to_use: continue
             current_pen = QtGui.QPen(pen_to_use)
-            current_pen.setCosmetic(True)
+            current_pen.setCosmetic(True) # Ensure consistent line width regardless of painter scale
             painter.setPen(current_pen)
             if el.get('type') == 'marker' and el.get('pos'):
                 x, y = el['pos']; r = marker_sz / 2.0
@@ -223,7 +235,7 @@ class ExportHandler(QtCore.QObject):
             origin_pen = QtGui.QPen(self._main_window.pen_origin_marker)
             origin_pen.setCosmetic(True)
             painter.setPen(origin_pen)
-            painter.setBrush(self._main_window.pen_origin_marker.color())
+            painter.setBrush(self._main_window.pen_origin_marker.color()) # Use brush for filled ellipse
             painter.drawEllipse(QtCore.QRectF(ox - r_orig, oy - r_orig, origin_sz, origin_sz))
 
         if self._main_window.showScaleLineCheckBox and self._main_window.showScaleLineCheckBox.isChecked() and \
@@ -239,64 +251,94 @@ class ExportHandler(QtCore.QObject):
                 dx_l = p2x_l - p1x_l; dy_l = p2y_l - p1y_l
                 pix_len_l = math.sqrt(dx_l*dx_l + dy_l*dy_l)
                 meter_len_l = pix_len_l * scale_m_per_px
-                len_text_l = self.format_length_value_for_line(meter_len_l)
+                len_text_l = self.format_length_value_for_line(meter_len_l) # Uses ExportHandler's method
+                
+                # Determine the scene rectangle for text placement. In ORIGINAL_VIDEO mode,
+                # this is simply the original video frame dimensions. In VIEWPORT mode,
+                # it's the visible_scene_rect we've already established.
+                scene_rect_for_text_placement = QtCore.QRectF(0,0, self._video_handler.frame_width, self._video_handler.frame_height) \
+                                                if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else visible_scene_rect
+
                 self._draw_specific_scale_line_on_painter(painter, line_data, len_text_l,
                                                  line_clr_sl, text_clr_sl,
                                                  font_sz_sl, pen_w_sl,
-                                                 visible_scene_rect)
-        painter.restore()
+                                                 scene_rect_for_text_placement)
+        
+        painter.restore() # Restore painter state after scene-based overlays
 
+        # --- Draw Viewport-Fixed Overlays (Scale Bar and NEW Info Overlays) ---
+        # These overlays are drawn directly in viewport coordinates (i.e., pixel coordinates
+        # of the final export image). Reset painter's window and viewport for this.
+        painter.save()
+        painter.setWindow(export_qimage_rect.toRect())
+        painter.setViewport(export_qimage_rect.toRect())
+
+        # Draw Scale Bar (existing logic)
         if self._main_window.showScaleBarCheckBox and self._main_window.showScaleBarCheckBox.isChecked() and \
            self._scale_manager and self._scale_manager.get_scale_m_per_px() is not None and \
            hasattr(self._image_view, '_scale_bar_widget') and self._image_view._scale_bar_widget:
-            sb_widget: 'ScaleBarWidget' = self._image_view._scale_bar_widget
+            
+            sb_widget: 'ScaleBarWidget' = self._image_view._scale_bar_widget # type: ignore
             
             parent_width_for_sb_calc: int
             effective_view_scale_for_sb_calc: float
 
             if export_mode == ExportResolutionMode.ORIGINAL_VIDEO:
                 parent_width_for_sb_calc = self._video_handler.frame_width
-                effective_view_scale_for_sb_calc = 1.0 
-            else: 
+                effective_view_scale_for_sb_calc = 1.0 # Scale bar is drawn based on scene pixels for original video
+            else: # VIEWPORT mode
                 parent_width_for_sb_calc = int(export_qimage_rect.width())
+                # Calculate effective view scale for scale bar based on how the scene is mapped to the export image
                 if visible_scene_rect.width() > 0 and visible_scene_rect.height() > 0:
                     effective_view_scale_x = export_qimage_rect.width() / visible_scene_rect.width()
                     effective_view_scale_y = export_qimage_rect.height() / visible_scene_rect.height()
                     effective_view_scale_for_sb_calc = min(effective_view_scale_x, effective_view_scale_y)
-                else:
+                else: # Fallback if visible scene rect is empty
                     effective_view_scale_for_sb_calc = 1.0 
 
-            sb_widget.update_dimensions(
+            sb_widget.update_dimensions( # This recalculates bar length and text for the current export context
                 m_per_px_scene=self._scale_manager.get_scale_m_per_px(),
                 view_scale_factor=effective_view_scale_for_sb_calc,
                 parent_view_width=parent_width_for_sb_calc
             )
 
             if sb_widget.isVisible() and sb_widget.get_current_bar_pixel_length() > 0:
-                sb_bar_len_px=sb_widget.get_current_bar_pixel_length(); sb_text=sb_widget.get_current_bar_text_label()
-                sb_bar_color=sb_widget.get_current_bar_color(); sb_text_color=sb_widget.get_current_text_color()
-                sb_border_color=sb_widget.get_current_border_color(); sb_font=sb_widget.get_current_font()
-                painter_sb_font_metrics = QtGui.QFontMetrics(sb_font)
-                sb_rect_h_px=sb_widget.get_current_bar_rect_height(); sb_text_margin_bottom=sb_widget.get_text_margin_bottom()
-                sb_border_thickness_px=sb_widget.get_border_thickness()
-                sb_text_w_px, sb_text_h_px_overall = sb_widget.get_text_dimensions() 
+                # Use getter methods from ScaleBarWidget
+                sb_bar_len_px = sb_widget.get_current_bar_pixel_length()
+                sb_text = sb_widget.get_current_bar_text_label()
+                sb_bar_color = sb_widget.get_current_bar_color()
+                sb_text_color = sb_widget.get_current_text_color() # Should be same as bar color
+                sb_border_color = sb_widget.get_current_border_color()
+                sb_font = sb_widget.get_current_font() # This is a QFont object
+                painter_sb_font_metrics = QtGui.QFontMetrics(sb_font) # Metrics from the actual font
+                
+                sb_rect_h_px = sb_widget.get_current_bar_rect_height()
+                sb_text_margin_bottom = sb_widget.get_text_margin_bottom()
+                sb_border_thickness_px = sb_widget.get_border_thickness()
+                sb_text_w_px, sb_text_h_px_overall = sb_widget.get_text_dimensions() # Overall height of text box
 
-                margin=10
-                overall_sb_width = int(max(sb_bar_len_px + 2*sb_border_thickness_px, sb_text_w_px))
-                overall_sb_height = sb_text_h_px_overall + sb_text_margin_bottom + sb_rect_h_px + 2*sb_border_thickness_px
+                margin = 10 # Margin from edge of export image
+                overall_sb_width = int(max(sb_bar_len_px + 2 * sb_border_thickness_px, sb_text_w_px))
+                overall_sb_height = sb_text_h_px_overall + sb_text_margin_bottom + sb_rect_h_px + 2 * sb_border_thickness_px
 
+                # Position relative to bottom-right of the export_qimage_rect
                 sb_x_offset = export_qimage_rect.width() - overall_sb_width - margin
                 sb_y_offset = export_qimage_rect.height() - overall_sb_height - margin
                 
+                # Temporarily save and restore painter state for scale bar drawing
                 painter.save()
-                painter.translate(sb_x_offset, sb_y_offset)
+                painter.translate(sb_x_offset, sb_y_offset) # Move origin to where SB widget would be
+                
+                # Draw Text
                 painter.setFont(sb_font)
                 painter.setPen(sb_text_color)
                 
                 text_x_local = (overall_sb_width - sb_text_w_px) / 2.0
+                # Position text using ascent for better vertical alignment
                 text_baseline_y_local = float(painter_sb_font_metrics.ascent()) 
                 painter.drawText(QtCore.QPointF(text_x_local, text_baseline_y_local), sb_text)
                 
+                # Draw Scale Bar Rectangle
                 bar_start_x_local = (overall_sb_width - sb_bar_len_px) / 2.0
                 bar_top_y_local = float(sb_text_h_px_overall + sb_text_margin_bottom + sb_border_thickness_px)
                 bar_rect_local = QtCore.QRectF(bar_start_x_local, bar_top_y_local, sb_bar_len_px, float(sb_rect_h_px))
@@ -306,8 +348,62 @@ class ExportHandler(QtCore.QObject):
                 painter.setPen(current_scale_bar_pen)
                 painter.setBrush(sb_bar_color)
                 painter.drawRect(bar_rect_local)
-                painter.restore()
+                
+                painter.restore() # Restore painter state after scale bar
 
+        # --- NEW: Draw Info Overlays (Filename, Time, Frame Number) ---
+        margin = 5 # Small margin from edges for these text overlays
+        
+        # Filename (Top-Left)
+        if settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME):
+            filename_text = self._video_handler.get_video_info().get("filename", "N/A")
+            if filename_text != "N/A":
+                font_size = settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_FILENAME_FONT_SIZE)
+                color = settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_FILENAME_COLOR)
+                font = QtGui.QFont()
+                font.setPointSize(font_size)
+                painter.setFont(font)
+                painter.setPen(color)
+                fm = QtGui.QFontMetrics(font)
+                elided_text = fm.elidedText(filename_text, QtCore.Qt.TextElideMode.ElideMiddle, export_qimage_rect.width() - 2 * margin)
+                painter.drawText(QtCore.QPointF(export_qimage_rect.left() + margin, export_qimage_rect.top() + margin + fm.ascent()), elided_text)
+
+        # Time and Frame strings
+        total_frames_str = str(self._video_handler.total_frames) if self._video_handler.total_frames > 0 else "-"
+        current_frame_str = str(current_frame_index + 1) if current_frame_index >= 0 else "-"
+        frame_display_text = f"Frame: {current_frame_str} / {total_frames_str}"
+
+        current_time_ms_val = (current_frame_index / self._video_handler.fps) * 1000 if self._video_handler.fps > 0 else 0.0
+        total_time_ms_val = self._video_handler.total_duration_ms
+        
+        time_display_text = f"Time: {self._format_time_for_export(current_time_ms_val)} / {self._format_time_for_export(total_time_ms_val)}"
+
+        # Frame Number (Bottom-Left, lower line)
+        y_pos_frame = export_qimage_rect.bottom() - margin
+        if settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER):
+            font_size = settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE)
+            color = settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR)
+            font = QtGui.QFont()
+            font.setPointSize(font_size)
+            painter.setFont(font)
+            painter.setPen(color)
+            fm = QtGui.QFontMetrics(font)
+            # Draw text with baseline at y_pos_frame
+            painter.drawText(QtCore.QPointF(export_qimage_rect.left() + margin, y_pos_frame), frame_display_text)
+            y_pos_frame -= (fm.height() + margin / 2) # Adjust y_pos for next item if time is also shown
+
+        # Time (Bottom-Left, potentially above Frame Number)
+        if settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_TIME):
+            font_size = settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_TIME_FONT_SIZE)
+            color = settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_TIME_COLOR)
+            font = QtGui.QFont()
+            font.setPointSize(font_size)
+            painter.setFont(font)
+            painter.setPen(color)
+            # Use y_pos_frame which might have been adjusted if frame number was drawn
+            painter.drawText(QtCore.QPointF(export_qimage_rect.left() + margin, y_pos_frame), time_display_text)
+        
+        painter.restore() # Restore painter state after viewport-fixed overlays
     @QtCore.Slot(str, str, str, ExportResolutionMode, int, int) # Added start_frame_idx, end_frame_idx
     def export_video_with_overlays(self, 
                                    save_path: str, 
@@ -551,3 +647,15 @@ class ExportHandler(QtCore.QObject):
         except Exception as e:
             logger.exception("ExportHandler: An error occurred during frame export.")
             self.exportFinished.emit(False, f"Frame export error: {str(e)}")
+
+
+    def _format_time_for_export(self, ms: float) -> str:
+        """Formats time in milliseconds to MM:SS.mmm string for export overlays."""
+        if ms < 0: return "--:--.---"
+        try:
+            s, mils = divmod(ms, 1000)
+            m, s_rem = divmod(int(s), 60)
+            return f"{m:02d}:{s_rem:02d}.{int(mils):03d}"
+        except Exception:
+            logger.error(f"Error formatting time {ms} for export.", exc_info=True)
+            return "--:--.---"

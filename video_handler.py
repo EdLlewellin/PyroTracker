@@ -477,3 +477,6 @@ class VideoHandler(QtCore.QObject):
     @property
     def frame_height(self) -> int:
         return self._frame_height
+    @property
+    def total_duration_ms(self) -> float:
+        return self._total_duration_ms

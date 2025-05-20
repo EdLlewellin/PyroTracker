@@ -8,6 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import config
 from scale_bar_widget import ScaleBarWidget
+from info_overlay_widget import InfoOverlayWidget
 import settings_manager
 
 # Get a logger for this module
@@ -60,12 +61,15 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
     _current_mode: InteractionMode
 
-    # --- NEW INSTANCE VARIABLES FOR SCALE LINE DEFINITION ---
+    # --- INSTANCE VARIABLES FOR SCALE LINE DEFINITION ---
     _scale_line_point1_scene: Optional[QtCore.QPointF] = None
     _temp_scale_marker1: Optional[QtWidgets.QGraphicsEllipseItem] = None
     _temp_scale_marker2: Optional[QtWidgets.QGraphicsEllipseItem] = None
     _temp_scale_line: Optional[QtWidgets.QGraphicsLineItem] = None
     _temp_scale_visuals_color: QtGui.QColor = QtGui.QColor("lime") # Color for temp scale markers/line
+    
+    _scale_bar_widget: ScaleBarWidget
+    _info_overlay_widget: InfoOverlayWidget
 
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
@@ -101,17 +105,24 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         logger.debug("View appearance and behavior configured.")
 
         self._create_overlay_buttons()
+        
+        # Initialize ScaleBarWidget
         self._scale_bar_widget = ScaleBarWidget(self)
         self._scale_bar_widget.setVisible(False)
         logger.debug("ScaleBarWidget created and initially hidden.")
+
+        # --- NEW: Initialize InfoOverlayWidget ---
+        self._info_overlay_widget = InfoOverlayWidget(self)
+        self._info_overlay_widget.setVisible(False) # Will be shown when video loads
+        logger.debug("InfoOverlayWidget created and initially hidden.")
+        # --- END NEW ---
 
         # --- INITIALIZE NEW SCALE LINE VARIABLES ---
         self._scale_line_point1_scene = None
         self._temp_scale_marker1 = None
         self._temp_scale_marker2 = None
         self._temp_scale_line = None
-        # Consider making this color configurable via config.py or settings_manager later
-        self._temp_scale_visuals_color = QtGui.QColor(0, 255, 0, 180) # Bright green, slightly transparent
+        self._temp_scale_visuals_color = QtGui.QColor(0, 255, 0, 180)
 
         logger.info("InteractiveImageView initialization complete.")
 
@@ -193,24 +204,31 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         if not hasattr(self, 'zoomInButton') or not self.zoomInButton:
              logger.warning("_update_overlay_widget_positions called before overlay buttons created.")
              return
-        if not hasattr(self, '_scale_bar_widget') or not self._scale_bar_widget:
+        if not hasattr(self, '_scale_bar_widget') or not self._scale_bar_widget: # Keep this check
             logger.warning("_update_overlay_widget_positions called before scale bar widget created.")
-            return
+            # return # Don't return yet, info overlay might still need update
+
+        # --- NEW: Check for InfoOverlayWidget ---
+        if not hasattr(self, '_info_overlay_widget') or not self._info_overlay_widget:
+            logger.warning("_update_overlay_widget_positions called before info overlay widget created.")
+            # return # Allow scale bar and buttons to update if info overlay is missing
 
         margin: int = 10
-        vp_width: int = self.viewport().width()
-        vp_height: int = self.viewport().height()
+        vp_rect = self.viewport().rect() # Get viewport rect once
+        vp_width: int = vp_rect.width()
+        vp_height: int = vp_rect.height()
 
+        # Position Overlay Buttons
         button_width: int = self.zoomInButton.width()
         button_height: int = self.zoomInButton.height()
         spacing: int = 5
-
         x_pos_buttons: int = vp_width - button_width - margin
         self.zoomInButton.move(x_pos_buttons, margin)
         self.zoomOutButton.move(x_pos_buttons, margin + button_height + spacing)
         self.resetViewButton.move(x_pos_buttons, margin + 2 * (button_height + spacing))
 
-        if self._scale_bar_widget.isVisible():
+        # Position ScaleBarWidget
+        if self._scale_bar_widget and self._scale_bar_widget.isVisible():
             sb_width: int = self._scale_bar_widget.width()
             sb_height: int = self._scale_bar_widget.height()
             x_pos_sb: int = vp_width - sb_width - margin
@@ -218,6 +236,14 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             self._scale_bar_widget.move(x_pos_sb, y_pos_sb)
             logger.debug(f"Scale bar positioned at ({x_pos_sb}, {y_pos_sb}), size: {self._scale_bar_widget.size()}")
 
+        # --- NEW: Position and Resize InfoOverlayWidget ---
+        if self._info_overlay_widget: # Check if it exists
+            # The InfoOverlayWidget should span the entire viewport to draw in corners
+            self._info_overlay_widget.setGeometry(vp_rect)
+            if self._info_overlay_widget.isVisible(): # Ensure it repaints if visible
+                self._info_overlay_widget.update()
+            logger.debug(f"InfoOverlayWidget geometry set to viewport: {vp_rect}")
+        # --- END NEW ---
 
     def _ensure_overlay_widgets_updated_on_show(self, buttons_visible: bool) -> None:
         if not hasattr(self, 'zoomInButton') or not self.zoomInButton:
@@ -226,7 +252,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
         logger.debug(f"Setting overlay buttons visible: {buttons_visible}")
         if buttons_visible:
-            self._update_overlay_widget_positions()
+            self._update_overlay_widget_positions() # This will now handle info_overlay_widget too
             self.zoomInButton.show()
             self.zoomOutButton.show()
             self.resetViewButton.show()
@@ -235,9 +261,20 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             self.zoomOutButton.hide()
             self.resetViewButton.hide()
 
-        if self._scale_bar_widget and self._scale_bar_widget.isVisible():
-            self._update_overlay_widget_positions()
+        # ScaleBarWidget visibility and position are handled by its own logic
+        # and _update_overlay_widget_positions if it's visible.
 
+        # --- NEW: Handle InfoOverlayWidget visibility based on pixmap presence ---
+        # The InfoOverlayWidget itself is made visible/hidden based on whether a pixmap is loaded,
+        # its internal elements are toggled by settings.
+        if self._info_overlay_widget:
+            # Show if buttons are implies a pixmap is loaded; hide if buttons are hidden (no pixmap)
+            if buttons_visible != self._info_overlay_widget.isVisible():
+                 self._info_overlay_widget.setVisible(buttons_visible)
+                 logger.debug(f"InfoOverlayWidget visibility set to: {buttons_visible}")
+            if buttons_visible: # If becoming visible, ensure its position/size is correct
+                self._update_overlay_widget_positions()
+        # --- END NEW ---
 
     def _zoom(self, factor: float, mouse_viewport_pos: Optional[QtCore.QPoint] = None) -> None: # Keep mouse_viewport_pos for now, though not directly used in this version
         if not self._pixmap_item:
@@ -306,7 +343,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             logger.debug(f"Stored previous transform: {current_transform}")
 
         logger.debug("Clearing graphics scene...")
-        self.clearTemporaryScaleVisuals() # Clear any temp scale line before clearing scene
+        self.clearTemporaryScaleVisuals()
         self._scene.clear()
         self._pixmap_item = None
         logger.debug("Graphics scene cleared.")
@@ -346,27 +383,30 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
                  self.resetView()
                  transform_changed_by_set_pixmap = True
 
-            self._ensure_overlay_widgets_updated_on_show(True)
+            self._ensure_overlay_widgets_updated_on_show(True) # This handles all overlays now
+            if self._info_overlay_widget: # Ensure info overlay is visible
+                self._info_overlay_widget.setVisible(True)
+
             if transform_changed_by_set_pixmap and not is_initial :
-                if not (current_transform is not None and math.isclose(clamped_scale, previous_scale, rel_tol=1e-5)):
-                    pass
-                else:
-                    self.viewTransformChanged.emit()
+                # This condition was a bit complex, simplifying slightly: emit if a non-initial
+                # setPixmap operation potentially changed the transform (either by restoring or resetting).
+                self.viewTransformChanged.emit()
         else:
-             logger.info("Invalid or null pixmap provided. Clearing scene rect and hiding buttons.")
+             logger.info("Invalid or null pixmap provided. Clearing scene rect and hiding buttons/overlays.")
              self.setSceneRect(QtCore.QRectF())
              self._min_scale = 0.01
              self._max_scale = config.MAX_ABS_SCALE
-             self._ensure_overlay_widgets_updated_on_show(False)
-             if hasattr(self, '_scale_bar_widget') and self._scale_bar_widget:
+             self._ensure_overlay_widgets_updated_on_show(False) # Hides buttons
+             if self._scale_bar_widget: # Explicitly hide scale bar
                 self._scale_bar_widget.setVisible(False)
+             if self._info_overlay_widget: # Explicitly hide info overlay
+                self._info_overlay_widget.setVisible(False)
 
         logger.debug("Resetting interaction state variables (pan/click).")
         self._is_panning = False
         self._is_potential_pan = False
         self._left_button_press_pos = None
         self._last_pan_point = None
-
 
     def resetInitialLoadFlag(self) -> None:
         logger.debug("Resetting initial load flag to True.")
@@ -690,8 +730,8 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         if self._pixmap_item and self.sceneRect().isValid():
             previous_transform = self.transform()
             previous_center = self.mapToScene(self.viewport().rect().center())
-            logger.debug(f"Stored previous transform: {previous_transform}")
-            logger.debug(f"Stored previous scene center: {previous_center}")
+            # logger.debug(f"Stored previous transform: {previous_transform}") # Less verbose
+            # logger.debug(f"Stored previous scene center: {previous_center}") # Less verbose
 
         super().resizeEvent(event)
         self._calculate_zoom_limits()
@@ -713,11 +753,12 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
              self.resetView()
              view_reset_called = True
 
+        # _update_overlay_widget_positions() will now handle sizing and positioning of InfoOverlayWidget
         self._update_overlay_widget_positions()
-        if not view_reset_called:
+        
+        if not view_reset_called: # Only emit if resetView() didn't already do it.
             self.viewTransformChanged.emit()
         logger.debug("Resize event handling complete.")
-
 
     def set_scale_bar_visibility(self, visible: bool) -> None:
         if hasattr(self, '_scale_bar_widget') and self._scale_bar_widget:
@@ -771,6 +812,30 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         Returns the maximum allowed scale factor for the view.
         """
         return self._max_scale
+
+    # --- NEW METHODS for InfoOverlayWidget Interaction ---
+    def set_info_overlay_video_data(self, filename: str, total_frames: int, total_duration_ms: float) -> None:
+        """Passes static video data to the InfoOverlayWidget."""
+        if self._info_overlay_widget:
+            self._info_overlay_widget.update_video_info(filename, total_frames, total_duration_ms)
+            if self._pixmap_item and not self._info_overlay_widget.isVisible():
+                 self._info_overlay_widget.setVisible(True) # Ensure visible if video data is set
+                 self._update_overlay_widget_positions() # Position it correctly
+
+    def set_info_overlay_current_frame_time(self, frame_idx: int, time_ms: float) -> None:
+        """Passes current frame/time data to the InfoOverlayWidget."""
+        if self._info_overlay_widget:
+            self._info_overlay_widget.update_current_frame_time(frame_idx, time_ms)
+            # No need to change visibility here, paintEvent will handle if already visible
+
+    def refresh_info_overlay_appearance(self) -> None:
+        """Tells the InfoOverlayWidget to reload its appearance settings and repaint."""
+        if self._info_overlay_widget:
+            self._info_overlay_widget.update_appearance_from_settings()
+            if self._info_overlay_widget.isVisible(): # Ensure repaint if visible
+                self._info_overlay_widget.update()
+            logger.debug("InfoOverlayWidget appearance refreshed.")
+    # --- END NEW METHODS ---
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         button: QtCore.Qt.MouseButton = event.button()

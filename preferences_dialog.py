@@ -44,7 +44,7 @@ class ColorButton(QtWidgets.QPushButton):
     def select_color(self) -> None:
         dialog = QtWidgets.QColorDialog(self._color, self.window())
         dialog.setWindowTitle("Select Color")
-        dialog.setStyleSheet("")
+        dialog.setStyleSheet("") # Ensure system default style for color dialog
         if dialog.exec() == QtWidgets.QDialog.Accepted:
             new_color = dialog.selectedColor()
             if new_color.isValid():
@@ -57,8 +57,8 @@ class PreferencesDialog(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
+        self.setMinimumWidth(500) # Adjusted for potentially more controls
+        self.setMinimumHeight(450) # Adjusted for potentially more controls
 
         self.setting_widgets: Dict[str, QtWidgets.QWidget] = {}
         self.tab_widget: Optional[QtWidgets.QTabWidget] = None
@@ -77,6 +77,7 @@ class PreferencesDialog(QtWidgets.QDialog):
         self._create_tracks_tab()
         self._create_origin_tab()
         self._create_scales_tab()
+        self._create_info_overlays_tab() # <-- NEW: Call to create the new tab
 
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok |
@@ -111,11 +112,10 @@ class PreferencesDialog(QtWidgets.QDialog):
                 widget.setSingleStep(widget_params.get("step", 1))
         elif widget_type == "checkbox":
             widget = QtWidgets.QCheckBox()
-            if widget_params and "tooltip" in widget_params:
-                widget.setToolTip(widget_params.get("tooltip",""))
+            # CheckBox doesn't need tooltip here, it's set directly if needed.
 
         if widget:
-            if widget_params and "tooltip" in widget_params and not isinstance(widget, QtWidgets.QCheckBox): # CheckBox handles its own tooltip
+            if widget_params and "tooltip" in widget_params:
                  widget.setToolTip(widget_params.get("tooltip"))
             form_layout.addRow(label_text, widget)
             self.setting_widgets[setting_key] = widget
@@ -184,7 +184,6 @@ class PreferencesDialog(QtWidgets.QDialog):
         scale_bar_layout.setVerticalSpacing(8)
 
         self._add_setting_to_form(scale_bar_layout, "Bar & Text Color:", settings_manager.KEY_SCALE_BAR_COLOR, "color")
-        # REVISED for Scale Bar Height
         self._add_setting_to_form(scale_bar_layout, "Bar Height (px):", settings_manager.KEY_SCALE_BAR_RECT_HEIGHT, "int_spinbox", {"min_val": 1, "max_val": 20, "step": 1, "tooltip": "Height of the actual scale bar rectangle."})
         self._add_setting_to_form(scale_bar_layout, "Text Font Size (pt):", settings_manager.KEY_SCALE_BAR_TEXT_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 72, "step": 1})
         scales_main_layout.addWidget(scale_bar_group)
@@ -194,6 +193,51 @@ class PreferencesDialog(QtWidgets.QDialog):
         if self.tab_widget:
             self.tab_widget.addTab(scales_tab_widget, "Scales")
 
+    # --- NEW METHOD: _create_info_overlays_tab ---
+    def _create_info_overlays_tab(self) -> None:
+        info_tab_widget = QtWidgets.QWidget()
+        info_main_layout = QtWidgets.QVBoxLayout(info_tab_widget)
+        info_main_layout.setSpacing(15) # Spacing between groups
+
+        # Group for Filename Overlay
+        filename_group = QtWidgets.QGroupBox("Filename Overlay")
+        filename_layout = QtWidgets.QFormLayout(filename_group)
+        filename_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        filename_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        filename_layout.setHorizontalSpacing(10)
+        filename_layout.setVerticalSpacing(8)
+        self._add_setting_to_form(filename_layout, "Text Color:", settings_manager.KEY_INFO_OVERLAY_FILENAME_COLOR, "color")
+        self._add_setting_to_form(filename_layout, "Font Size (pt):", settings_manager.KEY_INFO_OVERLAY_FILENAME_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1})
+        info_main_layout.addWidget(filename_group)
+
+        # Group for Time Overlay
+        time_group = QtWidgets.QGroupBox("Time Overlay (Current / Total)")
+        time_layout = QtWidgets.QFormLayout(time_group)
+        time_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        time_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        time_layout.setHorizontalSpacing(10)
+        time_layout.setVerticalSpacing(8)
+        self._add_setting_to_form(time_layout, "Text Color:", settings_manager.KEY_INFO_OVERLAY_TIME_COLOR, "color")
+        self._add_setting_to_form(time_layout, "Font Size (pt):", settings_manager.KEY_INFO_OVERLAY_TIME_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1})
+        info_main_layout.addWidget(time_group)
+
+        # Group for Frame Number Overlay
+        frame_group = QtWidgets.QGroupBox("Frame Number Overlay (Current / Total)")
+        frame_layout = QtWidgets.QFormLayout(frame_group)
+        frame_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        frame_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        frame_layout.setHorizontalSpacing(10)
+        frame_layout.setVerticalSpacing(8)
+        self._add_setting_to_form(frame_layout, "Text Color:", settings_manager.KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR, "color")
+        self._add_setting_to_form(frame_layout, "Font Size (pt):", settings_manager.KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1})
+        info_main_layout.addWidget(frame_group)
+
+        info_main_layout.addStretch() # Push groups to the top
+
+        if self.tab_widget:
+            self.tab_widget.addTab(info_tab_widget, "Info Overlays")
+    # --- END NEW METHOD ---
+
     def _load_settings(self) -> None:
         logger.debug("Loading settings into PreferencesDialog widgets.")
         for key, widget in self.setting_widgets.items():
@@ -202,36 +246,51 @@ class PreferencesDialog(QtWidgets.QDialog):
                 if isinstance(widget, ColorButton):
                     if isinstance(current_value_from_manager, QtGui.QColor) and current_value_from_manager.isValid():
                         widget.set_color(current_value_from_manager)
-                    else:
-                        logger.error(f"Invalid or wrong type for ColorButton key '{key}'. Value: '{current_value_from_manager}'. Using black.")
-                        widget.set_color(QtGui.QColor("black"))
+                    else: # Fallback if stored value is not a valid QColor string or None
+                        default_color = settings_manager.DEFAULT_SETTINGS.get(key, QtGui.QColor("black"))
+                        logger.warning(f"Invalid or wrong type for ColorButton key '{key}'. Value: '{current_value_from_manager}'. Using default: {default_color.name()}.")
+                        widget.set_color(default_color)
                 elif isinstance(widget, QtWidgets.QDoubleSpinBox):
                     if isinstance(current_value_from_manager, (float, int)):
                         widget.setValue(float(current_value_from_manager))
                     else:
-                        logger.warning(f"Type mismatch for QDoubleSpinBox key '{key}'. Using default. Value: {current_value_from_manager}")
-                        widget.setValue(float(settings_manager.DEFAULT_SETTINGS.get(key, 0.0)))
+                        default_val = float(settings_manager.DEFAULT_SETTINGS.get(key, 0.0))
+                        logger.warning(f"Type mismatch for QDoubleSpinBox key '{key}'. Using default {default_val}. Value: {current_value_from_manager}")
+                        widget.setValue(default_val)
                 elif isinstance(widget, QtWidgets.QSpinBox):
                     if isinstance(current_value_from_manager, int):
                         widget.setValue(current_value_from_manager)
-                    elif isinstance(current_value_from_manager, float): # Allow float if it's a whole number
+                    elif isinstance(current_value_from_manager, float) and current_value_from_manager.is_integer():
                         widget.setValue(int(current_value_from_manager))
-                    else:
-                        logger.warning(f"Type mismatch for QSpinBox key '{key}'. Using default. Value: {current_value_from_manager}")
-                        widget.setValue(int(settings_manager.DEFAULT_SETTINGS.get(key, 0)))
+                    else: # Handles strings or other types by trying conversion or using default
+                        try:
+                            widget.setValue(int(float(str(current_value_from_manager))))
+                        except (ValueError, TypeError):
+                            default_val = int(settings_manager.DEFAULT_SETTINGS.get(key, 0))
+                            logger.warning(f"Type mismatch/conversion error for QSpinBox key '{key}'. Using default {default_val}. Value: {current_value_from_manager}")
+                            widget.setValue(default_val)
                 elif isinstance(widget, QtWidgets.QCheckBox):
                     if isinstance(current_value_from_manager, bool):
                         widget.setChecked(current_value_from_manager)
-                    else:
+                    else: # Handle string "true"/"false" or int 0/1 common from QSettings
                         str_val = str(current_value_from_manager).lower()
                         if str_val == "true": widget.setChecked(True)
                         elif str_val == "false": widget.setChecked(False)
                         else:
-                            logger.warning(f"Type mismatch for QCheckBox key '{key}'. Using default. Value: {current_value_from_manager}")
-                            widget.setChecked(bool(settings_manager.DEFAULT_SETTINGS.get(key, False)))
+                            try:
+                                widget.setChecked(bool(int(float(str_val))))
+                            except (ValueError, TypeError):
+                                default_val = bool(settings_manager.DEFAULT_SETTINGS.get(key, False))
+                                logger.warning(f"Type mismatch/conversion error for QCheckBox key '{key}'. Using default {default_val}. Value: {current_value_from_manager}")
+                                widget.setChecked(default_val)
             except Exception as e:
                 logger.error(f"Error setting widget value for key '{key}' with value '{current_value_from_manager}': {e}", exc_info=True)
-                # Fallback logic can be added here if necessary
+                # Attempt to set to a hardcoded default type for the widget to prevent crashes
+                if isinstance(widget, ColorButton): widget.set_color(QtGui.QColor("black"))
+                elif isinstance(widget, QtWidgets.QDoubleSpinBox): widget.setValue(0.0)
+                elif isinstance(widget, QtWidgets.QSpinBox): widget.setValue(0)
+                elif isinstance(widget, QtWidgets.QCheckBox): widget.setChecked(False)
+
 
     def _apply_settings(self) -> bool:
         logger.info("Applying preferences...")
@@ -239,7 +298,7 @@ class PreferencesDialog(QtWidgets.QDialog):
             for key, widget in self.setting_widgets.items():
                 value_to_save: Any = None
                 if isinstance(widget, ColorButton):
-                    value_to_save = widget.color() # Store QColor object directly now
+                    value_to_save = widget.color()
                 elif isinstance(widget, QtWidgets.QDoubleSpinBox):
                     value_to_save = widget.value()
                 elif isinstance(widget, QtWidgets.QSpinBox):
@@ -248,7 +307,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                     value_to_save = widget.isChecked()
 
                 if value_to_save is not None:
-                    settings_manager.set_setting(key, value_to_save) # set_setting will handle QColor to string conversion
+                    settings_manager.set_setting(key, value_to_save)
             
             logger.info("Preferences applied and saved.")
             self.settingsApplied.emit()

@@ -21,6 +21,7 @@ from panel_controllers import ScalePanelController, CoordinatePanelController
 from table_controllers import TrackDataViewController
 from export_handler import ExportHandler, ExportResolutionMode
 from export_options_dialog import ExportOptionsDialog
+from view_menu_controller import ViewMenuController
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class MainWindow(QtWidgets.QMainWindow):
     coord_panel_controller: Optional[CoordinatePanelController]
     table_data_controller: Optional[TrackDataViewController]
     _export_handler: Optional[ExportHandler] = None
+    view_menu_controller: Optional[ViewMenuController] = None
 
     total_frames: int = 0
     current_frame_index: int = -1
@@ -132,7 +134,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
 
-        ui_setup.setup_main_window_ui(self)
+        ui_setup.setup_main_window_ui(self) # Menus are created here by ui_setup
+
+        # --- Initialize ViewMenuController ---
+        if self.imageView: # imageView must exist
+            self.view_menu_controller = ViewMenuController(main_window_ref=self, image_view_ref=self.imageView, parent=self)
+            if self.menuBar():
+                 self.view_menu_controller.setup_view_menu(self.menuBar())
+            else:
+                logger.error("MenuBar not available for ViewMenuController setup.")
+        else:
+            logger.error("ImageView not available for ViewMenuController initialization.")
+            self.view_menu_controller = None
+        # --- END NEW ---
 
         if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
             self.currentFrameLineEdit.editingFinished.connect(self._handle_frame_input_finished)
@@ -150,13 +164,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if hasattr(self, 'zoomLevelLineEdit') and isinstance(self.zoomLevelLineEdit, QtWidgets.QLineEdit):
             self.zoomLevelLineEdit.editingFinished.connect(self._handle_zoom_input_finished)
-            self.zoomLevelLineEdit.installEventFilter(self) # Use the same event filter
+            self.zoomLevelLineEdit.installEventFilter(self) 
             logger.debug("Connected zoomLevelLineEdit editingFinished signal and event filter.")
         else:
             logger.error("zoomLevelLineEdit is not a QLineEdit or not found after UI setup.")
         
         if self.imageView:
-            # Connect viewTransformChanged to update zoom display
             self.imageView.viewTransformChanged.connect(self._update_zoom_display)
 
         if hasattr(self, 'undoAction') and self.undoAction:
@@ -170,6 +183,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track_manager.undoStateChanged.connect(self.undoAction.setEnabled)
             logger.debug("Connected TrackManager.undoStateChanged to undoAction.setEnabled.")
 
+        # --- Panel Controllers Initialization ---
+        # (ScalePanelController initialization - no changes here needed for ViewMenuController)
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'scale_m_per_px_input', 'scale_px_per_m_input', 'scale_reset_button',
             'scale_display_meters_checkbox', 'showScaleBarCheckBox',
@@ -177,10 +192,8 @@ class MainWindow(QtWidgets.QMainWindow):
             'imageView', 'scale_manager'
         ]):
             self.scale_panel_controller = ScalePanelController(
-                scale_manager=self.scale_manager,
-                image_view=self.imageView,
-                main_window_ref=self,
-                scale_m_per_px_input=self.scale_m_per_px_input, # type: ignore
+                scale_manager=self.scale_manager, image_view=self.imageView,
+                main_window_ref=self, scale_m_per_px_input=self.scale_m_per_px_input, # type: ignore
                 scale_px_per_m_input=self.scale_px_per_m_input, # type: ignore
                 set_scale_by_feature_button=self.setScaleByFeatureButton, # type: ignore
                 show_scale_line_checkbox=self.showScaleLineCheckBox, # type: ignore
@@ -192,11 +205,21 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.statusBar():
                  self.scale_panel_controller.statusBarMessage.connect(self.statusBar().showMessage)
             self.scale_panel_controller.requestFrameNavigationControlsDisabled.connect(self._handle_disable_frame_navigation)
+            # Connect panel checkbox toggled to ViewMenuController sync method
+            if self.showScaleBarCheckBox and self.view_menu_controller:
+                self.showScaleBarCheckBox.toggled.connect(
+                    lambda checked, cb=self.showScaleBarCheckBox: self.view_menu_controller.sync_panel_checkbox_to_menu(cb) # type: ignore
+                )
+            if self.showScaleLineCheckBox and self.view_menu_controller:
+                self.showScaleLineCheckBox.toggled.connect(
+                    lambda checked, cb=self.showScaleLineCheckBox: self.view_menu_controller.sync_panel_checkbox_to_menu(cb) # type: ignore
+                )
             logger.debug("ScalePanelController initialized and signals connected.")
         else:
             logger.error("Scale panel UI elements or core components not found for ScalePanelController.")
             self.scale_panel_controller = None
 
+        # (CoordinatePanelController initialization - no changes here needed for ViewMenuController)
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'coordSystemGroup', 'coordTopLeftRadio', 'coordBottomLeftRadio', 'coordCustomRadio',
             'coordTopLeftOriginLabel', 'coordBottomLeftOriginLabel', 'coordCustomOriginLabel',
@@ -215,25 +238,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 set_origin_button=self.setOriginButton, show_origin_checkbox=self.showOriginCheckBox, # type: ignore
                 cursor_pos_labels_px=cursor_labels_px_dict, cursor_pos_labels_m=cursor_labels_m_dict, parent=self
             )
+            # Connect panel checkbox toggled to ViewMenuController sync method
+            if self.showOriginCheckBox and self.view_menu_controller:
+                self.showOriginCheckBox.toggled.connect( # stateChanged for QCheckBox
+                    lambda state, cb=self.showOriginCheckBox: self.view_menu_controller.sync_panel_checkbox_to_menu(cb) # type: ignore
+                )
             logger.debug("CoordinatePanelController initialized.")
         else:
             logger.error("Coordinate panel UI elements or core components not found for CoordinatePanelController.")
             self.coord_panel_controller = None
-
+            
+        # (TrackDataViewController initialization - no changes here)
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'track_manager',
             'video_handler', 'scale_manager', 'coord_transformer'
         ]):
             self.table_data_controller = TrackDataViewController(
-                main_window_ref=self,
-                track_manager=self.track_manager,
-                video_handler=self.video_handler,
-                scale_manager=self.scale_manager,
-                coord_transformer=self.coord_transformer,
-                tracks_table_widget=self.tracksTableWidget, # type: ignore
-                points_table_widget=self.pointsTableWidget, # type: ignore
-                points_tab_label=self.pointsTabLabel, # type: ignore
-                parent=self
+                main_window_ref=self, track_manager=self.track_manager, video_handler=self.video_handler,
+                scale_manager=self.scale_manager, coord_transformer=self.coord_transformer,
+                tracks_table_widget=self.tracksTableWidget, points_table_widget=self.pointsTableWidget, # type: ignore
+                points_tab_label=self.pointsTabLabel, parent=self # type: ignore
             )
             logger.debug("TrackDataViewController initialized.")
         else:
@@ -244,16 +268,21 @@ class MainWindow(QtWidgets.QMainWindow):
         if status_bar_instance:
             status_bar_instance.showMessage("Ready. Load a video via File -> Open Video...")
 
+        # (ExportHandler initialization - no changes here)
         self._export_handler = ExportHandler(
             video_handler=self.video_handler, track_manager=self.track_manager,
             scale_manager=self.scale_manager, coord_transformer=self.coord_transformer,
             image_view=self.imageView, main_window=self, parent=self )
         logger.debug("ExportHandler initialized in MainWindow.")
 
+        # --- Connect Core Signals ---
+        # (VideoHandler signal connections - no changes here)
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
+        
+        # (ImageView signal connections - no changes here)
         if self.imageView:
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
@@ -263,24 +292,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.sceneMouseMoved.connect(self.coord_panel_controller._on_handle_mouse_moved)
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
+        
+        # (TrackManager signal connections - no changes here)
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
+        
+        # (ScaleManager signal connections - no changes here)
         if self.scale_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
         if self.table_data_controller: self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
         if self.coord_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
+        
+        # (CoordPanelController signal connections - no changes here)
         if self.coord_panel_controller:
             self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
             if self.table_data_controller: self.coord_panel_controller.pointsTableNeedsUpdate.connect(self.table_data_controller.update_points_table_ui)
             if status_bar_instance: self.coord_panel_controller.statusBarMessage.connect(status_bar_instance.showMessage)
+        
+        # (TableDataViewController signal connections - no changes here)
         if self.table_data_controller:
             self.table_data_controller.seekVideoToFrame.connect(self.video_handler.seek_frame)
             self.table_data_controller.updateMainWindowUIState.connect(self._update_ui_state)
             if status_bar_instance: self.table_data_controller.statusBarMessage.connect(status_bar_instance.showMessage)
             if hasattr(self.tracksTableWidget, 'horizontalHeader') and hasattr(self.tracksTableWidget.horizontalHeader(), 'sectionClicked'): # type: ignore
                  self.tracksTableWidget.horizontalHeader().sectionClicked.connect(self.table_data_controller.handle_visibility_header_clicked) # type: ignore
+
+        # (UI element direct connections - no changes here for ViewMenuController)
         if self.frameSlider: self.frameSlider.valueChanged.connect(self._slider_value_changed) # type: ignore
         if self.playPauseButton: self.playPauseButton.clicked.connect(self._toggle_playback) # type: ignore
         if self.prevFrameButton: self.prevFrameButton.clicked.connect(self._show_previous_frame) # type: ignore
@@ -288,11 +327,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.stateChanged.connect(self._handle_auto_advance_toggled) # type: ignore
         if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed) # type: ignore
         if self.videoInfoAction: self.videoInfoAction.triggered.connect(self._show_video_info_dialog) # type: ignore
-        if self.preferencesAction: self.preferencesAction.triggered.connect(self._show_preferences_dialog) # type: ignore
+        
+        # (Preferences Dialog connection)
+        if self.preferencesAction: 
+            self.preferencesAction.triggered.connect(self._show_preferences_dialog) # type: ignore
+
+        # (New Track Action connection - no changes here)
         if self.newTrackAction:
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
+        
+        # (Export actions and signals - no changes here)
         if hasattr(self, 'exportViewAction') and self.exportViewAction and self._export_handler: # type: ignore
             self.exportViewAction.triggered.connect(self._trigger_export_video) # type: ignore
         if hasattr(self, 'exportFrameAction') and self.exportFrameAction and self._export_handler: # type: ignore
@@ -302,14 +348,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._export_handler.exportProgress.connect(self._on_export_progress)
             self._export_handler.exportFinished.connect(self._on_export_finished)
 
-        self._update_ui_state()
+        # Initial UI state update
+        self._update_ui_state() # This should now also trigger view_menu_controller update if needed
         if self.table_data_controller:
             self.table_data_controller.update_tracks_table_ui()
             self.table_data_controller.update_points_table_ui()
         if self.coord_panel_controller: self.coord_panel_controller.update_ui_display()
         if self.scale_panel_controller: self.scale_panel_controller.update_ui_from_manager()
+        
+        if self.view_menu_controller: # Sync menu after all UI and controllers are up
+            self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
+        
         logger.info("MainWindow initialization complete.")
-
 
     def _setup_pens(self) -> None:
         logger.debug("Setting up QPen objects using current settings...")
@@ -351,62 +401,60 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = self.statusBar()
         if status_bar: status_bar.clearMessage()
 
-        # Reset new QLineEdits and QLabels for frame/time
         if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
-            self.currentFrameLineEdit.blockSignals(True)
-            self.currentFrameLineEdit.setReadOnly(True)
-            self.currentFrameLineEdit.setText("-")
-            self.currentFrameLineEdit.deselect()
-            self.currentFrameLineEdit.blockSignals(False)
+            self.currentFrameLineEdit.blockSignals(True); self.currentFrameLineEdit.setReadOnly(True)
+            self.currentFrameLineEdit.setText("-"); self.currentFrameLineEdit.deselect(); self.currentFrameLineEdit.blockSignals(False)
         if hasattr(self, 'totalFramesLabel') and isinstance(self.totalFramesLabel, QtWidgets.QLabel):
             self.totalFramesLabel.setText("/ -")
-
         if hasattr(self, 'currentTimeLineEdit') and isinstance(self.currentTimeLineEdit, QtWidgets.QLineEdit):
-            self.currentTimeLineEdit.blockSignals(True)
-            self.currentTimeLineEdit.setReadOnly(True)
-            self.currentTimeLineEdit.setText("--:--.---")
-            self.currentTimeLineEdit.deselect()
-            self.currentTimeLineEdit.blockSignals(False)
+            self.currentTimeLineEdit.blockSignals(True); self.currentTimeLineEdit.setReadOnly(True)
+            self.currentTimeLineEdit.setText("--:--.---"); self.currentTimeLineEdit.deselect(); self.currentTimeLineEdit.blockSignals(False)
         if hasattr(self, 'totalTimeLabel') and isinstance(self.totalTimeLabel, QtWidgets.QLabel):
             self.totalTimeLabel.setText("/ --:--.---")
-
         if hasattr(self, 'zoomLevelLineEdit') and self.zoomLevelLineEdit is not None:
-            self.zoomLevelLineEdit.blockSignals(True)
-            self.zoomLevelLineEdit.setReadOnly(True)
-            self.zoomLevelLineEdit.setText("---.-")
-            self.zoomLevelLineEdit.deselect()
-            self.zoomLevelLineEdit.clearFocus()
-            self.zoomLevelLineEdit.blockSignals(False)
+            self.zoomLevelLineEdit.blockSignals(True); self.zoomLevelLineEdit.setReadOnly(True)
+            self.zoomLevelLineEdit.setText("---.-"); self.zoomLevelLineEdit.deselect()
+            self.zoomLevelLineEdit.clearFocus(); self.zoomLevelLineEdit.blockSignals(False)
         
         if self.frameSlider:
-            self.frameSlider.blockSignals(True)
-            self.frameSlider.setValue(0)
-            self.frameSlider.setMaximum(0)
-            self.frameSlider.blockSignals(False)
+            self.frameSlider.blockSignals(True); self.frameSlider.setValue(0)
+            self.frameSlider.setMaximum(0); self.frameSlider.blockSignals(False)
+            
         if self.imageView:
             self.imageView.clearOverlay()
             self.imageView.setPixmap(QtGui.QPixmap())
             self.imageView.resetInitialLoadFlag()
-            self.imageView.set_scale_bar_visibility(False)
+            self.imageView.set_scale_bar_visibility(False) # Ensure scale bar also hidden
+            # Clear InfoOverlayWidget data and hide it
+            self.imageView.set_info_overlay_video_data("", 0, 0.0)
+            self.imageView.set_info_overlay_current_frame_time(-1, 0.0)
+            if hasattr(self.imageView, '_info_overlay_widget') and self.imageView._info_overlay_widget: # type: ignore
+                self.imageView._info_overlay_widget.setVisible(False) # type: ignore
             self.imageView.set_interaction_mode(InteractionMode.NORMAL)
         
-        self.coord_transformer = CoordinateTransformer()
+        self.coord_transformer = CoordinateTransformer() # Re-initialize
         if self.coord_panel_controller:
-            self.coord_panel_controller._coord_transformer = self.coord_transformer
+            self.coord_panel_controller._coord_transformer = self.coord_transformer # type: ignore
+            # self.coord_panel_controller.update_ui_display() # _update_ui_state will trigger
         
         self.scale_manager.reset()
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(False)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(False)
         if self.table_data_controller: self.table_data_controller.set_video_loaded_status(False)
         
-        self._update_ui_state()
+        self._update_ui_state() # This includes sync for view menu controller
+        
+        # --- Notify ViewMenuController about video closed state ---
+        if self.view_menu_controller:
+            self.view_menu_controller.handle_video_loaded_state_changed(False)
+        # --- END ---
 
 
     def _update_ui_state(self) -> None:
         is_video_loaded: bool = self.video_loaded
         is_setting_scale_by_line = False
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line'):
-            is_setting_scale_by_line = self.scale_panel_controller._is_setting_scale_by_line # type: ignore
+            is_setting_scale_by_line = self.scale_panel_controller._is_setting_scale_by_line
 
         nav_enabled_during_action = not is_setting_scale_by_line
 
@@ -417,18 +465,13 @@ class MainWindow(QtWidgets.QMainWindow):
         can_play: bool = is_video_loaded and self.fps > 0 and nav_enabled_during_action
         if self.playPauseButton: self.playPauseButton.setEnabled(can_play)
 
-        # Enable/disable frame and time input fields
         if hasattr(self, 'currentFrameLineEdit') and self.currentFrameLineEdit is not None:
             self.currentFrameLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
         if hasattr(self, 'currentTimeLineEdit') and self.currentTimeLineEdit is not None:
             self.currentTimeLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
-
-        # --- NEW: Enable/Disable Zoom Level LineEdit ---
         if hasattr(self, 'zoomLevelLineEdit') and self.zoomLevelLineEdit is not None:
             self.zoomLevelLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
-            if not is_video_loaded: # Also ensure text is reset if video becomes unloaded
-                self.zoomLevelLineEdit.setText("---.-")
-        # --- END NEW ---
+            if not is_video_loaded: self.zoomLevelLineEdit.setText("---.-")
 
         if self.newTrackAction: self.newTrackAction.setEnabled(is_video_loaded)
         if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
@@ -448,14 +491,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'exportFrameAction') and self.exportFrameAction:
             self.exportFrameAction.setEnabled(is_video_loaded)
         
-        if hasattr(self, 'undoAction') and self.undoAction: # Enable/disable undo action
+        if hasattr(self, 'undoAction') and self.undoAction:
             self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action() and is_video_loaded)
 
-
+        # Panel controller updates (these already exist)
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
+        # Note: update_ui_display on coord_panel_controller is usually called by set_video_loaded_status if state changes
+
         if self.table_data_controller: self.table_data_controller.set_video_loaded_status(is_video_loaded, self.total_frames if is_video_loaded else 0)
 
+        # --- Sync ViewMenuController states ---
+        if self.view_menu_controller:
+            self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
+        # --- END ---
 
     def _update_ui_for_frame(self, frame_index: int) -> None:
         """Updates UI elements that display current frame and time information."""
@@ -669,19 +718,33 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def _handle_settings_applied(self) -> None:
         logger.info("MainWindow: Settings applied, refreshing visuals.")
-        self._setup_pens()
-        if self.imageView and hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget: # type: ignore
+        self._setup_pens() # Reloads pens based on new color/size settings
+
+        # Refresh ScaleBarWidget appearance
+        if self.imageView and hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget:
             logger.debug("MainWindow: Calling update_appearance_from_settings on ScaleBarWidget.")
-            self.imageView._scale_bar_widget.update_appearance_from_settings() # type: ignore
-            if self.imageView._scale_bar_widget.isVisible(): # type: ignore
-                 self.imageView._update_overlay_widget_positions() # type: ignore
-        else:
-            logger.warning("ScaleBarWidget not available or not setup on imageView for settings update.")
-        self._redraw_scene_overlay()
-        if self.imageView and self.scale_manager and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
+            self.imageView._scale_bar_widget.update_appearance_from_settings()
+            if self.imageView._scale_bar_widget.isVisible():
+                 self.imageView._update_overlay_widget_positions() # Reposition if size changed
+        
+        # --- Refresh InfoOverlayWidget appearance via imageView ---
+        if self.imageView:
+            self.imageView.refresh_info_overlay_appearance()
+        # --- END ---
+
+        self._redraw_scene_overlay() # General redraw for scene items (tracks, origin, defined scale line)
+
+        # Ensure scale bar dimensions are correct if it's visible and scale is set
+        if self.imageView and self.scale_manager and \
+           hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
             current_m_per_px = self.scale_manager.get_scale_m_per_px()
             if current_m_per_px is not None:
                 self.imageView.update_scale_bar_dimensions(current_m_per_px)
+        
+        # --- Notify ViewMenuController to sync menu states with potentially changed settings ---
+        if self.view_menu_controller:
+            self.view_menu_controller.handle_preferences_applied()
+        # --- END ---
 
     @QtCore.Slot(int)
     def _slider_value_changed(self, value: int) -> None:
@@ -802,24 +865,59 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot(dict)
     def _handle_video_loaded(self, video_info: Dict[str, Any]) -> None:
         logger.info(f"Received videoLoaded signal: {video_info.get('filename', 'N/A')}")
-        self.total_frames = video_info.get('total_frames', 0); self.video_loaded = True; self.fps = video_info.get('fps', 0.0)
-        self.total_duration_ms = video_info.get('duration_ms', 0.0); self.video_filepath = video_info.get('filepath', '')
-        self.frame_width = video_info.get('width', 0); self.frame_height = video_info.get('height', 0); self.is_playing = False
+        self.total_frames = video_info.get('total_frames', 0)
+        self.video_loaded = True
+        self.fps = video_info.get('fps', 0.0)
+        self.total_duration_ms = video_info.get('duration_ms', 0.0)
+        self.video_filepath = video_info.get('filepath', '')
+        self.frame_width = video_info.get('width', 0)
+        self.frame_height = video_info.get('height', 0)
+        self.is_playing = False
         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {video_info.get('filename', 'N/A')}")
+
         self.coord_transformer.set_video_height(self.frame_height)
-        if self.coord_panel_controller: self.coord_panel_controller.set_video_height(self.frame_height)
-        self.track_manager.reset() # Resets tracks and undo state
-        if self.frameSlider: self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0); self.frameSlider.setValue(0)
-        if self.imageView: self.imageView.resetInitialLoadFlag()
+        if self.coord_panel_controller:
+            self.coord_panel_controller.set_video_height(self.frame_height)
+        
+        self.track_manager.reset() 
+        if self.frameSlider:
+            self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0)
+            self.frameSlider.setValue(0)
+        
+        if self.imageView: 
+            self.imageView.resetInitialLoadFlag()
+            # --- Pass video data to InfoOverlayWidget via imageView ---
+            self.imageView.set_info_overlay_video_data(
+                filename=video_info.get('filename', 'N/A'),
+                total_frames=self.total_frames,
+                total_duration_ms=self.total_duration_ms
+            )
+            self.imageView.refresh_info_overlay_appearance() # Ensure it uses latest settings
+            # --- END ---
+
         self.scale_manager.reset()
-        if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(True)
-        if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(True); self.coord_panel_controller.update_ui_display()
-        if self.table_data_controller: self.table_data_controller.set_video_loaded_status(True, self.total_frames)
-        self._update_zoom_display() # This will calculate and set the initial 100%
-        self._update_ui_state() # Will also update undoAction enabled state
-        status_msg = (f"Loaded '{video_info.get('filename', 'N/A')}' ({self.total_frames} frames, {self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
+        if self.scale_panel_controller:
+            self.scale_panel_controller.set_video_loaded_status(True)
+        if self.coord_panel_controller:
+            self.coord_panel_controller.set_video_loaded_status(True)
+            # self.coord_panel_controller.update_ui_display() # _update_ui_state will call this
+        if self.table_data_controller:
+            self.table_data_controller.set_video_loaded_status(True, self.total_frames)
+        
+        self._update_zoom_display() 
+        self._update_ui_state() # This includes sync for view menu controller
+        
+        # --- Notify ViewMenuController about video loaded state ---
+        if self.view_menu_controller:
+            self.view_menu_controller.handle_video_loaded_state_changed(True)
+        # --- END ---
+        
+        status_msg = (f"Loaded '{video_info.get('filename', 'N/A')}' "
+                      f"({self.total_frames} frames, {self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
         status_bar = self.statusBar()
-        if status_bar: status_bar.showMessage(status_msg, 5000)
+        if status_bar:
+            status_bar.showMessage(status_msg, 5000)
+
 
     @QtCore.Slot(str)
     def _handle_video_load_failed(self, error_msg: str) -> None:
@@ -830,14 +928,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(QtGui.QPixmap, int)
     def _handle_frame_changed(self, pixmap: QtGui.QPixmap, frame_index: int) -> None:
-        if not self.video_loaded: return
+        if not self.video_loaded: return # Should not happen if logic is correct
+        
         self.current_frame_index = frame_index
-        if self.imageView: self.imageView.setPixmap(pixmap)
-        self._update_ui_for_frame(frame_index)
-        self._redraw_scene_overlay()
-        if self.imageView and self.scale_manager and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
+        if self.imageView: 
+            self.imageView.setPixmap(pixmap)
+            # --- Update InfoOverlayWidget with current frame/time via imageView ---
+            current_time_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else 0.0
+            self.imageView.set_info_overlay_current_frame_time(self.current_frame_index, current_time_ms)
+            # --- END ---
+            
+        self._update_ui_for_frame(frame_index) # Updates frame/time line edits
+        self._redraw_scene_overlay() # Redraws tracks, origin marker, scale line
+
+        # Update scale bar if visible and scale is set
+        if self.imageView and self.scale_manager and \
+           hasattr(self, 'showScaleBarCheckBox') and self.showScaleBarCheckBox and self.showScaleBarCheckBox.isChecked():
             current_m_per_px = self.scale_manager.get_scale_m_per_px()
-            if current_m_per_px is not None: self.imageView.update_scale_bar_dimensions(current_m_per_px)
+            if current_m_per_px is not None:
+                self.imageView.update_scale_bar_dimensions(current_m_per_px)
+
 
     @QtCore.Slot(bool)
     def _handle_playback_state_changed(self, is_playing: bool) -> None:
