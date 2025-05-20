@@ -281,8 +281,10 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window); main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
     edit_menu.addAction(main_window.preferencesAction)
 
-    help_menu: QtWidgets.QMenu = menu_bar.addMenu("&Help")
-    about_action = QtGui.QAction("&About", main_window); about_action.setStatusTip("Show information about this application"); about_action.triggered.connect(main_window._show_about_dialog)
-    help_menu.addAction(about_action)
+    # The following lines related to Help Menu are REMOVED:
+    # help_menu: QtWidgets.QMenu = menu_bar.addMenu("&Help")
+    # about_action = QtGui.QAction("&About", main_window); about_action.setStatusTip("Show information about this application"); about_action.triggered.connect(main_window._show_about_dialog)
+    # help_menu.addAction(about_action)
+
     main_window.setStatusBar(QtWidgets.QStatusBar())
     logger.info("MainWindow UI setup complete.")

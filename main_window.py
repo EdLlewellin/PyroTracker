@@ -134,20 +134,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
 
-        ui_setup.setup_main_window_ui(self) # Menus are created here by ui_setup
+        # ui_setup.setup_main_window_ui will no longer create the Help menu
+        ui_setup.setup_main_window_ui(self) 
 
         # --- Initialize ViewMenuController ---
         if self.imageView: # imageView must exist
             self.view_menu_controller = ViewMenuController(main_window_ref=self, image_view_ref=self.imageView, parent=self)
-            if self.menuBar():
-                 self.view_menu_controller.setup_view_menu(self.menuBar())
+            menu_bar_instance = self.menuBar() # Get menuBar instance
+            if menu_bar_instance:
+                 self.view_menu_controller.setup_view_menu(menu_bar_instance)
+                 
+                 # --- ADD HELP MENU AFTER VIEW MENU ---
+                 logger.debug("Creating Help menu in MainWindow...")
+                 help_menu: QtWidgets.QMenu = menu_bar_instance.addMenu("&Help")
+                 about_action = QtGui.QAction("&About", self)
+                 about_action.setStatusTip("Show information about this application")
+                 about_action.triggered.connect(self._show_about_dialog)
+                 help_menu.addAction(about_action)
+                 logger.debug("Help menu created and added.")
+                 # --- END HELP MENU ADDITION ---
             else:
-                logger.error("MenuBar not available for ViewMenuController setup.")
+                logger.error("MenuBar not available for ViewMenuController or Help menu setup.")
         else:
             logger.error("ImageView not available for ViewMenuController initialization.")
             self.view_menu_controller = None
-        # --- END NEW ---
-
+        
+        # The rest of the __init__ method remains the same...
         if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
             self.currentFrameLineEdit.editingFinished.connect(self._handle_frame_input_finished)
             self.currentFrameLineEdit.installEventFilter(self)
@@ -183,8 +195,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.track_manager.undoStateChanged.connect(self.undoAction.setEnabled)
             logger.debug("Connected TrackManager.undoStateChanged to undoAction.setEnabled.")
 
-        # --- Panel Controllers Initialization ---
-        # (ScalePanelController initialization - no changes here needed for ViewMenuController)
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'scale_m_per_px_input', 'scale_px_per_m_input', 'scale_reset_button',
             'scale_display_meters_checkbox', 'showScaleBarCheckBox',
@@ -205,7 +215,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.statusBar():
                  self.scale_panel_controller.statusBarMessage.connect(self.statusBar().showMessage)
             self.scale_panel_controller.requestFrameNavigationControlsDisabled.connect(self._handle_disable_frame_navigation)
-            # Connect panel checkbox toggled to ViewMenuController sync method
             if self.showScaleBarCheckBox and self.view_menu_controller:
                 self.showScaleBarCheckBox.toggled.connect(
                     lambda checked, cb=self.showScaleBarCheckBox: self.view_menu_controller.sync_panel_checkbox_to_menu(cb) # type: ignore
@@ -219,7 +228,6 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error("Scale panel UI elements or core components not found for ScalePanelController.")
             self.scale_panel_controller = None
 
-        # (CoordinatePanelController initialization - no changes here needed for ViewMenuController)
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'coordSystemGroup', 'coordTopLeftRadio', 'coordBottomLeftRadio', 'coordCustomRadio',
             'coordTopLeftOriginLabel', 'coordBottomLeftOriginLabel', 'coordCustomOriginLabel',
@@ -238,7 +246,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 set_origin_button=self.setOriginButton, show_origin_checkbox=self.showOriginCheckBox, # type: ignore
                 cursor_pos_labels_px=cursor_labels_px_dict, cursor_pos_labels_m=cursor_labels_m_dict, parent=self
             )
-            # Connect panel checkbox toggled to ViewMenuController sync method
             if self.showOriginCheckBox and self.view_menu_controller:
                 self.showOriginCheckBox.toggled.connect( # stateChanged for QCheckBox
                     lambda state, cb=self.showOriginCheckBox: self.view_menu_controller.sync_panel_checkbox_to_menu(cb) # type: ignore
@@ -248,7 +255,6 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error("Coordinate panel UI elements or core components not found for CoordinatePanelController.")
             self.coord_panel_controller = None
             
-        # (TrackDataViewController initialization - no changes here)
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'track_manager',
             'video_handler', 'scale_manager', 'coord_transformer'
@@ -268,21 +274,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if status_bar_instance:
             status_bar_instance.showMessage("Ready. Load a video via File -> Open Video...")
 
-        # (ExportHandler initialization - no changes here)
         self._export_handler = ExportHandler(
             video_handler=self.video_handler, track_manager=self.track_manager,
             scale_manager=self.scale_manager, coord_transformer=self.coord_transformer,
             image_view=self.imageView, main_window=self, parent=self )
         logger.debug("ExportHandler initialized in MainWindow.")
 
-        # --- Connect Core Signals ---
-        # (VideoHandler signal connections - no changes here)
         self.video_handler.videoLoaded.connect(self._handle_video_loaded)
         self.video_handler.videoLoadFailed.connect(self._handle_video_load_failed)
         self.video_handler.frameChanged.connect(self._handle_frame_changed)
         self.video_handler.playbackStateChanged.connect(self._handle_playback_state_changed)
         
-        # (ImageView signal connections - no changes here)
         if self.imageView:
             self.imageView.pointClicked.connect(self._handle_add_point_click)
             self.imageView.frameStepRequested.connect(self._handle_frame_step)
@@ -293,25 +295,21 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
         
-        # (TrackManager signal connections - no changes here)
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
         self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
         
-        # (ScaleManager signal connections - no changes here)
         if self.scale_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
         if self.table_data_controller: self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
         if self.coord_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.coord_panel_controller._trigger_cursor_label_update_slot)
         
-        # (CoordPanelController signal connections - no changes here)
         if self.coord_panel_controller:
             self.coord_panel_controller.needsRedraw.connect(self._redraw_scene_overlay)
             if self.table_data_controller: self.coord_panel_controller.pointsTableNeedsUpdate.connect(self.table_data_controller.update_points_table_ui)
             if status_bar_instance: self.coord_panel_controller.statusBarMessage.connect(status_bar_instance.showMessage)
         
-        # (TableDataViewController signal connections - no changes here)
         if self.table_data_controller:
             self.table_data_controller.seekVideoToFrame.connect(self.video_handler.seek_frame)
             self.table_data_controller.updateMainWindowUIState.connect(self._update_ui_state)
@@ -319,7 +317,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(self.tracksTableWidget, 'horizontalHeader') and hasattr(self.tracksTableWidget.horizontalHeader(), 'sectionClicked'): # type: ignore
                  self.tracksTableWidget.horizontalHeader().sectionClicked.connect(self.table_data_controller.handle_visibility_header_clicked) # type: ignore
 
-        # (UI element direct connections - no changes here for ViewMenuController)
         if self.frameSlider: self.frameSlider.valueChanged.connect(self._slider_value_changed) # type: ignore
         if self.playPauseButton: self.playPauseButton.clicked.connect(self._toggle_playback) # type: ignore
         if self.prevFrameButton: self.prevFrameButton.clicked.connect(self._show_previous_frame) # type: ignore
@@ -328,17 +325,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.valueChanged.connect(self._handle_auto_advance_frames_changed) # type: ignore
         if self.videoInfoAction: self.videoInfoAction.triggered.connect(self._show_video_info_dialog) # type: ignore
         
-        # (Preferences Dialog connection)
         if self.preferencesAction: 
             self.preferencesAction.triggered.connect(self._show_preferences_dialog) # type: ignore
 
-        # (New Track Action connection - no changes here)
         if self.newTrackAction:
             self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
         
-        # (Export actions and signals - no changes here)
         if hasattr(self, 'exportViewAction') and self.exportViewAction and self._export_handler: # type: ignore
             self.exportViewAction.triggered.connect(self._trigger_export_video) # type: ignore
         if hasattr(self, 'exportFrameAction') and self.exportFrameAction and self._export_handler: # type: ignore
@@ -348,19 +342,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self._export_handler.exportProgress.connect(self._on_export_progress)
             self._export_handler.exportFinished.connect(self._on_export_finished)
 
-        # Initial UI state update
-        self._update_ui_state() # This should now also trigger view_menu_controller update if needed
+        self._update_ui_state() 
         if self.table_data_controller:
             self.table_data_controller.update_tracks_table_ui()
             self.table_data_controller.update_points_table_ui()
         if self.coord_panel_controller: self.coord_panel_controller.update_ui_display()
         if self.scale_panel_controller: self.scale_panel_controller.update_ui_from_manager()
         
-        if self.view_menu_controller: # Sync menu after all UI and controllers are up
+        if self.view_menu_controller: 
             self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
         
         logger.info("MainWindow initialization complete.")
-
     def _setup_pens(self) -> None:
         logger.debug("Setting up QPen objects using current settings...")
         color_active_marker = settings_manager.get_setting(settings_manager.KEY_ACTIVE_MARKER_COLOR)
