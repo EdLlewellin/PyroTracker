@@ -113,25 +113,47 @@ class ViewMenuController(QtCore.QObject):
                                                  menu_action_checked_state: bool) -> None:
         """
         Handles toggling for synced overlays (Scale Bar, Scale Line, Origin) from the View menu.
-        This will programmatically toggle the panel checkbox, which then triggers its own logic
-        (including updating settings and visuals).
+        This will programmatically toggle the panel checkbox, and then directly call the
+        panel controller's handler to ensure the logic runs.
         """
-        if panel_checkbox and panel_checkbox.isEnabled():
-            # Check if the checkbox's current state is different from what the menu action wants it to be.
-            # This prevents redundant toggles if they are already in sync.
-            if panel_checkbox.isChecked() != menu_action_checked_state:
-                logger.debug(f"View menu action changing panel checkbox '{panel_checkbox.objectName() if panel_checkbox.objectName() else 'Unnamed'}' state to {menu_action_checked_state}")
-                panel_checkbox.setChecked(menu_action_checked_state) # This will trigger the checkbox's own slot
-            else:
-                logger.debug(f"View menu action for '{panel_checkbox.objectName() if panel_checkbox.objectName() else 'Unnamed'}' already matches checkbox state. No programmatic toggle needed.")
-        elif panel_checkbox and not panel_checkbox.isEnabled():
-             logger.debug(f"View menu action for '{panel_checkbox.objectName() if panel_checkbox.objectName() else 'Unnamed'}' ignored as panel checkbox is disabled.")
-             # Revert the menu action's state to match the disabled checkbox's actual state
-             if self.sender() and isinstance(self.sender(), QtGui.QAction):
-                 action = self.sender()
-                 action.blockSignals(True)
-                 action.setChecked(panel_checkbox.isChecked()) # Match the (disabled) checkbox state
-                 action.blockSignals(False)
+        if not panel_checkbox:
+            logger.warning("Synced overlay action triggered but panel_checkbox is None.")
+            return
+
+        logger.debug(f"ViewMenuController: Menu action for '{panel_checkbox.objectName()}' triggered. Desired state: {menu_action_checked_state}")
+
+        # 1. Update the panel checkbox state programmatically
+        # Block signals on the checkbox during this programmatic change to prevent its own
+        # toggled signal from firing and potentially causing loops or redundant actions if
+        # it's connected back to sync the menu.
+        if panel_checkbox.isChecked() != menu_action_checked_state:
+            panel_checkbox.blockSignals(True)
+            panel_checkbox.setChecked(menu_action_checked_state)
+            panel_checkbox.blockSignals(False)
+            logger.debug(f"ViewMenuController: Panel checkbox '{panel_checkbox.objectName()}' state programmatically set to {menu_action_checked_state}.")
+
+        # 2. Directly call the panel controller's handler method to ensure logic runs
+        # This is crucial for the action to take effect even if the panel is collapsed.
+        if panel_checkbox is self._main_window_ref.showScaleBarCheckBox:
+            if self._main_window_ref.scale_panel_controller:
+                logger.debug(f"ViewMenuController: Directly calling ScalePanelController._on_show_scale_bar_toggled({menu_action_checked_state})")
+                self._main_window_ref.scale_panel_controller._on_show_scale_bar_toggled(menu_action_checked_state)
+        elif panel_checkbox is self._main_window_ref.showScaleLineCheckBox:
+            if self._main_window_ref.scale_panel_controller:
+                logger.debug(f"ViewMenuController: Directly calling ScalePanelController._on_show_defined_scale_line_toggled({menu_action_checked_state})")
+                self._main_window_ref.scale_panel_controller._on_show_defined_scale_line_toggled(menu_action_checked_state)
+        elif panel_checkbox is self._main_window_ref.showOriginCheckBox:
+            if self._main_window_ref.coord_panel_controller:
+                # The _on_toggle_show_origin slot expects an integer (QtCore.Qt.CheckState)
+                qt_check_state = QtCore.Qt.CheckState.Checked.value if menu_action_checked_state else QtCore.Qt.CheckState.Unchecked.value
+                logger.debug(f"ViewMenuController: Directly calling CoordinatePanelController._on_toggle_show_origin({qt_check_state})")
+                self._main_window_ref.coord_panel_controller._on_toggle_show_origin(qt_check_state)
+        
+        # After the direct call, the panel controller should have updated the application state
+        # (e.g., settings) and triggered necessary visual redraws.
+        # We should ensure the menu item states are fully consistent.
+        self.sync_all_menu_items_from_settings_and_panels()
+
 
     @QtCore.Slot()
     def sync_panel_checkbox_to_menu(self, panel_checkbox: QtWidgets.QCheckBox) -> None:
@@ -150,63 +172,87 @@ class ViewMenuController(QtCore.QObject):
         elif panel_checkbox is self._main_window_ref.showOriginCheckBox:
             action_to_sync = self.viewShowOriginMarkerAction
 
-        if action_to_sync and panel_checkbox.isEnabled(): # Only sync if the checkbox that changed is enabled
+        if action_to_sync:
             new_checkbox_state = panel_checkbox.isChecked()
+            # Only update the menu's checked state if it's different
             if action_to_sync.isChecked() != new_checkbox_state:
-                logger.debug(f"Panel checkbox '{panel_checkbox.objectName()}' changed by user to {new_checkbox_state}. Syncing View menu action '{action_to_sync.text()}'.")
+                logger.debug(f"ViewMenuController: Panel checkbox '{panel_checkbox.objectName()}' changed by user to {new_checkbox_state}. Syncing menu action '{action_to_sync.text()}'.")
                 action_to_sync.blockSignals(True)
                 action_to_sync.setChecked(new_checkbox_state)
                 action_to_sync.blockSignals(False)
-        elif action_to_sync and not panel_checkbox.isEnabled():
-            logger.debug(f"Panel checkbox '{panel_checkbox.objectName()}' is disabled. View menu action '{action_to_sync.text()}' will be synced based on its actual (disabled) state.")
-            # Ensure menu reflects the disabled checkbox state.
-            action_to_sync.blockSignals(True)
-            action_to_sync.setChecked(panel_checkbox.isChecked())
-            action_to_sync.blockSignals(False)
+            
+            # The panel controller (connected to the checkbox's toggled signal) handles the actual logic.
+            # After the panel checkbox changes state (and its controller logic runs),
+            # it's good to ensure all menu items (including enabled states) are refreshed.
+            # MainWindow._update_ui_state often calls sync_all_menu_items. If not, or for robustness:
+            self.sync_all_menu_items_from_settings_and_panels()
 
 
     def sync_all_menu_items_from_settings_and_panels(self) -> None:
         """
         Synchronizes all View menu checkable actions with their current settings
-        or corresponding panel checkbox states. Also updates enabled states.
+        or corresponding panel checkbox states. Also updates enabled states based on
+        actual application conditions.
         """
         if not self._view_menu:
-            logger.warning("sync_all_menu_items_from_settings_and_panels called but viewMenu not initialized.")
+            logger.warning("ViewMenuController: sync_all_menu_items_from_settings_and_panels called but viewMenu not initialized.")
             return
-        logger.debug("Syncing all View menu states...")
+        logger.debug("ViewMenuController: Syncing all View menu states...")
 
         video_is_loaded = self._main_window_ref.video_loaded
+        # These conditions are critical for enabling/disabling menu items correctly
+        scale_is_set = False
+        scale_line_is_defined = False
+        if self._main_window_ref.scale_manager: # Ensure scale_manager exists
+            scale_is_set = self._main_window_ref.scale_manager.get_scale_m_per_px() is not None
+            scale_line_is_defined = self._main_window_ref.scale_manager.has_defined_scale_line()
 
-        # Info Overlays (directly from settings, enabled if video loaded)
+        # Info Overlays (visibility from settings, enabled if video loaded)
         if self.viewShowFilenameAction:
             self.viewShowFilenameAction.blockSignals(True)
-            self.viewShowFilenameAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME) and video_is_loaded)
+            # Checked state from settings
+            self.viewShowFilenameAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME))
             self.viewShowFilenameAction.setEnabled(video_is_loaded)
             self.viewShowFilenameAction.blockSignals(False)
         if self.viewShowTimeAction:
             self.viewShowTimeAction.blockSignals(True)
-            self.viewShowTimeAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_TIME) and video_is_loaded)
+            self.viewShowTimeAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_TIME))
             self.viewShowTimeAction.setEnabled(video_is_loaded)
             self.viewShowTimeAction.blockSignals(False)
         if self.viewShowFrameNumberAction:
             self.viewShowFrameNumberAction.blockSignals(True)
-            self.viewShowFrameNumberAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER) and video_is_loaded)
+            self.viewShowFrameNumberAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER))
             self.viewShowFrameNumberAction.setEnabled(video_is_loaded)
             self.viewShowFrameNumberAction.blockSignals(False)
 
-        # Synced Overlays (state and enabled from panel checkboxes)
-        checkbox_action_map = [
-            (self._main_window_ref.showScaleBarCheckBox, self.viewShowScaleBarAction),
-            (self._main_window_ref.showScaleLineCheckBox, self.viewShowScaleLineAction),
-            (self._main_window_ref.showOriginCheckBox, self.viewShowOriginMarkerAction),
-        ]
-        for cb, action in checkbox_action_map:
-            if cb and action:
-                action.blockSignals(True)
-                action.setChecked(cb.isChecked())
-                action.setEnabled(cb.isEnabled())
-                action.blockSignals(False)
-        logger.debug("All View menu states synced.")
+        # --- Synced Overlays ---
+
+        # Show Origin Marker Action
+        if self.viewShowOriginMarkerAction and self._main_window_ref.showOriginCheckBox:
+            self.viewShowOriginMarkerAction.blockSignals(True)
+            # Checked state mirrors the panel checkbox
+            self.viewShowOriginMarkerAction.setChecked(self._main_window_ref.showOriginCheckBox.isChecked())
+            # Enabled state depends on whether a video is loaded
+            self.viewShowOriginMarkerAction.setEnabled(video_is_loaded)
+            self.viewShowOriginMarkerAction.blockSignals(False)
+
+        # Show Scale Bar Action
+        if self.viewShowScaleBarAction and self._main_window_ref.showScaleBarCheckBox:
+            self.viewShowScaleBarAction.blockSignals(True)
+            self.viewShowScaleBarAction.setChecked(self._main_window_ref.showScaleBarCheckBox.isChecked())
+            # Enabled state depends on video loaded AND scale being set
+            self.viewShowScaleBarAction.setEnabled(video_is_loaded and scale_is_set)
+            self.viewShowScaleBarAction.blockSignals(False)
+
+        # Show Defined Scale Line Action
+        if self.viewShowScaleLineAction and self._main_window_ref.showScaleLineCheckBox:
+            self.viewShowScaleLineAction.blockSignals(True)
+            self.viewShowScaleLineAction.setChecked(self._main_window_ref.showScaleLineCheckBox.isChecked())
+            # Enabled state depends on video loaded AND a scale line being defined
+            self.viewShowScaleLineAction.setEnabled(video_is_loaded and scale_line_is_defined)
+            self.viewShowScaleLineAction.blockSignals(False)
+
+        logger.debug("ViewMenuController: All View menu states synced.")
 
     def handle_video_loaded_state_changed(self, is_loaded: bool) -> None:
         """Updates the enabled state of menu items based on video load status."""
