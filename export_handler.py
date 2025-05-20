@@ -146,27 +146,18 @@ class ExportHandler(QtCore.QObject):
         relative_img_center_x = img_center.x() - line_mid_x; relative_img_center_y = img_center.y() - line_mid_y
         cos_neg_angle = math.cos(-line_angle_rad); sin_neg_angle = math.sin(-line_angle_rad)
         unrotated_img_center_y = relative_img_center_x * sin_neg_angle + relative_img_center_y * cos_neg_angle
-        # final_shift_y = shift_magnitude if unrotated_img_center_y < 0 else -shift_magnitude # Original logic for y shift in rotated frame
-        painter.restore(); painter.save() # Restore from rotation, save again
-        # Corrected logic for text placement to ensure it's consistently on one side of the line
-        # Shift perpendicular to the line in the global coordinate system
+        
+        painter.restore(); painter.save() 
+        
         initial_text_top_left_x = line_mid_x - (text_width / 2.0)
         initial_text_top_left_y = line_mid_y - (text_height / 2.0)
-
-        # Determine which side of the line the image center lies on
-        # This uses the unrotated relative Y of the image center calculated earlier
-        # A positive unrotated_img_center_y means the image center is "below" the line in its own coordinate system.
-        # We want to shift the text "above" the line in its own coordinate system if img_center is "below", and vice-versa.
-        # The perpendicular vector (perp_dx_global_norm, perp_dy_global_norm) points "left" of the line direction.
-        # If unrotated_img_center_y < 0 (center is "above" line's local x-axis), shift text "down" (in line's local y, which is along -perp vector).
-        # If unrotated_img_center_y >= 0 (center is "below" line's local x-axis), shift text "up" (in line's local y, which is along +perp vector).
 
         perp_dx_global_norm = -dy / line_length if line_length > 1e-6 else 0
         perp_dy_global_norm = dx / line_length if line_length > 1e-6 else 0
 
         shift_sign = 1.0
-        if unrotated_img_center_y >= 0: # Image center is "below" the horizontal equivalent of the line
-            shift_sign = -1.0 # Shift text "up" (against the perpendicular vector pointing "left" and "down")
+        if unrotated_img_center_y >= 0: 
+            shift_sign = -1.0 
 
         final_total_shift_x = perp_dx_global_norm * shift_magnitude * shift_sign
         final_total_shift_y = perp_dy_global_norm * shift_magnitude * shift_sign
@@ -174,7 +165,6 @@ class ExportHandler(QtCore.QObject):
         text_final_pos_x = initial_text_top_left_x + final_total_shift_x
         text_final_pos_y = initial_text_top_left_y + final_total_shift_y
 
-        # Apply final translation and rotation for drawing
         painter.translate(text_final_pos_x + text_width / 2.0, text_final_pos_y + text_height / 2.0)
         painter.rotate(text_rotation_deg)
         painter.drawText(QtCore.QPointF(-text_width / 2.0, -text_height / 2.0 + font_metrics.ascent()), length_text)
@@ -183,10 +173,10 @@ class ExportHandler(QtCore.QObject):
 
     def _render_overlays_on_painter(self,
                                    painter: QtGui.QPainter,
-                                   current_frame_index: int,
+                                   current_frame_index: int, # This is the original video frame index
                                    export_qimage_rect: QtCore.QRectF,
                                    visible_scene_rect: QtCore.QRectF,
-                                   export_mode: ExportResolutionMode # NEW parameter
+                                   export_mode: ExportResolutionMode
                                    ) -> None:
         if not self._track_manager or not self._coord_transformer or not self._scale_manager or not self._image_view or not self._main_window:
             logger.error("Overlay rendering skipped: one or more required managers/views are missing.")
@@ -261,22 +251,20 @@ class ExportHandler(QtCore.QObject):
            hasattr(self._image_view, '_scale_bar_widget') and self._image_view._scale_bar_widget:
             sb_widget: 'ScaleBarWidget' = self._image_view._scale_bar_widget
             
-            # --- MODIFIED Scale Bar Logic for Export Resolution ---
             parent_width_for_sb_calc: int
             effective_view_scale_for_sb_calc: float
 
             if export_mode == ExportResolutionMode.ORIGINAL_VIDEO:
                 parent_width_for_sb_calc = self._video_handler.frame_width
-                effective_view_scale_for_sb_calc = 1.0 # Scene pixels are original video pixels
-            else: # VIEWPORT mode (existing behavior)
+                effective_view_scale_for_sb_calc = 1.0 
+            else: 
                 parent_width_for_sb_calc = int(export_qimage_rect.width())
                 if visible_scene_rect.width() > 0 and visible_scene_rect.height() > 0:
                     effective_view_scale_x = export_qimage_rect.width() / visible_scene_rect.width()
                     effective_view_scale_y = export_qimage_rect.height() / visible_scene_rect.height()
                     effective_view_scale_for_sb_calc = min(effective_view_scale_x, effective_view_scale_y)
                 else:
-                    effective_view_scale_for_sb_calc = 1.0 # Fallback
-            # --- END MODIFIED Scale Bar Logic ---
+                    effective_view_scale_for_sb_calc = 1.0 
 
             sb_widget.update_dimensions(
                 m_per_px_scene=self._scale_manager.get_scale_m_per_px(),
@@ -291,11 +279,10 @@ class ExportHandler(QtCore.QObject):
                 painter_sb_font_metrics = QtGui.QFontMetrics(sb_font)
                 sb_rect_h_px=sb_widget.get_current_bar_rect_height(); sb_text_margin_bottom=sb_widget.get_text_margin_bottom()
                 sb_border_thickness_px=sb_widget.get_border_thickness()
-                sb_text_w_px, sb_text_h_px_overall = sb_widget.get_text_dimensions() # Get consistent text dimensions
+                sb_text_w_px, sb_text_h_px_overall = sb_widget.get_text_dimensions() 
 
                 margin=10
                 overall_sb_width = int(max(sb_bar_len_px + 2*sb_border_thickness_px, sb_text_w_px))
-                # Use overall text height for layout
                 overall_sb_height = sb_text_h_px_overall + sb_text_margin_bottom + sb_rect_h_px + 2*sb_border_thickness_px
 
                 sb_x_offset = export_qimage_rect.width() - overall_sb_width - margin
@@ -307,11 +294,10 @@ class ExportHandler(QtCore.QObject):
                 painter.setPen(sb_text_color)
                 
                 text_x_local = (overall_sb_width - sb_text_w_px) / 2.0
-                text_baseline_y_local = float(painter_sb_font_metrics.ascent()) # Y for baseline
+                text_baseline_y_local = float(painter_sb_font_metrics.ascent()) 
                 painter.drawText(QtCore.QPointF(text_x_local, text_baseline_y_local), sb_text)
                 
                 bar_start_x_local = (overall_sb_width - sb_bar_len_px) / 2.0
-                # Bar top Y is below the full text height and margin
                 bar_top_y_local = float(sb_text_h_px_overall + sb_text_margin_bottom + sb_border_thickness_px)
                 bar_rect_local = QtCore.QRectF(bar_start_x_local, bar_top_y_local, sb_bar_len_px, float(sb_rect_h_px))
                 
@@ -322,9 +308,17 @@ class ExportHandler(QtCore.QObject):
                 painter.drawRect(bar_rect_local)
                 painter.restore()
 
-    @QtCore.Slot(str, str, str, ExportResolutionMode) # Added ExportResolutionMode
-    def export_video_with_overlays(self, save_path: str, chosen_fourcc_str: str, chosen_extension_dot: str, export_mode: ExportResolutionMode) -> None:
-        logger.info(f"ExportHandler: Starting video export to {save_path} with FourCC {chosen_fourcc_str}, Mode: {export_mode.name}")
+    @QtCore.Slot(str, str, str, ExportResolutionMode, int, int) # Added start_frame_idx, end_frame_idx
+    def export_video_with_overlays(self, 
+                                   save_path: str, 
+                                   chosen_fourcc_str: str, 
+                                   chosen_extension_dot: str, 
+                                   export_mode: ExportResolutionMode,
+                                   start_frame_idx: int, # 0-based
+                                   end_frame_idx: int    # 0-based
+                                   ) -> None:
+        logger.info(f"ExportHandler: Starting video export to {save_path} with FourCC {chosen_fourcc_str}, "
+                    f"Mode: {export_mode.name}, Frames: {start_frame_idx}-{end_frame_idx}")
         self.exportStarted.emit()
 
         if not self._video_handler or not self._video_handler.is_loaded or \
@@ -334,6 +328,16 @@ class ExportHandler(QtCore.QObject):
             self.exportFinished.emit(False, "Internal error: Core components missing.")
             return
 
+        # Validate frame range against total video frames
+        if not (0 <= start_frame_idx < self._video_handler.total_frames and
+                0 <= end_frame_idx < self._video_handler.total_frames and
+                start_frame_idx <= end_frame_idx):
+            err_msg = (f"Invalid frame range for export: Start={start_frame_idx}, End={end_frame_idx}. "
+                       f"Video has {self._video_handler.total_frames} frames (0-indexed).")
+            logger.error(f"ExportHandler: {err_msg}")
+            self.exportFinished.emit(False, err_msg)
+            return
+            
         try:
             export_width: int
             export_height: int
@@ -347,7 +351,9 @@ class ExportHandler(QtCore.QObject):
                 viewport_size = self._image_view.viewport().size()
                 export_width = viewport_size.width()
                 export_height = viewport_size.height()
+                # Get the scene rect corresponding to the current viewport for rendering
                 visible_scene_rect_for_export = self._image_view.mapToScene(self._image_view.viewport().rect()).boundingRect()
+
 
             if export_width <= 0 or export_height <= 0:
                 err_msg = f"Invalid export dimensions ({export_width}x{export_height})."
@@ -367,57 +373,62 @@ class ExportHandler(QtCore.QObject):
                 self.exportFinished.emit(False, error_detail)
                 return
 
-            total_frames_to_export = self._video_handler.total_frames
+            # Calculate number of frames in the clip for progress reporting
+            num_frames_in_clip = (end_frame_idx - start_frame_idx) + 1
             export_cancelled = False
+            
+            processed_clip_frames = 0 # Counter for frames processed in the current clip export
 
-            for frame_idx in range(total_frames_to_export):
+            for original_frame_idx in range(start_frame_idx, end_frame_idx + 1):
                 if self._main_window._export_progress_dialog and self._main_window._export_progress_dialog.wasCanceled():
                     export_cancelled = True
                     break
-                self.exportProgress.emit(f"Processing frame {frame_idx + 1}/{total_frames_to_export}", frame_idx, total_frames_to_export)
+                
+                # Progress is based on the clip's frame count
+                progress_msg = (f"Processing original frame {original_frame_idx + 1} "
+                                f"(Clip frame {processed_clip_frames + 1}/{num_frames_in_clip})")
+                self.exportProgress.emit(progress_msg, processed_clip_frames, num_frames_in_clip)
                 QtWidgets.QApplication.processEvents()
 
-                raw_cv_frame = self._video_handler.get_raw_frame_at_index(frame_idx)
+                raw_cv_frame = self._video_handler.get_raw_frame_at_index(original_frame_idx)
                 source_qimage_for_drawing: Optional[QtGui.QImage] = None
                 if raw_cv_frame is not None:
                     h_raw, w_raw = raw_cv_frame.shape[:2]
                     channels_raw = raw_cv_frame.shape[2] if len(raw_cv_frame.shape) == 3 else 1
                     try:
-                        if channels_raw == 3: # BGR
+                        if channels_raw == 3: 
                             contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
                             rgb_frame_data = cv2.cvtColor(contig_raw_cv_frame, cv2.COLOR_BGR2RGB)
                             source_qimage_for_drawing = QtGui.QImage(rgb_frame_data.data, w_raw, h_raw, rgb_frame_data.strides[0], QtGui.QImage.Format.Format_RGB888).copy()
-                        elif channels_raw == 1: # Grayscale
+                        elif channels_raw == 1: 
                             contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
                             source_qimage_for_drawing = QtGui.QImage(contig_raw_cv_frame.data, w_raw, h_raw, contig_raw_cv_frame.strides[0], QtGui.QImage.Format.Format_Grayscale8).copy()
                         
                         if source_qimage_for_drawing is not None and source_qimage_for_drawing.isNull():
                             source_qimage_for_drawing = None
                     except Exception as e_conv:
-                        logger.error(f"Frame {frame_idx}: Error during raw_cv_frame to QImage conversion: {e_conv}", exc_info=True)
+                        logger.error(f"Frame {original_frame_idx}: Error during raw_cv_frame to QImage conversion: {e_conv}", exc_info=True)
                         source_qimage_for_drawing = None
                 
                 if source_qimage_for_drawing is None:
-                    logger.warning(f"Frame {frame_idx}: Using fallback black QImage for drawing.")
+                    logger.warning(f"Frame {original_frame_idx}: Using fallback black QImage for drawing.")
                     source_qimage_for_drawing = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_RGB888)
                     source_qimage_for_drawing.fill(QtCore.Qt.GlobalColor.black)
 
                 export_canvas_qimage = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_RGB888)
-                export_canvas_qimage.fill(QtCore.Qt.GlobalColor.black) # Base fill
+                export_canvas_qimage.fill(QtCore.Qt.GlobalColor.black) 
                 painter = QtGui.QPainter(export_canvas_qimage)
                 painter.setRenderHints(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.TextAntialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
 
                 target_export_qimage_rect = QtCore.QRectF(export_canvas_qimage.rect())
                 
-                # Draw the base video frame onto the canvas
-                # If original res, source_qimage_for_drawing is full frame, visible_scene_rect_for_export is full frame => 1:1 draw
-                # If viewport res, source_qimage_for_drawing is full frame, visible_scene_rect_for_export is what's seen => cropped/scaled draw
                 painter.drawImage(target_export_qimage_rect, source_qimage_for_drawing, visible_scene_rect_for_export)
                 
-                self._render_overlays_on_painter(painter, frame_idx, target_export_qimage_rect, visible_scene_rect_for_export, export_mode)
+                # Pass the original_frame_idx for overlay rendering logic
+                self._render_overlays_on_painter(painter, original_frame_idx, target_export_qimage_rect, visible_scene_rect_for_export, export_mode)
                 painter.end()
 
-                if export_canvas_qimage.format() != QtGui.QImage.Format.Format_RGB888: # Should already be this
+                if export_canvas_qimage.format() != QtGui.QImage.Format.Format_RGB888:
                     export_canvas_qimage = export_canvas_qimage.convertToFormat(QtGui.QImage.Format.Format_RGB888)
 
                 temp_width = export_canvas_qimage.width()
@@ -433,14 +444,18 @@ class ExportHandler(QtCore.QObject):
                     if len(pixel_data_for_line) == bytes_per_cv_line:
                         cv_export_frame_rgb[i] = np.frombuffer(pixel_data_for_line, dtype=np.uint8).reshape((temp_width, 3))
                     else:
-                        logger.error(f"Export Video Frame {frame_idx}, Line {i}: Size mismatch. Filling line with black.")
+                        logger.error(f"Export Video Frame {original_frame_idx}, Line {i}: Size mismatch. Filling line with black.")
                         cv_export_frame_rgb[i] = 0 
 
                 cv_export_frame_bgr = cv2.cvtColor(cv_export_frame_rgb, cv2.COLOR_RGB2BGR)
                 video_writer.write(cv_export_frame_bgr)
+                processed_clip_frames += 1
+
 
             video_writer.release()
-            self.exportProgress.emit("Finalizing...", total_frames_to_export, total_frames_to_export)
+            # Ensure final progress update if not cancelled
+            if not export_cancelled:
+                 self.exportProgress.emit("Finalizing...", num_frames_in_clip, num_frames_in_clip)
 
             if export_cancelled:
                 if os.path.exists(save_path):
@@ -457,10 +472,10 @@ class ExportHandler(QtCore.QObject):
             if 'video_writer' in locals() and video_writer.isOpened(): # type: ignore
                 video_writer.release()
 
-    @QtCore.Slot(str, ExportResolutionMode) # Added ExportResolutionMode
+    @QtCore.Slot(str, ExportResolutionMode)
     def export_current_frame_to_png(self, save_path: str, export_mode: ExportResolutionMode) -> None:
         logger.info(f"ExportHandler: Starting PNG export to {save_path}, Mode: {export_mode.name}")
-        self.exportStarted.emit()
+        self.exportStarted.emit() # Although quick, emit for consistency if progress dialog is managed externally
 
         if not self._video_handler or not self._video_handler.is_loaded or self._video_handler.current_frame_index < 0 or \
            not self._image_view or not self._track_manager or \
@@ -496,11 +511,11 @@ class ExportHandler(QtCore.QObject):
                 h_raw, w_raw = raw_cv_frame.shape[:2]
                 channels_raw = raw_cv_frame.shape[2] if len(raw_cv_frame.shape) == 3 else 1
                 try:
-                    if channels_raw == 3: # BGR
+                    if channels_raw == 3: 
                         contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
                         rgb_frame_data = cv2.cvtColor(contig_raw_cv_frame, cv2.COLOR_BGR2RGB)
                         source_qimage_for_drawing = QtGui.QImage(rgb_frame_data.data, w_raw, h_raw, rgb_frame_data.strides[0], QtGui.QImage.Format.Format_RGB888).copy()
-                    elif channels_raw == 1: # Grayscale
+                    elif channels_raw == 1: 
                         contig_raw_cv_frame = np.require(raw_cv_frame, requirements=['C_CONTIGUOUS'])
                         source_qimage_for_drawing = QtGui.QImage(contig_raw_cv_frame.data, w_raw, h_raw, contig_raw_cv_frame.strides[0], QtGui.QImage.Format.Format_Grayscale8).copy()
                     
@@ -516,7 +531,7 @@ class ExportHandler(QtCore.QObject):
                 source_qimage_for_drawing.fill(QtCore.Qt.GlobalColor.black)
 
             export_canvas_qimage = QtGui.QImage(export_width, export_height, QtGui.QImage.Format.Format_ARGB32_Premultiplied)
-            export_canvas_qimage.fill(QtCore.Qt.transparent) # Start with transparent for PNG
+            export_canvas_qimage.fill(QtCore.Qt.transparent) 
             painter = QtGui.QPainter(export_canvas_qimage)
             painter.setRenderHints(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.TextAntialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
             
@@ -527,6 +542,8 @@ class ExportHandler(QtCore.QObject):
             painter.end()
 
             if export_canvas_qimage.save(save_path, "PNG"):
+                # For single frame, progress can be considered complete immediately
+                self.exportProgress.emit(f"Saved {os.path.basename(save_path)}", 1, 1)
                 self.exportFinished.emit(True, f"Frame saved to {os.path.basename(save_path)}")
             else:
                 self.exportFinished.emit(False, f"Could not save image to {os.path.basename(save_path)}")

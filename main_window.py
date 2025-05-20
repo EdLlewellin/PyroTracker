@@ -20,6 +20,7 @@ from scale_manager import ScaleManager
 from panel_controllers import ScalePanelController, CoordinatePanelController
 from table_controllers import TrackDataViewController
 from export_handler import ExportHandler, ExportResolutionMode
+from export_options_dialog import ExportOptionsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -1061,41 +1062,111 @@ class MainWindow(QtWidgets.QMainWindow):
             return ExportResolutionMode.VIEWPORT
         return None
 
+
     @QtCore.Slot()
-    def _trigger_export_video(self) -> None: # From previous step, ensure it's using ExportResolutionMode
+    def _trigger_export_video(self) -> None:
         if not self.video_loaded or not self._export_handler:
             QtWidgets.QMessageBox.warning(self, "Export Error", "No video loaded or export handler not ready.")
             return
-        export_mode = self._get_export_resolution_choice()
-        if export_mode is None:
+    
+        logger.debug("Export video triggered. Instantiating ExportOptionsDialog.")
+        export_options_dialog = ExportOptionsDialog(
+            total_frames=self.total_frames,
+            fps=self.fps,
+            current_frame_idx=self.current_frame_index,
+            video_frame_width=self.frame_width,
+            video_frame_height=self.frame_height,
+            parent=self
+        )
+    
+        if export_options_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            start_frame_0_based, end_frame_0_based = export_options_dialog.get_selected_range_0_based()
+            export_mode = export_options_dialog.get_resolution_mode()
+    
+            logger.info(f"Export options accepted: Start Frame={start_frame_0_based}, End Frame={end_frame_0_based}, Mode={export_mode.name}")
+    
+            base_video_name = "video_with_overlays"
+            if self.video_filepath:
+                base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0] + "_tracked"
+    
+            export_formats = [ 
+                ("mp4", "mp4v", "MP4 Video Files (*.mp4)"), 
+                ("avi", "MJPG", "AVI Video Files (Motion JPEG) (*.avi)")
+            ]
+            file_filters = ";;".join([opt[2] for opt in export_formats])
+    
+            default_filename_suffix = "_origRes" if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else "_viewportRes"
+    
+            # Add frame range to default filename if not full video, with padding
+            is_full_range = (start_frame_0_based == 0 and 
+                             end_frame_0_based == (self.total_frames - 1 if self.total_frames > 0 else 0))
+    
+            if not is_full_range and self.total_frames > 0:
+                num_digits_for_padding = len(str(self.total_frames))
+                start_frame_display = f"{start_frame_0_based + 1:0{num_digits_for_padding}d}"
+                end_frame_display = f"{end_frame_0_based + 1:0{num_digits_for_padding}d}"
+                default_filename_suffix += f"_f{start_frame_display}-f{end_frame_display}"
+            elif not is_full_range: # Handles case where total_frames might be 0 but range is custom (though unlikely)
+                 default_filename_suffix += f"_f{start_frame_0_based + 1}-f{end_frame_0_based + 1}"
+    
+    
+            default_filename = f"{base_video_name}{default_filename_suffix}.{export_formats[0][0]}"
+            start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
+    
+            save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Export Video with Overlays", 
+                os.path.join(start_dir, default_filename), 
+                file_filters
+            )
+    
+            if not save_path:
+                if self.statusBar(): self.statusBar().showMessage("Video export cancelled.", 3000)
+                logger.info("Video export cancelled by user at file dialog.")
+                return
+    
+            chosen_fourcc_str = ""; chosen_extension_dot = ""
+            for ext, fcc, desc in export_formats:
+                if desc == selected_filter_desc:
+                    chosen_fourcc_str = fcc
+                    chosen_extension_dot = f".{ext}"
+                    break
+    
+            if not chosen_fourcc_str:
+                _name_part, ext_part_from_path = os.path.splitext(save_path)
+                if ext_part_from_path:
+                    ext_part_from_path_lower = ext_part_from_path.lower()
+                    for ext, fcc, _desc in export_formats:
+                        if f".{ext}" == ext_part_from_path_lower:
+                            chosen_fourcc_str = fcc
+                            chosen_extension_dot = ext_part_from_path_lower
+                            break
+                if not chosen_fourcc_str:
+                    chosen_fourcc_str = export_formats[0][1]
+                    chosen_extension_dot = f".{export_formats[0][0]}"
+    
+            current_name_part, current_ext_part = os.path.splitext(save_path)
+            if current_ext_part.lower() != chosen_extension_dot.lower():
+                save_path = current_name_part + chosen_extension_dot
+                logger.info(f"Adjusted save path to ensure correct extension: {save_path}")
+    
+            if self._export_handler:
+                logger.info(f"Calling export_video_with_overlays with: path='{save_path}', "
+                            f"fourcc='{chosen_fourcc_str}', ext='{chosen_extension_dot}', "
+                            f"mode='{export_mode.name}', start_frame={start_frame_0_based}, end_frame={end_frame_0_based}")
+                self._export_handler.export_video_with_overlays(
+                    save_path, 
+                    chosen_fourcc_str, 
+                    chosen_extension_dot, 
+                    export_mode,
+                    start_frame_0_based, 
+                    end_frame_0_based   
+                )
+            else:
+                logger.error("Export handler not available to process video export.")
+                QtWidgets.QMessageBox.critical(self, "Export Error", "Export handler is not initialized.")
+        else:
             if self.statusBar(): self.statusBar().showMessage("Video export cancelled by user.", 3000)
-            return
-        # ... (rest of the _trigger_export_video from previous step, ensuring export_mode is passed)
-        base_video_name = "video_with_overlays"
-        if self.video_filepath:
-            base_video_name = os.path.splitext(os.path.basename(self.video_filepath))[0] + "_tracked"
-        export_options = [("mp4", "mp4v", "MP4 Video Files (*.mp4)"), ("avi", "MJPG", "AVI Video Files (Motion JPEG) (*.avi)")]
-        file_filters = ";;".join([opt[2] for opt in export_options])
-        default_filename_suffix = "_orig_res" if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else "_viewport_res"
-        default_filename = f"{base_video_name}{default_filename_suffix}.{export_options[0][0]}"
-        start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
-        save_path, selected_filter_desc = QtWidgets.QFileDialog.getSaveFileName(self, "Export Video with Overlays", os.path.join(start_dir, default_filename), file_filters)
-        if not save_path:
-            if self.statusBar(): self.statusBar().showMessage("Video export cancelled.", 3000)
-            return
-        chosen_fourcc_str = ""; chosen_extension_dot = ""
-        for ext, fcc, desc in export_options:
-            if desc == selected_filter_desc: chosen_fourcc_str = fcc; chosen_extension_dot = f".{ext}"; break
-        if not chosen_fourcc_str:
-            _name_part, ext_part_from_path = os.path.splitext(save_path)
-            if ext_part_from_path:
-                ext_part_from_path_lower = ext_part_from_path.lower()
-                for ext, fcc, desc in export_options:
-                    if f".{ext}" == ext_part_from_path_lower: chosen_fourcc_str = fcc; chosen_extension_dot = ext_part_from_path_lower; break
-            if not chosen_fourcc_str: chosen_fourcc_str = export_options[0][1]; chosen_extension_dot = f".{export_options[0][0]}"
-        current_name_part, current_ext_part = os.path.splitext(save_path)
-        if current_ext_part.lower() != chosen_extension_dot.lower(): save_path = current_name_part + chosen_extension_dot
-        if self._export_handler: self._export_handler.export_video_with_overlays(save_path, chosen_fourcc_str, chosen_extension_dot, export_mode)
+            logger.info("Video export options dialog cancelled by user.")
 
 
     @QtCore.Slot()

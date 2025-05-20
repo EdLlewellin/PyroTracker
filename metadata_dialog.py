@@ -5,7 +5,7 @@ Dialog window for displaying video metadata.
 import logging
 from typing import Dict, Any, Optional
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +26,17 @@ class MetadataDialog(QtWidgets.QDialog):
         self.setWindowTitle("Video Information")
         self.setMinimumWidth(450) # Ensure dialog isn't too small
         self.setMinimumHeight(300) # Ensure dialog isn't too small
-        # Allow the dialog to expand if placed in a layout that allows it
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
 
         self._metadata = metadata_dict
         self._setup_ui()
         self.populate_data()
+
+        # Enable context menu for the table
+        if hasattr(self, 'tableWidget'):
+            self.tableWidget.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+            self.tableWidget.customContextMenuRequested.connect(self._show_table_context_menu)
+
         logger.debug("MetadataDialog initialized and UI set up.")
 
     def _setup_ui(self) -> None:
@@ -70,7 +75,7 @@ class MetadataDialog(QtWidgets.QDialog):
 
     def populate_data(self) -> None:
         """Fills the table widget with the metadata dictionary."""
-        self.tableWidget.setRowCount(0) # Clear existing rows before populating
+        self.tableWidget.setRowCount(0) 
         if not self._metadata:
             logger.warning("No metadata provided to MetadataDialog.")
             return
@@ -78,27 +83,64 @@ class MetadataDialog(QtWidgets.QDialog):
         self.tableWidget.setRowCount(len(self._metadata))
         row = 0
         for key, value in self._metadata.items():
-            # Create item for the property name (key)
             key_item = QtWidgets.QTableWidgetItem(str(key))
-            # Ensure item flags indicate it's not editable (redundant with table setting, but safe)
-            key_item.setFlags(key_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
 
-            # Create item for the property value
-            # Format value nicely before creating the item
-            if isinstance(value, float):
-                value_str = f"{value:.3f}" # Format floats to 3 decimal places
-            else:
-                value_str = str(value) # Convert other types to string
-
+            value_str = f"{value:.3f}" if isinstance(value, float) else str(value)
             value_item = QtWidgets.QTableWidgetItem(value_str)
-            # Ensure item flags indicate it's not editable
-            value_item.setFlags(value_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            value_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
 
-            # Add items to the current row
+            # --- Tooltip for File Path ---
+            if str(key).lower() == "file path":
+                value_item.setToolTip(value_str) # Tooltip will show the full value_str
+                logger.debug(f"Tooltip set for File Path: {value_str}")
+
             self.tableWidget.setItem(row, 0, key_item)
             self.tableWidget.setItem(row, 1, value_item)
             row += 1
 
-        # Optional: Uncomment to resize rows to fit content height if needed
-        # self.tableWidget.resizeRowsToContents()
         logger.debug(f"Populated MetadataDialog table with {row} items.")
+
+
+    @QtCore.Slot(QtCore.QPoint)
+    def _show_table_context_menu(self, pos: QtCore.QPoint) -> None:
+        """Shows a context menu for the table, offering a copy action."""
+        if not hasattr(self, 'tableWidget'):
+            return
+
+        selected_items = self.tableWidget.selectedItems()
+        if not selected_items:
+            return
+
+        # We are interested in the item in the "Value" column (index 1) of the selected row.
+        # Since selection is by row, we can iterate through selected items to find one in column 1.
+        item_to_copy = None
+        for item in selected_items:
+            if item.column() == 1: # "Value" column
+                item_to_copy = item
+                break
+        
+        if item_to_copy is None and selected_items: # Fallback: if no specific value cell is part of selection model, take first selected item's text.
+            # This might happen if selection model is complex or only row is selected.
+            # For row selection, if we want to always copy the "Value" of the selected row:
+            current_row = self.tableWidget.currentRow()
+            if current_row >= 0:
+                item_to_copy = self.tableWidget.item(current_row, 1) # Get item from value column
+
+        if item_to_copy:
+            menu = QtWidgets.QMenu(self)
+            copy_action = menu.addAction("Copy Value")
+            action = menu.exec(self.tableWidget.mapToGlobal(pos))
+
+            if action == copy_action:
+                clipboard = QtGui.QGuiApplication.clipboard()
+                if clipboard:
+                    text_to_copy = item_to_copy.text()
+                    # If it's the file path, we prefer the full path from tooltip if available and different
+                    if item_to_copy.toolTip() and item_to_copy.toolTip() != text_to_copy:
+                        key_item_text = self.tableWidget.item(item_to_copy.row(), 0).text() # Get corresponding key
+                        if str(key_item_text).lower() == "file path":
+                            text_to_copy = item_to_copy.toolTip()
+                            logger.debug(f"Copying full file path from tooltip: {text_to_copy}")
+                    
+                    clipboard.setText(text_to_copy)
+                    logger.info(f"Copied to clipboard: '{text_to_copy[:50]}...'")
