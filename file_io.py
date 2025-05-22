@@ -19,8 +19,16 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 # Use TYPE_CHECKING to avoid circular import issues for type hints
 if TYPE_CHECKING:
     from main_window import MainWindow
-    from track_manager import TrackManager, AllTracksData, Track
+    # MODIFIED: Import ElementType
+    from track_manager import TrackManager, AllElementsForSaving, ElementData, ElementType
     from scale_manager import ScaleManager
+
+# MODIFIED: Import ElementType here as well for module-level access if needed elsewhere,
+# or specifically where it's used (as done in save_tracks_dialog).
+# For robustness, and since it's used in the function signature type hint if TYPE_CHECKING is false,
+# it's good practice to have it available at the module level.
+from track_manager import ElementType
+
 
 # Type alias for the raw point data structure read from CSV:
 # (track_id, frame_idx, time_ms, x_in_file_system, y_in_file_system)
@@ -32,7 +40,7 @@ logger = logging.getLogger(__name__)
 # --- CSV Reading/Writing ---
 
 def write_track_csv(filepath: str, metadata_dict: Dict[str, Any],
-                    all_tracks_data: 'AllTracksData', # This is internal TL pixel data
+                    all_track_type_element_data: 'AllElementsForSaving',
                     coord_transformer: CoordinateTransformer,
                     scale_manager: 'ScaleManager',
                     main_window_parent: Optional['MainWindow'] = None) -> None:
@@ -44,7 +52,10 @@ def write_track_csv(filepath: str, metadata_dict: Dict[str, Any],
     Args:
         filepath: The path to the CSV file to write.
         metadata_dict: A dictionary containing video metadata.
-        all_tracks_data: A list of tracks (internal Top-Left pixel coordinates).
+        all_track_type_element_data: A list of point lists, specifically for track-type elements,
+                                     where each inner list represents points of a track
+                                     (internal Top-Left pixel coordinates).
+                                     The index of the outer list implies track_index (for ID generation).
         coord_transformer: The coordinate transformer for system transformations.
         scale_manager: The scale manager for unit transformations and scale metadata.
         main_window_parent: Optional parent MainWindow, needed for the precision warning dialog.
@@ -77,22 +88,20 @@ def write_track_csv(filepath: str, metadata_dict: Dict[str, Any],
             if status_bar:
                  status_bar.showMessage("Save cancelled.", 3000)
             return
-    elif actual_scale_to_save is not None : # Scale is set, but display in meters not active or no dialog
-        save_in_meters = False # Default to pixels if not explicitly chosen to be meters
+    elif actual_scale_to_save is not None :
+        save_in_meters = False
         logger.info("Defaulting to save data in PIXELS (display in meters was not active, no dialog, or scale not set for meters).")
-    else: # No scale set at all
+    else:
         save_in_meters = False
         logger.info("No scale set. Saving data in PIXELS.")
 
     try:
-        # Prepare metadata
         coord_meta = coord_transformer.get_metadata()
-        # Use specific keys from config for coord_metadata for clarity and to ensure they match EXPECTED_METADATA_KEYS
         coord_metadata_for_file = {
-            config.META_COORD_SYSTEM_MODE: str(coord_transformer.mode), # Already a string
-            config.META_COORD_ORIGIN_X_TL: f"{coord_meta.get('origin_x_tl', 0.0):.4f}", # Format to string
-            config.META_COORD_ORIGIN_Y_TL: f"{coord_meta.get('origin_y_tl', 0.0):.4f}", # Format to string
-            config.META_HEIGHT: str(coord_transformer.video_height) # Video height from transformer
+            config.META_COORD_SYSTEM_MODE: str(coord_transformer.mode),
+            config.META_COORD_ORIGIN_X_TL: f"{coord_meta.get('origin_x_tl', 0.0):.4f}",
+            config.META_COORD_ORIGIN_Y_TL: f"{coord_meta.get('origin_y_tl', 0.0):.4f}",
+            config.META_HEIGHT: str(coord_transformer.video_height)
         }
 
         scale_metadata_for_file = {
@@ -100,88 +109,67 @@ def write_track_csv(filepath: str, metadata_dict: Dict[str, Any],
             config.META_DATA_UNITS: "m" if save_in_meters else "px"
         }
 
-        # --- NEW: Add defined scale line data to metadata ---
         defined_line_data = scale_manager.get_defined_scale_line_data()
         defined_line_metadata = {}
         if defined_line_data:
             p1x, p1y, p2x, p2y = defined_line_data
             defined_line_metadata = {
-                config.META_SCALE_LINE_P1X: f"{p1x:.4f}",
-                config.META_SCALE_LINE_P1Y: f"{p1y:.4f}",
-                config.META_SCALE_LINE_P2X: f"{p2x:.4f}",
-                config.META_SCALE_LINE_P2Y: f"{p2y:.4f}",
+                config.META_SCALE_LINE_P1X: f"{p1x:.4f}", config.META_SCALE_LINE_P1Y: f"{p1y:.4f}",
+                config.META_SCALE_LINE_P2X: f"{p2x:.4f}", config.META_SCALE_LINE_P2Y: f"{p2y:.4f}",
             }
             logger.info(f"Including defined scale line data in CSV metadata: {defined_line_metadata}")
         else:
-            # Ensure keys are present with "N/A" if not defined, for consistency with EXPECTED_METADATA_KEYS
             defined_line_metadata = {
-                config.META_SCALE_LINE_P1X: "N/A",
-                config.META_SCALE_LINE_P1Y: "N/A",
-                config.META_SCALE_LINE_P2X: "N/A",
-                config.META_SCALE_LINE_P2Y: "N/A",
+                config.META_SCALE_LINE_P1X: "N/A", config.META_SCALE_LINE_P1Y: "N/A",
+                config.META_SCALE_LINE_P2X: "N/A", config.META_SCALE_LINE_P2Y: "N/A",
             }
             logger.info("No defined scale line data to include in CSV metadata.")
-        # --- END NEW ---
 
-        # Combine all metadata, ensuring values are strings for CSV writing
-        # Video metadata (already strings or formatted)
         video_metadata_str = {k: str(v) for k, v in metadata_dict.items()}
-
         full_metadata = {
-            **video_metadata_str,
-            **coord_metadata_for_file,
-            **scale_metadata_for_file,
-            **defined_line_metadata # Add new line metadata
+            **video_metadata_str, **coord_metadata_for_file,
+            **scale_metadata_for_file, **defined_line_metadata
         }
-        full_metadata[config.META_APP_NAME] = config.APP_NAME # Already strings
-        full_metadata[config.META_APP_VERSION] = config.APP_VERSION # Already strings
+        full_metadata[config.META_APP_NAME] = config.APP_NAME
+        full_metadata[config.META_APP_VERSION] = config.APP_VERSION
 
         logger.debug(f"Full metadata for saving: {full_metadata}")
 
         with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
-
-            # Write metadata using EXPECTED_METADATA_KEYS order
             written_keys = set()
-            for key in config.EXPECTED_METADATA_KEYS: # Iterate through defined order
+            for key in config.EXPECTED_METADATA_KEYS:
                 value_to_write = full_metadata.get(key)
-                if value_to_write is not None: # Key exists in our combined metadata
+                if value_to_write is not None:
                     writer.writerow([f"{config.CSV_METADATA_PREFIX}{key}: {value_to_write}"])
                     written_keys.add(key)
-                else: # Key is expected but was not generated (should be rare with current logic)
+                else:
                     logger.warning(f"Expected metadata key '{key}' not found in full_metadata for saving. Writing as N/A.")
                     writer.writerow([f"{config.CSV_METADATA_PREFIX}{key}: N/A"])
-                    written_keys.add(key) # Mark as written to avoid duplicates
+                    written_keys.add(key)
 
-            # Write any other metadata that might have been in full_metadata but not in EXPECTED_METADATA_KEYS
-            # (This loop is unlikely to run if EXPECTED_METADATA_KEYS is comprehensive)
             for key, value in full_metadata.items():
                 if key not in written_keys:
                     logger.warning(f"Writing unexpected metadata key (not in EXPECTED_METADATA_KEYS): {key}")
                     writer.writerow([f"{config.CSV_METADATA_PREFIX}{key}: {value}"])
 
-            # Write data header
             writer.writerow(config.CSV_HEADER)
 
-            # Write track data points
             points_written = 0
-            for track_index, track_points_tl_px in enumerate(all_tracks_data):
-                track_id = track_index + 1
-                for point_data_tl_px in track_points_tl_px:
+            for element_index, element_point_list_tl_px in enumerate(all_track_type_element_data):
+                element_id_for_csv = element_index + 1 
+
+                for point_data_tl_px in element_point_list_tl_px:
                     frame_idx, time_ms, x_tl_px, y_tl_px = point_data_tl_px
-                    # Transform internal TL pixel data to the chosen display system (still in pixels)
                     x_coord_sys_px, y_coord_sys_px = coord_transformer.transform_point_for_display(x_tl_px, y_tl_px)
 
                     x_to_write, y_to_write = x_coord_sys_px, y_coord_sys_px
-                    # If saving in meters, apply scale factor
                     if save_in_meters and actual_scale_to_save is not None:
                         x_to_write = x_coord_sys_px * actual_scale_to_save
                         y_to_write = y_coord_sys_px * actual_scale_to_save
-                        # Format meters with more precision
-                        writer.writerow([track_id, frame_idx, f"{time_ms:.4f}", f"{x_to_write:.6f}", f"{y_to_write:.6f}"])
+                        writer.writerow([element_id_for_csv, frame_idx, f"{time_ms:.4f}", f"{x_to_write:.6f}", f"{y_to_write:.6f}"])
                     else:
-                        # Format pixels with typical precision
-                        writer.writerow([track_id, frame_idx, f"{time_ms:.4f}", f"{x_to_write:.4f}", f"{y_to_write:.4f}"])
+                        writer.writerow([element_id_for_csv, frame_idx, f"{time_ms:.4f}", f"{x_to_write:.4f}", f"{y_to_write:.4f}"])
                     points_written += 1
 
             success_msg = f"Tracks successfully saved to {os.path.basename(filepath)} ({points_written} points, Units: {'meters' if save_in_meters else 'pixels'})"
@@ -194,28 +182,11 @@ def write_track_csv(filepath: str, metadata_dict: Dict[str, Any],
     except (IOError, PermissionError) as e:
         logger.error(f"Error writing CSV file '{filepath}': {e}", exc_info=True)
         if main_window_parent: QtWidgets.QMessageBox.critical(main_window_parent, "Save Error", f"Error writing file: {e}")
-        # raise # Optional: re-raise if MainWindow shouldn't handle it further
     except Exception as e:
         logger.error(f"Unexpected error writing CSV file '{filepath}': {e}", exc_info=True)
         if main_window_parent: QtWidgets.QMessageBox.critical(main_window_parent, "Save Error", f"An unexpected error occurred: {e}")
-        # raise
 
 def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
-    """
-    Reads track data and metadata (including coordinate system info) from a CSV file.
-
-    Args:
-        filepath: The path to the CSV file to read.
-
-    Returns:
-        A tuple containing:
-        - metadata_dict: Dictionary of metadata key-value pairs found.
-        - parsed_data: List of raw point data tuples (track_id, frame_idx, time_ms, x, y)
-                       as read from the file (coordinates are in the file's saved system).
-
-    Raises:
-        FileNotFoundError, PermissionError, ValueError, Exception: If reading fails or format is invalid.
-    """
     logger.info(f"Reading track data from CSV: {filepath}")
     metadata_dict: Dict[str, str] = {}
     parsed_data: List[RawParsedData] = []
@@ -232,10 +203,7 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
                 if not row:
                     logger.debug(f"Skipping empty line {line_num}.")
                     continue
-
                 first_cell: str = row[0].strip()
-
-                # Parse Metadata Lines (includes coord system keys if present)
                 if not header_found and first_cell.startswith(config.CSV_METADATA_PREFIX):
                     if header_or_data_encountered:
                         msg = f"Invalid CSV: Metadata found after header or data line {line_num}."
@@ -244,15 +212,12 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
                         meta_line: str = first_cell[len(config.CSV_METADATA_PREFIX):]
                         key, value = meta_line.split(':', 1)
                         key_strip, val_strip = key.strip(), value.strip()
-                        metadata_dict[key_strip] = val_strip # Store all found metadata
+                        metadata_dict[key_strip] = val_strip
                         logger.debug(f"Read metadata line {line_num}: {key_strip} = {val_strip}")
                     except ValueError:
                         logger.warning(f"Skipping malformed metadata line {line_num}: '{row}'")
                     continue
-
                 header_or_data_encountered = True
-
-                # Check for Header Row
                 if not header_found:
                     normalized_row_header: List[str] = [h.strip().lower() for h in row]
                     normalized_expected_header: List[str] = [h.lower() for h in config.CSV_HEADER]
@@ -261,32 +226,26 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
                         header_found = True
                         continue
                     else:
-                        # Header is mandatory before data
-                        if metadata_dict:
-                            msg = f"Invalid CSV: Expected header '{config.CSV_HEADER}' after metadata, found '{row}' at line {line_num}."
-                        else:
-                            msg = f"Invalid CSV: Header row '{config.CSV_HEADER}' not found before data at line {line_num}."
+                        if metadata_dict: msg = f"Invalid CSV: Expected header '{config.CSV_HEADER}' after metadata, found '{row}' at line {line_num}."
+                        else: msg = f"Invalid CSV: Header row '{config.CSV_HEADER}' not found before data at line {line_num}."
                         logger.error(msg); raise ValueError(msg)
-
-                # Parse Data Rows (coordinates are in the file's saved system)
                 if header_found:
                     expected_cols: int = len(config.CSV_HEADER)
                     if len(row) != expected_cols:
                         msg = f"Invalid CSV data: Expected {expected_cols} columns, found {len(row)} at line {line_num}: {row}"
                         logger.error(msg); raise ValueError(msg)
                     try:
-                        track_id: int = int(row[0])
+                        element_id_from_file: int = int(row[0])
                         frame_idx: int = int(row[1])
                         time_ms: float = float(row[2])
-                        x: float = float(row[3]) # This is x_display (in file's system)
-                        y: float = float(row[4]) # This is y_display (in file's system)
-                        if track_id <= 0: raise ValueError("track_id must be positive")
+                        x: float = float(row[3])
+                        y: float = float(row[4])
+                        if element_id_from_file <= 0: raise ValueError("element_id_from_file (track_id) must be positive")
                         if frame_idx < 0: raise ValueError("frame_index cannot be negative")
-                        parsed_data.append((track_id, frame_idx, time_ms, x, y))
+                        parsed_data.append((element_id_from_file, frame_idx, time_ms, x, y))
                     except ValueError as ve:
                         msg = f"Invalid CSV data: Error parsing numeric value at line {line_num}: {row} - {ve}"
                         logger.error(msg); raise ValueError(msg)
-
             logger.debug("Finished reading CSV file.")
             if not header_found:
                 msg = f"Invalid CSV: Header row '{config.CSV_HEADER}' not found."
@@ -295,14 +254,12 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
                  logger.warning(f"CSV file '{filepath}' contained metadata but no track data points.")
             elif not parsed_data and not metadata_dict:
                  logger.warning(f"CSV file '{filepath}' appears to be empty or contain only a header.")
-
     except (FileNotFoundError, PermissionError, ValueError) as e:
          logger.error(f"Error reading CSV file '{filepath}': {e}", exc_info=False)
-         raise # Re-raise specific handled errors
+         raise
     except Exception as e:
          logger.error(f"Unexpected error reading CSV file '{filepath}': {e}", exc_info=True)
-         raise # Re-raise unexpected errors
-
+         raise
     logger.info(f"Successfully read {len(parsed_data)} data points and {len(metadata_dict)} metadata items from {filepath}.")
     return metadata_dict, parsed_data
 
@@ -311,12 +268,17 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
 def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
                        coord_transformer: CoordinateTransformer,
                        scale_manager: 'ScaleManager') -> None:
-    if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager or len(track_manager.tracks) == 0:
-        logger.warning("Save Tracks action ignored: Video not loaded, components unavailable, or no tracks exist.")
+    # This is where the ElementType import is needed
+    from track_manager import ElementType # Import locally for this function
+
+    if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager or \
+       not any(el['type'] == ElementType.TRACK for el in track_manager.elements):
+        logger.warning("Save Tracks action ignored: Video not loaded, components unavailable, or no track-type elements exist.")
         status_bar = main_window.statusBar()
         if status_bar:
             status_bar.showMessage("No tracks to save.", 3000)
         return
+
     logger.info("Save Tracks action triggered.")
     base_video_name: str = os.path.splitext(os.path.basename(main_window.video_filepath))[0]
     suggested_filename: str = os.path.join(os.path.dirname(main_window.video_filepath), f"{base_video_name}_tracks.csv")
@@ -343,10 +305,9 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             config.META_FPS: main_window.fps,
             config.META_DURATION: main_window.total_duration_ms,
         }
-        all_tracks_data_tl_px = track_manager.get_all_track_data()
-        write_track_csv(save_path, video_metadata, all_tracks_data_tl_px,
+        all_track_type_data_tl_px = track_manager.get_all_track_type_data_for_saving()
+        write_track_csv(save_path, video_metadata, all_track_type_data_tl_px,
                         coord_transformer, scale_manager, main_window)
-        # Success message is now handled within write_track_csv
     except Exception as e:
         error_msg = f"Error saving tracks: {str(e)}"
         logger.exception(f"Error saving tracks to {save_path}")
@@ -359,22 +320,16 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
 def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
                        coord_transformer: CoordinateTransformer,
                        scale_manager: 'ScaleManager') -> None:
-    """
-    Handles the 'File -> Load Tracks...' action logic.
-    Gets filename via dialog, confirms overwrite, reads CSV, validates metadata,
-    transforms loaded points back to internal TL format based on loaded coord metadata,
-    loads TL points into TrackManager, and updates main window's coord_transformer and scale_manager state & UI.
-    """
     if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager:
         logger.warning("Load Tracks action ignored: Video not loaded or components unavailable.")
-        status_bar = main_window.statusBar() # Get status bar instance
+        status_bar = main_window.statusBar()
         if status_bar:
             status_bar.showMessage("Cannot load tracks: No video loaded.", 3000)
         return
     logger.info("Load Tracks action triggered.")
 
-    if len(track_manager.tracks) > 0:
-        logger.debug("Existing tracks found, confirming overwrite with user.")
+    if len(track_manager.elements) > 0:
+        logger.debug("Existing elements found, confirming overwrite with user.")
         reply = QtWidgets.QMessageBox.question(
             main_window, "Confirm Load",
             "Loading a new track file will replace all current unsaved tracks.\n"
@@ -383,7 +338,7 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             QtWidgets.QMessageBox.StandardButton.Cancel)
         if reply == QtWidgets.QMessageBox.StandardButton.Cancel:
             logger.info("Track loading cancelled by user (overwrite confirmation).")
-            status_bar = main_window.statusBar() # Get status bar instance
+            status_bar = main_window.statusBar()
             if status_bar:
                 status_bar.showMessage("Load cancelled.", 3000)
             return
@@ -395,13 +350,13 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
     )
     if not load_path:
         logger.info("Track loading cancelled by user (file dialog).")
-        status_bar = main_window.statusBar() # Get status bar instance
+        status_bar = main_window.statusBar()
         if status_bar:
             status_bar.showMessage("Load cancelled.", 3000)
         return
 
     logger.info(f"User selected path for loading tracks: {load_path}")
-    status_bar = main_window.statusBar() # Get status bar instance
+    status_bar = main_window.statusBar()
     if status_bar:
         status_bar.showMessage(f"Loading tracks from {os.path.basename(load_path)}...")
     QtWidgets.QApplication.processEvents()
@@ -411,9 +366,8 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         loaded_metadata, parsed_data_raw_from_file = read_track_csv(load_path)
         logger.debug(f"Read {len(parsed_data_raw_from_file)} points from CSV with metadata: {loaded_metadata}")
 
-        # --- Scale Factor and Units Handling ---
         loaded_scale_str = loaded_metadata.get(config.META_SCALE_FACTOR_M_PER_PX)
-        loaded_data_units = loaded_metadata.get(config.META_DATA_UNITS, "px").lower() # Default to px if missing
+        loaded_data_units = loaded_metadata.get(config.META_DATA_UNITS, "px").lower()
         loaded_scale_m_per_px: Optional[float] = None
         if loaded_scale_str and loaded_scale_str.lower() != "n/a":
             try:
@@ -423,25 +377,22 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
                     loaded_scale_m_per_px = None
             except ValueError:
                 warnings_list.append(f"Non-numeric scale factor '{loaded_scale_str}' in CSV. Scale ignored.")
-        
+
         if loaded_data_units == "m" and loaded_scale_m_per_px is None:
             error_msg = (f"CSV data units are specified as 'meters' ({config.META_DATA_UNITS}: m), "
                          f"but a valid positive scale factor ({config.META_SCALE_FACTOR_M_PER_PX}) "
-                         f"was not found or is invalid in the metadata.\n\n"
-                         f"Cannot convert meter data to internal pixel system without a valid scale.\n\n"
-                         f"Loading aborted.")
+                         f"was not found or is invalid in the metadata.\n\nLoading aborted.")
             logger.error(error_msg + f" (Scale string from file was: '{loaded_scale_str}')")
             QtWidgets.QMessageBox.critical(main_window, "Load Error - Missing/Invalid Scale", error_msg)
             if main_window.statusBar(): main_window.statusBar().showMessage("Load failed: Missing/invalid scale for metric data.", 5000)
             return
         logger.info(f"Parsed scale from file: Factor={loaded_scale_m_per_px}, Units='{loaded_data_units}'")
 
-        # --- Coordinate System Handling ---
         loaded_mode_str = loaded_metadata.get(config.META_COORD_SYSTEM_MODE)
         loaded_origin_x_str = loaded_metadata.get(config.META_COORD_ORIGIN_X_TL)
         loaded_origin_y_str = loaded_metadata.get(config.META_COORD_ORIGIN_Y_TL)
         loaded_height_str = loaded_metadata.get(config.META_HEIGHT)
-        loaded_mode_enum = CoordinateSystem.TOP_LEFT # Default
+        loaded_mode_enum = CoordinateSystem.TOP_LEFT
         loaded_origin_x = 0.0; loaded_origin_y = 0.0; loaded_video_height = 0
 
         if loaded_mode_str:
@@ -457,6 +408,7 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             elif config.META_COORD_ORIGIN_Y_TL in config.EXPECTED_METADATA_KEYS: warnings_list.append("Coord origin Y missing/NA, assuming 0.")
         except (ValueError, TypeError):
             warnings_list.append("Invalid coord origin format in CSV, using (0,0)."); loaded_origin_x = 0.0; loaded_origin_y = 0.0
+
         if loaded_height_str and loaded_height_str.lower() != "n/a":
             try:
                 parsed_height = int(loaded_height_str)
@@ -466,11 +418,14 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         elif config.META_HEIGHT in config.EXPECTED_METADATA_KEYS:
             warnings_list.append(f"'{config.META_HEIGHT}' missing. Using current video height ({main_window.frame_height})."); loaded_video_height = main_window.frame_height
         else: loaded_video_height = main_window.frame_height
-        if loaded_video_height <= 0 : warnings_list.append("Could not determine valid source video height. Using 1 as fallback."); loaded_video_height = 1
+
+        if loaded_video_height <= 0 :
+            warnings_list.append("Could not determine valid source video height. Using current video height as fallback if available, else 1.")
+            loaded_video_height = main_window.frame_height if main_window.frame_height > 0 else 1
+
         loaded_origin_tl = (loaded_origin_x, loaded_origin_y)
         logger.info(f"Parsed coordinate system from file: Mode={loaded_mode_enum.name}, OriginTL={loaded_origin_tl}, SourceHeightForTransform={loaded_video_height}")
 
-        # --- NEW: Load Defined Scale Line Data ---
         p1x_str = loaded_metadata.get(config.META_SCALE_LINE_P1X)
         p1y_str = loaded_metadata.get(config.META_SCALE_LINE_P1Y)
         p2x_str = loaded_metadata.get(config.META_SCALE_LINE_P2X)
@@ -478,22 +433,17 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         loaded_scale_line_coords: Optional[Tuple[float,float,float,float]] = None
         if all(s and s.lower() != "n/a" for s in [p1x_str, p1y_str, p2x_str, p2y_str]):
             try:
-                loaded_p1x = float(p1x_str)
-                loaded_p1y = float(p1y_str)
-                loaded_p2x = float(p2x_str)
-                loaded_p2y = float(p2y_str)
+                loaded_p1x = float(p1x_str); loaded_p1y = float(p1y_str)
+                loaded_p2x = float(p2x_str); loaded_p2y = float(p2y_str)
                 loaded_scale_line_coords = (loaded_p1x, loaded_p1y, loaded_p2x, loaded_p2y)
                 logger.info(f"Parsed defined scale line data from CSV: {loaded_scale_line_coords}")
             except (ValueError, TypeError):
                 warnings_list.append("Invalid format for defined scale line coordinates in CSV. Scale line ignored.")
                 logger.warning(f"Failed to parse scale line coords: P1X='{p1x_str}', P1Y='{p1y_str}', P2X='{p2x_str}', P2Y='{p2y_str}'")
         elif any(s and s.lower() != "n/a" for s in [p1x_str, p1y_str, p2x_str, p2y_str]):
-            # Some but not all coords present or NA, treat as invalid
             warnings_list.append("Incomplete or partially N/A defined scale line coordinates in CSV. Scale line ignored.")
             logger.warning(f"Incomplete scale line coords: P1X='{p1x_str}', P1Y='{p1y_str}', P2X='{p2x_str}', P2Y='{p2y_str}'")
-        # --- END NEW ---
 
-        # Metadata Mismatch Checks (similar to before)
         mismatches: List[str] = []
         meta_checks = {config.META_FRAMES: main_window.total_frames, config.META_WIDTH: main_window.frame_width,
                        config.META_HEIGHT: main_window.frame_height, config.META_FPS: main_window.fps}
@@ -521,7 +471,6 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
                 return
             warnings_list.append("Proceeded despite metadata mismatch.")
 
-        # Data Transformation
         data_to_transform_to_internal_px: List[RawParsedData] = []
         for point_raw in parsed_data_raw_from_file:
             tid,fid,tms,x_file_sys,y_file_sys = point_raw; x_fspx, y_fspx = x_file_sys, y_file_sys
@@ -543,47 +492,45 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             except Exception as e: warnings_list.append(f"Skipping point (T{tid},F{fid+1}) due to transformation error: {e}"); points_transform_failed+=1; logger.error(f"Point transform error for (T{tid},F{fid+1}): {e}", exc_info=False)
         if points_transform_failed > 0: QtWidgets.QMessageBox.warning(main_window, "Transform Warning", f"{points_transform_failed} point(s) skipped due to transformation error. See log.")
 
-        # Load into TrackManager
-        success, load_warns = track_manager.load_tracks_from_data(transformed_to_internal_tl_px_data, main_window.frame_width, main_window.frame_height, main_window.total_frames, main_window.fps)
+        success, load_warns = track_manager.load_tracks_from_data(
+            transformed_to_internal_tl_px_data,
+            main_window.frame_width, main_window.frame_height,
+            main_window.total_frames, main_window.fps
+        )
         warnings_list.extend(load_warns)
         if not success: raise ValueError(f"TrackManager load failed: {'; '.join(load_warns) or 'Unknown critical error'}")
 
-        # Update ScaleManager
-        scale_manager.set_scale(loaded_scale_m_per_px, called_from_line_definition=bool(loaded_scale_line_coords)) # Preserve line if it was loaded
+        scale_manager.set_scale(loaded_scale_m_per_px, called_from_line_definition=bool(loaded_scale_line_coords))
         scale_manager.set_display_in_meters(True if loaded_data_units == "m" and loaded_scale_m_per_px else False)
         
-        # --- MODIFICATION TO AUTO-CHECK THE SCALE BAR CHECKBOX ---
         if loaded_scale_m_per_px is not None and loaded_scale_m_per_px > 0:
             if hasattr(main_window, 'showScaleBarCheckBox') and main_window.showScaleBarCheckBox:
                 logger.info("CSV has a valid scale; attempting to check 'Show Scale Bar' checkbox.")
                 main_window.showScaleBarCheckBox.setChecked(True)
-                # The toggled signal from setChecked(True) should trigger _on_show_scale_bar_toggled
-                # in ScalePanelController, which then updates the scale bar visibility.
             else:
                 logger.warning("Could not find 'showScaleBarCheckBox' on main_window to auto-check it when loading tracks.")
-        # --- END OF MODIFICATION ---
 
         if loaded_scale_line_coords:
             scale_manager.set_defined_scale_line(*loaded_scale_line_coords)
         else:
-            scale_manager.clear_defined_scale_line() # Ensure it's cleared if not in file or invalid
+            scale_manager.clear_defined_scale_line()
         
-        # Update CoordinateTransformer (use height from CSV for source system definition)
-        coord_transformer.set_video_height(loaded_video_height)
+        coord_transformer.set_video_height(loaded_video_height) 
         coord_transformer.set_mode(loaded_mode_enum)
         if loaded_mode_enum == CoordinateSystem.CUSTOM: coord_transformer.set_custom_origin(loaded_origin_tl[0], loaded_origin_tl[1])
         
-        # Final UI updates
+        main_window.coord_transformer = coord_transformer
+        main_window.coord_transformer.set_video_height(main_window.frame_height) 
+
         if main_window.coord_panel_controller: main_window.coord_panel_controller.update_ui_display()
-        # The call to update_ui_from_manager will now correctly see the checked state if we set it above.
         if main_window.scale_panel_controller: main_window.scale_panel_controller.update_ui_from_manager()
-        main_window._redraw_scene_overlay() # Redraw to show scale bar if it became visible
+        main_window._redraw_scene_overlay()
 
         if not warnings_list:
             if main_window.statusBar(): main_window.statusBar().showMessage(f"Tracks loaded from {os.path.basename(load_path)}", 5000)
             logger.info(f"Tracks loaded successfully from {load_path}")
         else:
-            num_warns = len(warnings_list); warn_details = "\n - ".join(warnings_list[:5]); 
+            num_warns = len(warnings_list); warn_details = "\n - ".join(warnings_list[:5]);
             if num_warns > 5: warn_details += "\n - ... (see log)"
             QtWidgets.QMessageBox.warning(main_window, "Load Complete with Warnings", f"Tracks loaded from {os.path.basename(load_path)}, but {num_warns} issue(s) found:\n\n - {warn_details}\n\nPlease review and check log.")
             if main_window.statusBar(): main_window.statusBar().showMessage(f"Tracks loaded with {num_warns} warning(s) (see log).", 5000)

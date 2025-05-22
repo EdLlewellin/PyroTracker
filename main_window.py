@@ -9,7 +9,8 @@ from typing import Optional, List, Tuple, Dict, Any
 from metadata_dialog import MetadataDialog
 import config
 from interactive_image_view import InteractiveImageView, InteractionMode
-from track_manager import TrackManager, TrackVisibilityMode, PointData, VisualElement, UndoActionType
+# MODIFIED: Import ElementType from track_manager
+from track_manager import TrackManager, TrackVisibilityMode, PointData, VisualElement, UndoActionType, ElementType
 import file_io
 from video_handler import VideoHandler
 import ui_setup # This will setup the new QLineEdit and QLabel attributes
@@ -125,7 +126,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowIcon(QtGui.QIcon(ICON_PATH))
 
         self.video_handler = VideoHandler(self)
-        self.track_manager = TrackManager(self)
+        self.track_manager = TrackManager(self) # TrackManager is now the refactored version
         self.coord_transformer = CoordinateTransformer()
         self.scale_manager = ScaleManager(self)
         self._setup_pens()
@@ -296,6 +297,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
         
         if self.table_data_controller:
+            # These signals from TrackManager are kept, their internal meaning is now "element list/active element changed"
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
             self.track_manager.activeTrackDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
@@ -353,6 +355,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
         
         logger.info("MainWindow initialization complete.")
+
     def _setup_pens(self) -> None:
         logger.debug("Setting up QPen objects using current settings...")
         color_active_marker = settings_manager.get_setting(settings_manager.KEY_ACTIVE_MARKER_COLOR)
@@ -364,8 +367,8 @@ class MainWindow(QtWidgets.QMainWindow):
         color_origin_marker = settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_COLOR)
         try:
             line_width = float(settings_manager.get_setting(settings_manager.KEY_LINE_WIDTH))
-            marker_pen_width = 1.0
-            origin_pen_width = config.DEFAULT_ORIGIN_MARKER_PEN_WIDTH
+            marker_pen_width = 1.0 # Assuming marker pen width is fixed or use a different setting
+            origin_pen_width = config.DEFAULT_ORIGIN_MARKER_PEN_WIDTH # Using constant for origin marker
         except (TypeError, ValueError):
              logger.warning("Invalid size/width setting found, using defaults.")
              line_width = settings_manager.DEFAULT_SETTINGS[settings_manager.KEY_LINE_WIDTH]
@@ -474,7 +477,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.playPauseButton.setToolTip("Stop Video (Space)" if self.is_playing else "Play Video (Space)")
 
         if self.loadTracksAction: self.loadTracksAction.setEnabled(is_video_loaded)
-        can_save: bool = is_video_loaded and hasattr(self, 'track_manager') and len(self.track_manager.tracks) > 0
+        
+        # MODIFIED: Check for track-type elements for enabling save
+        can_save: bool = is_video_loaded and self.track_manager and \
+                         any(el['type'] == ElementType.TRACK for el in self.track_manager.elements)
         if self.saveTracksAction: self.saveTracksAction.setEnabled(can_save)
         if self.videoInfoAction: self.videoInfoAction.setEnabled(is_video_loaded)
 
@@ -963,23 +969,27 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar: status_bar.showMessage("Cannot add point: No video loaded.", 3000)
             return
         
-        if self.track_manager.active_track_index == -1:
+        # MODIFIED: Use active_element_index and get_active_element_id
+        if self.track_manager.active_element_index == -1:
             if status_bar: status_bar.showMessage("Select a track to add points.", 3000)
             logger.info("Attempted to add point, but no track is active.")
             return
 
         time_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
         
-        # The TrackManager's add_point method now handles storing undo information.
+        # The TrackManager's add_point method now handles storing undo information
+        # and checks if the active element is a track.
         if self.track_manager.add_point(self.current_frame_index, time_ms, x, y):
             x_d, y_d = self.coord_transformer.transform_point_for_display(x,y)
-            msg = f"Point for Track {self.track_manager.get_active_track_id()} on Frame {self.current_frame_index+1}: ({x_d:.1f}, {y_d:.1f})"
+            # MODIFIED: Use get_active_element_id
+            active_id = self.track_manager.get_active_element_id()
+            msg = f"Point for Track {active_id} on Frame {self.current_frame_index+1}: ({x_d:.1f}, {y_d:.1f})"
             if status_bar: status_bar.showMessage(msg, 3000)
             if self._auto_advance_enabled and self._auto_advance_frames > 0:
                 target = min(self.current_frame_index + self._auto_advance_frames, self.total_frames - 1)
                 if target > self.current_frame_index: self.video_handler.seek_frame(target)
         elif status_bar: status_bar.showMessage("Failed to add point (see log).", 3000)
-        # Update undo action enabled state
+        
         if hasattr(self, 'undoAction') and self.undoAction:
             self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action())
 
@@ -992,40 +1002,54 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
+            # MODIFIED: find_closest_visible_point returns (element_idx, point_data)
             result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
             if result is None: 
-                if self.track_manager.active_track_index != -1:
-                    self.track_manager.set_active_track(-1) 
+                # MODIFIED: Use active_element_index and set_active_element
+                if self.track_manager.active_element_index != -1:
+                    self.track_manager.set_active_element(-1) 
                     if status_bar: status_bar.showMessage("Track deselected.", 3000)
                 else:
                     if status_bar: status_bar.showMessage("No track to deselect.", 3000)
                 return 
-
+        
+        # MODIFIED: find_closest_visible_point returns (element_idx, point_data)
         result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
         if result is None:
             if modifiers != QtCore.Qt.KeyboardModifier.ControlModifier and status_bar:
                 status_bar.showMessage("No track marker found near click.", 3000)
             return
 
-        track_idx, point_data = result
-        track_id = track_idx + 1
-        frame_idx = point_data[0]
+        element_idx, point_data = result
+        # MODIFIED: Get element ID directly from the element
+        element_id = -1
+        if 0 <= element_idx < len(self.track_manager.elements):
+            element_id = self.track_manager.elements[element_idx]['id']
+        
+        if element_id == -1: # Should not happen if result is not None
+            logger.error("Internal error: find_closest_visible_point returned valid index but failed to get element ID.")
+            return
+
+        frame_idx_of_point = point_data[0]
 
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            if self.track_manager.active_track_index != track_idx:
-                self.track_manager.set_active_track(track_idx)
+            # MODIFIED: Use active_element_index and set_active_element
+            if self.track_manager.active_element_index != element_idx:
+                self.track_manager.set_active_element(element_idx)
                 if self.table_data_controller:
-                    QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id)) # type: ignore
-                if status_bar: status_bar.showMessage(f"Selected Track {track_id}.", 3000)
+                    QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(element_id)) # type: ignore
+                if status_bar: status_bar.showMessage(f"Selected Track {element_id}.", 3000)
 
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
-            if self.track_manager.active_track_index != track_idx:
-                self.track_manager.set_active_track(track_idx)
+            # MODIFIED: Use active_element_index and set_active_element
+            if self.track_manager.active_element_index != element_idx:
+                self.track_manager.set_active_element(element_idx)
             if self.table_data_controller:
-                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(track_id)) # type: ignore
-            if self.current_frame_index != frame_idx:
-                self.video_handler.seek_frame(frame_idx)
-            if status_bar: status_bar.showMessage(f"Selected Track {track_id}, jumped to Frame {frame_idx + 1}.", 3000)
+                QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(element_id)) # type: ignore
+            if self.current_frame_index != frame_idx_of_point:
+                self.video_handler.seek_frame(frame_idx_of_point)
+            if status_bar: status_bar.showMessage(f"Selected Track {element_id}, jumped to Frame {frame_idx_of_point + 1}.", 3000)
+
 
     @QtCore.Slot(int)
     def _handle_auto_advance_toggled(self, state: int) -> None:
@@ -1041,11 +1065,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Load a video first to create tracks.", 3000)
             return
-        new_id = self.track_manager.create_new_track()
+        new_id = self.track_manager.create_new_track() # This creates an element of type TRACK
         if status_bar: status_bar.showMessage(f"Created Track {new_id}. It is now active.", 3000)
         if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_track_row_by_id_in_ui(new_id)) # type: ignore
         if self.dataTabsWidget: self.dataTabsWidget.setCurrentIndex(0)
-        self._update_ui_state() # Will update undoAction enabled state
+        self._update_ui_state() 
 
     @QtCore.Slot(bool)
     def _handle_disable_frame_navigation(self, disable: bool) -> None:
@@ -1071,7 +1095,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-            elements = self.track_manager.get_visual_elements(self.current_frame_index)
+            # MODIFIED: get_visual_elements is already updated to handle new structure
+            visual_elements_to_draw = self.track_manager.get_visual_elements(self.current_frame_index)
             pens = {
                 config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
                 config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
@@ -1080,7 +1105,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 config.STYLE_LINE_ACTIVE: self.pen_line_active,
                 config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
             }
-            for el in elements:
+            for el in visual_elements_to_draw: # Renamed from elements to avoid conflict
                 pen = pens.get(el.get('style'))
                 if not pen: continue
                 current_pen = QtGui.QPen(pen) 
@@ -1388,29 +1413,27 @@ class MainWindow(QtWidgets.QMainWindow):
                     nav_disabled = self.scale_panel_controller._is_setting_scale_by_line # type: ignore
                 if not nav_disabled: self._toggle_playback(); accepted = True
         elif key == QtCore.Qt.Key.Key_Delete or key == QtCore.Qt.Key.Key_Backspace:
-            if self.video_loaded and self.track_manager.active_track_index != -1 and self.current_frame_index != -1:
-                # --- MODIFICATION: Call TrackManager's delete_point ---
-                # TrackManager.delete_point now sets up its own undo state.
-                deleted = self.track_manager.delete_point(self.track_manager.active_track_index, self.current_frame_index)
+            # MODIFIED: Use active_element_index
+            if self.video_loaded and self.track_manager.active_element_index != -1 and self.current_frame_index != -1:
+                # MODIFIED: Call TrackManager's delete_point with active_element_index
+                deleted = self.track_manager.delete_point(self.track_manager.active_element_index, self.current_frame_index)
                 if status_bar: status_bar.showMessage(f"Deleted point..." if deleted else "No point to delete on this frame.", 3000)
                 
-                # Update undo action availability (TrackManager.delete_point emits undoStateChanged)
-                # So this direct call might be redundant if undoAction.setEnabled is connected to that signal,
-                # but it ensures immediate consistency.
                 if hasattr(self, 'undoAction') and self.undoAction:
                     self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action())
                 accepted = True
-            elif self.video_loaded and self.track_manager.active_track_index == -1:
+            # MODIFIED: Use active_element_index
+            elif self.video_loaded and self.track_manager.active_element_index == -1:
                 if status_bar: status_bar.showMessage("No track selected to delete points from.", 3000)
-                accepted = True # Accept to prevent further processing if no track is active
-            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000) # Fallback
+                accepted = True 
+            elif status_bar: status_bar.showMessage("Cannot delete point.", 3000) 
         elif modifiers == QtCore.Qt.KeyboardModifier.ControlModifier and key == QtCore.Qt.Key.Key_Z:
             if hasattr(self, 'undoAction') and self.undoAction and self.undoAction.isEnabled():
                 self._trigger_undo_point_action()
                 accepted = True
             elif status_bar:
                  status_bar.showMessage("Nothing to undo.", 3000)
-                 accepted = True # Still accept to prevent other actions
+                 accepted = True 
 
         if accepted:
             event.accept()
