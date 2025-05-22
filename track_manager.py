@@ -66,6 +66,12 @@ class TrackManager(QtCore.QObject):
     _last_action_type: Optional[UndoActionType] = None
     _last_action_details: Dict[str, Any] = {}
 
+    # --- NEW: Internal state for line definition ---
+    _is_defining_element_type: Optional[ElementType] = None
+    _defining_element_first_point_data: Optional[PointData] = None
+    _defining_element_frame_index: Optional[int] = None
+
+
     def __init__(self, parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
         logger.info("Initializing TrackManager...")
@@ -73,7 +79,14 @@ class TrackManager(QtCore.QObject):
         self.active_element_index = -1
         self._next_element_id = 1
         self._clear_last_action()
+        self._reset_defining_state() # Initialize defining state
         logger.info("TrackManager initialized.")
+
+    def _reset_defining_state(self) -> None:
+        """Resets the internal state variables for defining a new element."""
+        self._is_defining_element_type = None
+        self._defining_element_first_point_data = None
+        self._defining_element_frame_index = None
 
     def _clear_last_action(self) -> None:
         """Clears the stored last action, making undo unavailable."""
@@ -87,15 +100,13 @@ class TrackManager(QtCore.QObject):
         self.active_element_index = -1
         self._next_element_id = 1
         self._clear_last_action()
+        self._reset_defining_state() # Also reset defining state on full reset
         logger.info("TrackManager reset complete.")
         self.trackListChanged.emit()
         self.activeTrackDataChanged.emit() # Ensure points table clears
 
     def _get_new_element_id(self) -> int:
         """Generates a new unique ID for an element."""
-        # This simple increment works if elements are not re-ordered by ID later
-        # or if IDs don't need to be strictly sequential after deletions.
-        # A more robust system might check for gaps or use UUIDs if needed.
         current_max_id = 0
         if self.elements:
             current_max_id = max(el.get('id', 0) for el in self.elements)
@@ -122,6 +133,33 @@ class TrackManager(QtCore.QObject):
         self.trackListChanged.emit()
         return new_id
 
+    # --- NEW METHOD for Phase 2 ---
+    def create_new_line(self) -> int:
+        """Creates a new element of type MEASUREMENT_LINE and prepares for definition."""
+        logger.info("Creating new measurement line element...")
+        new_id = self._get_new_element_id() # [cite: 103]
+        new_element = {
+            'id': new_id,
+            'type': ElementType.MEASUREMENT_LINE, # [cite: 101]
+            'name': f"Line {new_id}", # Default name
+            'data': [], # Line data will be two PointData tuples [cite: 102]
+            'visibility_mode': TrackVisibilityMode.INCREMENTAL # [cite: 103]
+        }
+        self.elements.append(new_element) # [cite: 104]
+        new_element_index: int = len(self.elements) - 1
+        self.set_active_element(new_element_index) # [cite: 104]
+
+        # Enter defining state
+        self._is_defining_element_type = ElementType.MEASUREMENT_LINE # [cite: 104]
+        self._defining_element_first_point_data = None
+        self._defining_element_frame_index = None # Will be set when first point is clicked
+
+        logger.info(f"Created new measurement line element ID {new_id} (index {new_element_index}). Awaiting first point.")
+        self._clear_last_action()
+        self.trackListChanged.emit() # [cite: 105]
+        return new_id
+    # --- END NEW METHOD ---
+
     def delete_element_by_index(self, element_index_to_delete: int) -> bool:
         """Deletes an element by its current list index."""
         if not (0 <= element_index_to_delete < len(self.elements)):
@@ -135,6 +173,13 @@ class TrackManager(QtCore.QObject):
         logger.info(f"Deleting element index {element_index_to_delete} (ID: {element_id_deleted}, Type: {element_type_deleted.name})...")
         was_visible = deleted_element['visibility_mode'] != TrackVisibilityMode.HIDDEN
 
+        # If the element being deleted was in the process of being defined, reset defining state
+        if self.active_element_index == element_index_to_delete and \
+           self._is_defining_element_type is not None:
+            self._reset_defining_state()
+            logger.debug("Reset defining state because the element being defined was deleted.")
+
+
         del self.elements[element_index_to_delete]
         logger.debug(f"Removed element data for index {element_index_to_delete}.")
 
@@ -146,13 +191,11 @@ class TrackManager(QtCore.QObject):
             self.active_element_index -= 1 # Adjust index
             active_element_changed = True
         
-        # For now, deleting any element clears point undo actions.
-        # Future: Implement undo for element deletion itself.
         self._clear_last_action()
 
-        self.trackListChanged.emit() # Signifies list of all elements changed
+        self.trackListChanged.emit() 
         if active_element_changed:
-            self.activeTrackDataChanged.emit() # Update points table / active state display
+            self.activeTrackDataChanged.emit() 
         if was_visible:
             self.visualsNeedUpdate.emit()
 
@@ -164,25 +207,44 @@ class TrackManager(QtCore.QObject):
         new_active_idx: int = -1
         if 0 <= element_index < len(self.elements):
             new_active_idx = element_index
-        elif element_index != -1: # If -1, it's a deliberate deselect
+        elif element_index != -1: 
             logger.warning(f"set_active_element: Invalid index {element_index}. Deselecting.")
 
         if self.active_element_index != new_active_idx:
             old_active_element_index: int = self.active_element_index
-            self.active_element_index = new_active_idx
             
-            old_vis_mode = self.get_element_visibility_mode(old_active_element_index)
-            new_vis_mode = self.get_element_visibility_mode(self.active_element_index)
+            # If we are deselecting an element that was being defined, cancel the definition process
+            if new_active_idx == -1 and self._is_defining_element_type is not None and \
+               old_active_element_index != -1 and self.elements[old_active_element_index]['type'] == self._is_defining_element_type:
+                logger.info(f"Cancelling definition of element ID {self.elements[old_active_element_index]['id']} due to deselection.")
+                # Remove the partially defined element if it has no points (typical for lines before 1st point)
+                if not self.elements[old_active_element_index]['data']:
+                    logger.debug(f"Removing empty element ID {self.elements[old_active_element_index]['id']} that was being defined.")
+                    del self.elements[old_active_element_index]
+                    # No need to adjust new_active_idx as it's -1.
+                    # The active_element_index will be set to -1 below.
+                    # Note: This means old_active_element_index is now invalid if it was the last element.
+                    # The list of elements has changed, so re-emit trackListChanged.
+                    self.trackListChanged.emit()
+                self._reset_defining_state()
 
-            # Changing active element might change what's undoable for points
+            self.active_element_index = new_active_idx
+            old_vis_mode = self.get_element_visibility_mode(old_active_element_index) # Use old index before it's changed
+            new_vis_mode = self.get_element_visibility_mode(self.active_element_index) # Use new index
+
             self._clear_last_action()
-            self.activeTrackDataChanged.emit() # For points table, etc.
+            self.activeTrackDataChanged.emit() 
 
-            # Update visuals if visibility of involved elements might change perception
-            if (old_active_element_index != -1 and old_vis_mode != TrackVisibilityMode.HIDDEN) or \
+            if (old_active_element_index != -1 and old_active_element_index < len(self.elements) and \
+                self.elements[old_active_element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN) or \
                (self.active_element_index != -1 and new_vis_mode != TrackVisibilityMode.HIDDEN):
                  self.visualsNeedUpdate.emit()
             logger.debug(f"Active element set to index: {self.active_element_index}")
+        else: # No change in active_element_index
+             # If trying to set to the same element that is currently being defined, do nothing extra.
+             # If trying to set to -1 when already -1, also do nothing.
+            pass
+
 
     def set_element_visibility_mode(self, element_index: int, mode: TrackVisibilityMode) -> None:
         if not (0 <= element_index < len(self.elements)):
@@ -195,12 +257,12 @@ class TrackManager(QtCore.QObject):
             logger.debug(f"Visibility for element ID {element['id']} (index {element_index}) set to {mode.name}")
             if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
                 self.visualsNeedUpdate.emit()
-            self.trackListChanged.emit() # To update table representation
+            self.trackListChanged.emit() 
 
     def get_element_visibility_mode(self, element_index: int) -> TrackVisibilityMode:
         if 0 <= element_index < len(self.elements):
             return self.elements[element_index]['visibility_mode']
-        return TrackVisibilityMode.HIDDEN # Default if out of bounds
+        return TrackVisibilityMode.HIDDEN 
 
     def set_all_elements_visibility(self, mode: TrackVisibilityMode, element_type_filter: Optional[ElementType] = None) -> None:
         """Sets visibility for all elements, optionally filtered by type."""
@@ -246,59 +308,89 @@ class TrackManager(QtCore.QObject):
             for point_data in track_data:
                 if point_data[0] == frame_index:
                     return point_data
+        # Future: Could add logic for MEASUREMENT_LINE if we allow selecting its points
         return None
 
     def add_point(self, frame_index: int, time_ms: float, x: float, y: float) -> bool:
-        """Adds or updates a point for the active element, IF it's a TRACK."""
+        """
+        Adds or updates a point for the active element.
+        For TRACK: Adds/updates a point in its list.
+        For MEASUREMENT_LINE (during definition): Stores the first or second point.
+        """
         if self.active_element_index == -1:
             logger.warning("add_point: No active element selected.")
             self._clear_last_action()
             return False
 
         active_element = self.elements[self.active_element_index]
-        if active_element['type'] != ElementType.TRACK:
-            logger.warning(f"add_point: Active element (ID: {active_element['id']}) is not a TRACK. Cannot add point.")
+        element_type = active_element['type']
+        element_id = active_element['id']
+        element_data: ElementData = active_element['data']
+        x_coord, y_coord = round(x, 3), round(y, 3)
+        new_point_data: PointData = (frame_index, time_ms, x_coord, y_coord)
+
+        if element_type == ElementType.TRACK:
+            existing_point_data_tuple: Optional[PointData] = None
+            existing_point_idx_in_list: int = -1
+            for i, p_data in enumerate(element_data):
+                if p_data[0] == frame_index:
+                    existing_point_data_tuple, existing_point_idx_in_list = p_data, i
+                    break
+            
+            self._last_action_details = {
+                "element_index": self.active_element_index,
+                "frame_index": frame_index,
+                "time_ms": time_ms
+            }
+            if existing_point_data_tuple:
+                self._last_action_type = UndoActionType.POINT_MODIFIED
+                self._last_action_details["previous_point_data"] = existing_point_data_tuple
+            else:
+                self._last_action_type = UndoActionType.POINT_ADDED
+            
+            if existing_point_idx_in_list != -1:
+                element_data[existing_point_idx_in_list] = new_point_data
+            else:
+                element_data.append(new_point_data)
+                element_data.sort(key=lambda p: p[0])
+            
+            self.undoStateChanged.emit(True)
+            self.activeTrackDataChanged.emit()
+            self.trackListChanged.emit()
+            if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN:
+                self.visualsNeedUpdate.emit()
+            return True
+
+        elif element_type == ElementType.MEASUREMENT_LINE and self._is_defining_element_type == ElementType.MEASUREMENT_LINE:
+            # Logic for defining a line (Phase 3)
+            # For Phase 2, this part isn't fully fleshed out but we acknowledge the type.
+            logger.info(f"Point click received for defining MEASUREMENT_LINE (ID: {element_id}). Phase 3 will handle this.")
+            # In Phase 3:
+            # if self._defining_element_first_point_data is None:
+            #     self._defining_element_first_point_data = new_point_data
+            #     self._defining_element_frame_index = frame_index
+            #     #MainWindow should then transition to "click second point" mode
+            # elif self._defining_element_frame_index == frame_index: # Second point on same frame
+            #     element_data.append(self._defining_element_first_point_data)
+            #     element_data.append(new_point_data)
+            #     self._reset_defining_state()
+            #     # MainWindow should return to normal mode
+            #     self.activeTrackDataChanged.emit() # To update points table for the line
+            #     self.trackListChanged.emit() # To update lines table (length, angle)
+            #     if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN:
+            #         self.visualsNeedUpdate.emit()
+            #     # Record UndoActionType.LINE_ADDED
+            # else:
+            #     logger.warning("Second point for line not on the same frame as the first. Action ignored.")
+            #     return False
+            return False # For Phase 2, don't fully process yet
+
+        else:
+            logger.warning(f"add_point: Active element (ID: {element_id}) is type {element_type.name}, "
+                           f"or not in defining state for it. Cannot add point in current context.")
             self._clear_last_action()
             return False
 
-        track_data_list: ElementData = active_element['data']
-        x_coord, y_coord = round(x, 3), round(y, 3)
-        existing_point_data_tuple: Optional[PointData] = None
-        existing_point_idx_in_list: int = -1
-
-        for i, p_data in enumerate(track_data_list):
-            if p_data[0] == frame_index: # Frame index matches
-                existing_point_data_tuple, existing_point_idx_in_list = p_data, i
-                break
-        
-        self._last_action_details = {
-            "element_index": self.active_element_index,
-            "frame_index": frame_index, # For POINT_ADDED, this is the frame of the new point
-                                        # For POINT_MODIFIED, this is frame of modified point
-            "time_ms": time_ms # Time of the point being added/modified
-        }
-
-        if existing_point_data_tuple: # Point exists, so modify it
-            self._last_action_type = UndoActionType.POINT_MODIFIED
-            self._last_action_details["previous_point_data"] = existing_point_data_tuple # Store (frame,time,x,y)
-        else: # Point does not exist, add new
-            self._last_action_type = UndoActionType.POINT_ADDED
-            # No previous_point_data needed for ADDED
-        
-        new_point_data_tuple: PointData = (frame_index, time_ms, x_coord, y_coord)
-
-        if existing_point_idx_in_list != -1: # Update existing point
-            track_data_list[existing_point_idx_in_list] = new_point_data_tuple
-        else: # Add new point and re-sort
-            track_data_list.append(new_point_data_tuple)
-            track_data_list.sort(key=lambda p: p[0]) # Keep sorted by frame_index
-
-        self.undoStateChanged.emit(True)
-        self.activeTrackDataChanged.emit() # Update points table
-        self.trackListChanged.emit() # Update tracks table (point count, start/end frame)
-        if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN:
-            self.visualsNeedUpdate.emit()
-        return True
 
     def delete_point(self, element_index_for_point_delete: int, frame_index: int) -> bool:
         """Deletes a point from the specified element (if it's a TRACK) at the given frame_index."""
@@ -320,16 +412,15 @@ class TrackManager(QtCore.QObject):
         for i, p_data in enumerate(track_data_list):
             if p_data[0] == frame_index:
                 point_to_remove_idx = i
-                deleted_point_data_tuple = p_data # Store the data of the point being deleted
+                deleted_point_data_tuple = p_data 
                 break
 
         if point_to_remove_idx != -1 and deleted_point_data_tuple is not None:
             self._last_action_type = UndoActionType.POINT_DELETED
             self._last_action_details = {
                 "element_index": element_index_for_point_delete,
-                # frame_index is also part of deleted_point_data_tuple but stored for consistency
                 "frame_index": frame_index, 
-                "deleted_point_data": deleted_point_data_tuple # Store (frame, time, x, y)
+                "deleted_point_data": deleted_point_data_tuple 
             }
             del track_data_list[point_to_remove_idx]
             logger.info(f"Deleted point from element ID {target_element['id']} at frame {frame_index}")
@@ -337,7 +428,7 @@ class TrackManager(QtCore.QObject):
             self.undoStateChanged.emit(True)
             if element_index_for_point_delete == self.active_element_index:
                 self.activeTrackDataChanged.emit()
-            self.trackListChanged.emit() # For point count, start/end frame updates
+            self.trackListChanged.emit() 
             if target_element['visibility_mode'] != TrackVisibilityMode.HIDDEN:
                 self.visualsNeedUpdate.emit()
             return True
@@ -348,31 +439,26 @@ class TrackManager(QtCore.QObject):
 
     def can_undo_last_point_action(self) -> bool:
         """Checks if the last action was a point operation that can be undone."""
-        return self._last_action_type in [UndoActionType.POINT_ADDED, UndoActionType.POINT_MODIFIED, UndoActionType.POINT_DELETED]
+        # For now, only point operations on TRACKS are undoable
+        if self._last_action_type in [UndoActionType.POINT_ADDED, UndoActionType.POINT_MODIFIED, UndoActionType.POINT_DELETED]:
+            details = self._last_action_details
+            element_idx_to_undo = details.get("element_index")
+            if element_idx_to_undo is not None and 0 <= element_idx_to_undo < len(self.elements):
+                if self.elements[element_idx_to_undo]['type'] == ElementType.TRACK:
+                    return True
+        return False
 
     def undo_last_point_action(self) -> bool:
-        if not self.can_undo_last_point_action():
-            logger.info("Undo requested, but no point action available to undo.")
+        if not self.can_undo_last_point_action(): # This now also checks if it's a TRACK
+            logger.info("Undo requested, but no TRACK point action available to undo.")
             return False
 
         action_type = self._last_action_type
         details = self._last_action_details
-        element_idx_to_undo = details.get("element_index")
+        element_idx_to_undo = details.get("element_index") # Already validated by can_undo
         
-        # Validate element_index
-        if element_idx_to_undo is None or not (0 <= element_idx_to_undo < len(self.elements)):
-            logger.error(f"Undo failed: Invalid element_index {element_idx_to_undo} in details. Action: {action_type}")
-            self._clear_last_action()
-            return False
-        
-        # Ensure element is a track, as these are point operations on tracks
-        target_element = self.elements[element_idx_to_undo]
-        if target_element['type'] != ElementType.TRACK:
-            logger.error(f"Undo failed: Element ID {target_element['id']} is not a TRACK. Action: {action_type}")
-            self._clear_last_action()
-            return False
-
-        frame_idx_to_undo = details.get("frame_index") # Used for POINT_ADDED and POINT_MODIFIED
+        target_element = self.elements[element_idx_to_undo] # Known to be a TRACK
+        frame_idx_to_undo = details.get("frame_index") 
         undone_successfully = False
 
         if action_type == UndoActionType.POINT_ADDED:
@@ -397,13 +483,13 @@ class TrackManager(QtCore.QObject):
         
         if undone_successfully:
             self._clear_last_action()
-        else:
-            if self.can_undo_last_point_action(): self._clear_last_action()
+        else: # If undo failed for some reason, still clear the action to prevent repeated failed attempts
+            if self.can_undo_last_point_action(): # Check again before clearing
+                 self._clear_last_action() 
         return undone_successfully
 
     def _delete_point_for_undo(self, element_index: int, frame_index: int) -> bool:
         """Internal: Deletes a point from a TRACK element, used by undo logic."""
-        # element_index already validated by caller, element type also checked
         track_data_list: ElementData = self.elements[element_index]['data']
         point_idx = -1
         for i, p_data in enumerate(track_data_list):
@@ -434,14 +520,13 @@ class TrackManager(QtCore.QObject):
     def _add_point_for_undo(self, element_index: int, point_data_to_add: PointData) -> bool:
         """Internal helper to add a point back to a TRACK element, used by undo for POINT_DELETED."""
         track_data_list: ElementData = self.elements[element_index]['data']
-        # Check if point already exists (should not happen if logic is correct for undo)
         for i, p_data in enumerate(track_data_list):
-            if p_data[0] == point_data_to_add[0]: # Frame index matches
+            if p_data[0] == point_data_to_add[0]: 
                 logger.warning(f"_add_point_for_undo: Point for frame {point_data_to_add[0]} already exists in element ID {self.elements[element_index]['id']}. Overwriting for undo.")
                 track_data_list[i] = point_data_to_add
-                track_data_list.sort(key=lambda p: p[0]) # Re-sort
+                track_data_list.sort(key=lambda p: p[0]) 
                 break
-        else: # Point does not exist, append and sort
+        else: 
             track_data_list.append(point_data_to_add)
             track_data_list.sort(key=lambda p: p[0])
 
@@ -456,7 +541,7 @@ class TrackManager(QtCore.QObject):
         min_dist_sq = config.CLICK_TOLERANCE_SQ
         closest_element_index = -1
         for i, element in enumerate(self.elements):
-            if element['type'] != ElementType.TRACK: continue # Only consider tracks
+            if element['type'] != ElementType.TRACK: continue 
 
             vis_mode = element['visibility_mode']
             if vis_mode == TrackVisibilityMode.HIDDEN: continue
@@ -466,7 +551,7 @@ class TrackManager(QtCore.QObject):
                 f_idx, _, px, py = p_data
                 is_vis = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or \
                          (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
-                if is_vis: # Point is visually present
+                if is_vis: 
                     dist_sq = (click_x - px)**2 + (click_y - py)**2
                     if dist_sq < min_dist_sq:
                         min_dist_sq = dist_sq
@@ -495,7 +580,6 @@ class TrackManager(QtCore.QObject):
                 for point_data_tuple in element_data:
                     frame_idx, _, point_x, point_y = point_data_tuple
                     
-                    # Determine if this specific point is visible based on mode and current frame
                     is_point_visible_now = False
                     if visibility_mode == TrackVisibilityMode.ALWAYS_VISIBLE:
                         is_point_visible_now = True
@@ -508,14 +592,14 @@ class TrackManager(QtCore.QObject):
                         marker_style = ""
                         if is_active_element:
                             marker_style = config.STYLE_MARKER_ACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_ACTIVE_OTHER
-                        else: # Inactive track
+                        else: 
                             marker_style = config.STYLE_MARKER_INACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_INACTIVE_OTHER
                         
                         visual_elements_list.append({
                             'type': 'marker', 
                             'pos': (point_x, point_y), 
                             'style': marker_style, 
-                            'element_id': element_id, # Use the element's actual ID
+                            'element_id': element_id, 
                             'frame_idx': frame_idx
                         })
 
@@ -529,8 +613,7 @@ class TrackManager(QtCore.QObject):
                             })
                         previous_visible_point_coords = (point_x, point_y)
             
-            # Future: Add logic for ElementType.MEASUREMENT_LINE here
-            # It would generate 'line' and potentially 'text' VisualElements
+            # Future: Add logic for ElementType.MEASUREMENT_LINE here in Phase 4+
 
         return visual_elements_list
 
@@ -571,7 +654,6 @@ class TrackManager(QtCore.QObject):
                 num_points = len(track_data)
                 start_frame, end_frame = (-1, -1)
                 if num_points > 0:
-                    # Assuming track_data is sorted by frame_index
                     start_frame = track_data[0][0]
                     end_frame = track_data[-1][0]
                 summary.append((element['id'], num_points, start_frame, end_frame))
@@ -582,7 +664,7 @@ class TrackManager(QtCore.QObject):
         if self.active_element_index != -1:
             active_element = self.elements[self.active_element_index]
             if active_element['type'] == ElementType.TRACK:
-                return list(active_element['data']) # Return a copy
+                return list(active_element['data']) 
         return []
 
     def get_all_track_type_data_for_saving(self) -> AllElementsForSaving:
@@ -590,7 +672,7 @@ class TrackManager(QtCore.QObject):
         tracks_data_to_save: AllElementsForSaving = []
         for element in self.elements:
             if element['type'] == ElementType.TRACK:
-                tracks_data_to_save.append(list(element['data'])) # Add a copy of the track's point list
+                tracks_data_to_save.append(list(element['data'])) 
         return tracks_data_to_save
 
     def load_tracks_from_data(self, parsed_data: List[Tuple[int, int, float, float, float]],
@@ -600,7 +682,7 @@ class TrackManager(QtCore.QObject):
         warnings: List[str] = []
         loaded_elements_by_id: Dict[int, List[PointData]] = defaultdict(list)
         
-        time_tolerance_ms = (500 / video_fps) if video_fps > 0 else 50.0 # ms
+        time_tolerance_ms = (500 / video_fps) if video_fps > 0 else 50.0 
         valid_points_count = 0
         skipped_points_count = 0
 
@@ -610,14 +692,13 @@ class TrackManager(QtCore.QObject):
             if not (0 <= frame_idx < video_frame_count):
                 warnings.append(f"{point_description}: Frame index out of video range. Skipped.")
                 is_valid_point = False
-            if is_valid_point and not (0 <= x < video_width): # Assuming TL origin for raw coords from file for now
+            if is_valid_point and not (0 <= x < video_width): 
                 warnings.append(f"{point_description}: X-coordinate out of video width. Skipped.")
                 is_valid_point = False
             if is_valid_point and not (0 <= y < video_height):
                 warnings.append(f"{point_description}: Y-coordinate out of video height. Skipped.")
                 is_valid_point = False
             
-            # Time consistency check (optional, can be made stricter)
             if is_valid_point and video_fps > 0:
                 expected_time_ms = (frame_idx / video_fps) * 1000.0
                 if abs(time_ms - expected_time_ms) > time_tolerance_ms:
@@ -627,15 +708,14 @@ class TrackManager(QtCore.QObject):
                 loaded_elements_by_id[track_id_from_file].append((frame_idx, time_ms, x, y))
                 valid_points_count +=1
             else:
-                logger.warning(warnings[-1]) # Log the specific warning for the skipped point
+                logger.warning(warnings[-1]) 
                 skipped_points_count +=1
         
-        self.reset() # Clear current TrackManager state
+        self.reset() 
         
         skipped_empty_tracks_count = 0
         loaded_elements_count = 0
         
-        # Sort by ID from file to ensure consistent element order if IDs are not sequential
         sorted_track_ids_from_file = sorted(loaded_elements_by_id.keys())
 
         for element_id_from_file in sorted_track_ids_from_file:
@@ -645,30 +725,29 @@ class TrackManager(QtCore.QObject):
                 skipped_empty_tracks_count += 1
                 continue
 
-            points_for_this_element.sort(key=lambda p: p[0]) # Sort points by frame index
+            points_for_this_element.sort(key=lambda p: p[0]) 
 
-            # For Phase 1, all loaded data is assumed to be of type TRACK
+            # For now, assuming loaded CSVs only contain TRACK type data.
+            # Phase 3 load logic will need to infer type based on point count per frame. [cite: 80, 81]
             new_element = {
-                'id': element_id_from_file, # Use ID from file
-                'type': ElementType.TRACK,
+                'id': element_id_from_file, 
+                'type': ElementType.TRACK, # All loaded elements are initially tracks [cite: 91]
                 'name': f"Track {element_id_from_file}",
                 'data': points_for_this_element,
-                'visibility_mode': TrackVisibilityMode.INCREMENTAL # Default visibility for loaded tracks
+                'visibility_mode': TrackVisibilityMode.INCREMENTAL 
             }
             self.elements.append(new_element)
             loaded_elements_count += 1
-            # Ensure _next_element_id is updated to avoid conflicts if new tracks are created later
             if element_id_from_file >= self._next_element_id:
                 self._next_element_id = element_id_from_file + 1
                 
-        self.active_element_index = -1 # No active track after loading
+        self.active_element_index = -1 
         
-        logger.info(f"Load from data: {loaded_elements_count} track(s) loaded with {valid_points_count} points. "
-                    f"{skipped_points_count} points skipped. {skipped_empty_tracks_count} empty tracks skipped.")
+        logger.info(f"Load from data: {loaded_elements_count} element(s) (assumed TRACK type) loaded with {valid_points_count} points. "
+                    f"{skipped_points_count} points skipped. {skipped_empty_tracks_count} empty elements skipped.")
 
-        # Emit signals to update UI
         self.trackListChanged.emit()
-        self.activeTrackDataChanged.emit() # To clear points table if no active track
-        self.visualsNeedUpdate.emit() # To draw loaded tracks
+        self.activeTrackDataChanged.emit() 
+        self.visualsNeedUpdate.emit() 
         
         return True, warnings

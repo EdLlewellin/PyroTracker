@@ -53,43 +53,40 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     frame_nav_layout.addWidget(main_window.nextFrameButton)
     frame_nav_layout.addStretch()
 
-    # --- Frame Display (Split into QLabel and QLineEdit) ---
     frame_nav_layout.addWidget(QtWidgets.QLabel("Frame:"))
     main_window.currentFrameLineEdit = QtWidgets.QLineEdit("-")
     main_window.currentFrameLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.currentFrameLineEdit.setMaximumWidth(60) # Adjusted width
+    main_window.currentFrameLineEdit.setMaximumWidth(60) 
     main_window.currentFrameLineEdit.setToolTip("Current frame (Press Enter to seek)")
-    main_window.currentFrameLineEdit.setReadOnly(True) # Start as read-only
+    main_window.currentFrameLineEdit.setReadOnly(True) 
     frame_nav_layout.addWidget(main_window.currentFrameLineEdit)
 
     main_window.totalFramesLabel = QtWidgets.QLabel("/ -")
     main_window.totalFramesLabel.setMinimumWidth(50)
     main_window.totalFramesLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
     frame_nav_layout.addWidget(main_window.totalFramesLabel)
-    frame_nav_layout.addSpacing(10) # Increased spacing
+    frame_nav_layout.addSpacing(10) 
 
-    # --- Time Display (Split into QLabel and QLineEdit) ---
     frame_nav_layout.addWidget(QtWidgets.QLabel("Time:"))
     main_window.currentTimeLineEdit = QtWidgets.QLineEdit("--:--.---")
     main_window.currentTimeLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.currentTimeLineEdit.setMaximumWidth(75) # Adjusted width
+    main_window.currentTimeLineEdit.setMaximumWidth(75) 
     main_window.currentTimeLineEdit.setToolTip("Current time (Enter MM:SS.mmm or SSS.mmm to seek)")
-    main_window.currentTimeLineEdit.setReadOnly(True) # Start as read-only
+    main_window.currentTimeLineEdit.setReadOnly(True) 
     frame_nav_layout.addWidget(main_window.currentTimeLineEdit)
 
     main_window.totalTimeLabel = QtWidgets.QLabel("/ --:--.---")
-    main_window.totalTimeLabel.setMinimumWidth(90) # Adjusted width
+    main_window.totalTimeLabel.setMinimumWidth(90) 
     main_window.totalTimeLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
     frame_nav_layout.addWidget(main_window.totalTimeLabel)
-    frame_nav_layout.addSpacing(10) # Increased spacing
+    frame_nav_layout.addSpacing(10) 
 
-    # --- Zoom Level Display and Input
     frame_nav_layout.addWidget(QtWidgets.QLabel("Zoom:"))
-    main_window.zoomLevelLineEdit = QtWidgets.QLineEdit("---.-") # Placeholder
+    main_window.zoomLevelLineEdit = QtWidgets.QLineEdit("---.-") 
     main_window.zoomLevelLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.zoomLevelLineEdit.setMaximumWidth(70) # e.g., for "1234.5"
+    main_window.zoomLevelLineEdit.setMaximumWidth(70) 
     main_window.zoomLevelLineEdit.setToolTip("Current zoom (100% = fit to view). Enter value and press Enter.")
-    main_window.zoomLevelLineEdit.setReadOnly(True) # Initially read-only
+    main_window.zoomLevelLineEdit.setReadOnly(True) 
     frame_nav_layout.addWidget(main_window.zoomLevelLineEdit)
     frame_nav_layout.addWidget(QtWidgets.QLabel("%"))
     
@@ -98,10 +95,10 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.mainSplitter.addWidget(main_window.leftPanelWidget)
     logger.debug("Left panel UI configured.")
 
-    # --- Right Panel (Track Controls and Data Tabs) ---
+    # --- Right Panel (Controls and Data Tabs) ---
     main_window.rightPanelWidget = QtWidgets.QWidget()
-    main_window.rightPanelWidget.setMaximumWidth(450) # Slightly wider to accommodate changes
-    main_window.rightPanelWidget.setMinimumWidth(380) # Slightly wider
+    main_window.rightPanelWidget.setMaximumWidth(450) 
+    main_window.rightPanelWidget.setMinimumWidth(380) 
     rightPanelLayout = QtWidgets.QVBoxLayout(main_window.rightPanelWidget)
     rightPanelLayout.setContentsMargins(5, 5, 5, 5)
     rightPanelLayout.setSpacing(6)
@@ -120,6 +117,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.dataTabsWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
     rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1) 
     
+    # --- Tracks Tab ---
     tracksTab = QtWidgets.QWidget(); tracksTabLayout = QtWidgets.QVBoxLayout(tracksTab); tracksTabLayout.setContentsMargins(2, 2, 2, 2)
     main_window.tracksTableWidget = QtWidgets.QTableWidget(); main_window.tracksTableWidget.verticalHeader().setVisible(False)
     main_window.tracksTableWidget.setColumnCount(config.TOTAL_TRACK_COLUMNS)
@@ -136,6 +134,48 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.dataTabsWidget.addTab(tracksTab, "Tracks")
     logger.debug("Tracks tab configured.")
 
+    # --- NEW: Lines Tab (Phase 2) ---
+    linesTab = QtWidgets.QWidget()
+    linesTabLayout = QtWidgets.QVBoxLayout(linesTab)
+    linesTabLayout.setContentsMargins(2, 2, 2, 2) # Consistent margins
+
+    # Create linesTableWidget and set its properties
+    main_window.linesTableWidget = QtWidgets.QTableWidget() # Store as instance variable
+    main_window.linesTableWidget.setObjectName("linesTableWidget")
+    main_window.linesTableWidget.verticalHeader().setVisible(False)
+    # Define initial columns for the Lines table (Phase 2: ID, Frame. Length/Angle later)
+    # For Phase 2, COL_LINE_ID and COL_LINE_FRAME are conceptual.
+    # We'll use generic column indices for now, and can map them in TrackDataViewController.
+    # Let's assume for now: 0: Delete, 1: ID, 2: Frame, 3-5: Visibility
+    # Actual number of columns needs to accommodate visibility too.
+    # Column setup will be refined in TrackDataViewController when populating.
+    # For now, just set a placeholder column count that includes delete + ID + Frame + 3 visibility.
+    # Actual header labels will also be set by the controller based on config constants.
+    lines_table_num_cols = 1 + 1 + 1 + 3 # Delete, ID, Frame, VisHidden, VisIncr, VisAlways
+    main_window.linesTableWidget.setColumnCount(lines_table_num_cols)
+    # Placeholder headers, will be refined by controller
+    main_window.linesTableWidget.setHorizontalHeaderLabels(["", "ID", "Frame", "", "", ""])
+    main_window.linesTableWidget.setAlternatingRowColors(True)
+    main_window.linesTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+    main_window.linesTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+    main_window.linesTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+    # Resize modes will be set by the controller as columns are defined.
+    linesTabLayout.addWidget(main_window.linesTableWidget)
+
+    # Add "New Line" button within the Lines tab (as per plan [cite: 54])
+    # The plan suggests it's "likely in a new 'Lines' UI tab".
+    # Let's add it at the bottom of the Lines tab for now.
+    main_window.newLineButton = QtWidgets.QPushButton("New Measurement Line") # Store as instance variable
+    main_window.newLineButton.setObjectName("newLineButton")
+    main_window.newLineButton.setToolTip("Create a new measurement line")
+    main_window.newLineButton.setEnabled(False) # Initially disabled until video loaded
+    linesTabLayout.addWidget(main_window.newLineButton) # Add button to the Lines tab layout
+
+    main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines") # Add the new tab [cite: 52, 106]
+    logger.debug("Measurement Lines tab configured with table and New Line button.")
+    # --- END NEW: Lines Tab ---
+
+    # --- Points Tab (Remains the same) ---
     pointsTab = QtWidgets.QWidget(); pointsTabLayout = QtWidgets.QVBoxLayout(pointsTab); pointsTabLayout.setContentsMargins(2, 2, 2, 2); pointsTabLayout.setSpacing(4)
     main_window.pointsTabLabel = QtWidgets.QLabel("Points for Track: -"); main_window.pointsTabLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     pointsTabLayout.addWidget(main_window.pointsTabLabel)
@@ -148,6 +188,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.dataTabsWidget.addTab(pointsTab, "Points")
     logger.debug("Points tab configured.")
 
+    # --- Collapsible Group Boxes (Scale, Coords) remain the same ---
     main_window.scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
     main_window.scale_config_group.setCheckable(True); main_window.scale_config_group.setChecked(False)
     main_window.scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -265,26 +306,18 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     file_menu.addAction(exit_action)
 
     edit_menu: QtWidgets.QMenu = menu_bar.addMenu("&Edit")
-    # --- NEW: Undo Action ---
-    undo_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack) # Or SP_FileDialogBack
+    undo_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack) 
     main_window.undoAction = QtGui.QAction(undo_icon, "&Undo Point Action", main_window)
     main_window.undoAction.setStatusTip("Undo the last point addition or modification (Ctrl+Z)")
     main_window.undoAction.setShortcut(QtGui.QKeySequence.StandardKey.Undo)
-    main_window.undoAction.setEnabled(False) # Initially disabled
+    main_window.undoAction.setEnabled(False) 
     edit_menu.addAction(main_window.undoAction)
-    # --- END NEW ---
-    edit_menu.addSeparator() # Keep separator if newTrackAction is next
+    edit_menu.addSeparator() 
     main_window.newTrackAction = QtGui.QAction("&New Track", main_window); main_window.newTrackAction.setStatusTip("Create a new track for marking points"); main_window.newTrackAction.setEnabled(False)
-    # Consider adding SP_FileIcon or similar for New Track if desired
     edit_menu.addAction(main_window.newTrackAction); edit_menu.addSeparator()
     prefs_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
     main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window); main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
     edit_menu.addAction(main_window.preferencesAction)
-
-    # The following lines related to Help Menu are REMOVED:
-    # help_menu: QtWidgets.QMenu = menu_bar.addMenu("&Help")
-    # about_action = QtGui.QAction("&About", main_window); about_action.setStatusTip("Show information about this application"); about_action.triggered.connect(main_window._show_about_dialog)
-    # help_menu.addAction(about_action)
 
     main_window.setStatusBar(QtWidgets.QStatusBar())
     logger.info("MainWindow UI setup complete.")
