@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import config # For table column constants
 # MODIFIED: Import ElementType as well
-from track_manager import TrackVisibilityMode, ElementType 
+from track_manager import TrackVisibilityMode, ElementType, ElementData
 
 if TYPE_CHECKING:
     # To avoid circular imports, only for type hinting
@@ -431,7 +431,6 @@ class TrackDataViewController(QtCore.QObject):
             logger.debug("Track count changed, emitting updateMainWindowUIState.")
             self.updateMainWindowUIState.emit()
 
-    # --- NEW METHOD for Phase 2 ---
     @QtCore.Slot()
     def update_lines_table_ui(self) -> None:
         if not self._lines_table:
@@ -444,56 +443,81 @@ class TrackDataViewController(QtCore.QObject):
         if not self._video_loaded: # If no video, ensure table is empty
             logger.debug("TrackDataViewController: No video loaded, lines table remains empty.")
             return
-
-        # For Phase 2, we'll just iterate through elements and show IDs for MEASUREMENT_LINE types.
-        # In later phases, this will be more sophisticated (length, angle, etc.)
         
         line_elements_to_display = []
-        for el in self._track_manager.elements:
+        for el_idx, el in enumerate(self._track_manager.elements): # Iterate with index
             if el['type'] == ElementType.MEASUREMENT_LINE:
-                line_elements_to_display.append(el)
+                line_elements_to_display.append({'element': el, 'manager_index': el_idx}) # Store element and its index
         
         self._lines_table.setRowCount(len(line_elements_to_display))
         
-        for row_idx, line_element in enumerate(line_elements_to_display):
+        # Placeholder column indices (should ideally come from config.py later)
+        # These are conceptual for now, matching ui_setup.py's initial setup.
+        # COL_LINE_DELETE = 0 (Conceptual)
+        COL_LINE_ID = 1       # As per ui_setup.py for linesTableWidget
+        COL_LINE_FRAME = 2    # As per ui_setup.py for linesTableWidget
+        # COL_LINE_LENGTH = 3 (Future)
+        # COL_LINE_ANGLE = 4  (Future)
+        # COL_LINE_VIS_HIDDEN = 5 (Future)
+        # ... and so on for other visibility controls
+
+        for row_idx, line_info in enumerate(line_elements_to_display):
+            line_element = line_info['element']
+            # manager_idx = line_info['manager_index'] # Available if needed for delete/visibility later
+
             element_id = line_element['id']
-            
-            # Placeholder for ID item (Column 1, assuming column 0 is for delete button)
+            element_data: ElementData = line_element['data'] # Type hint for clarity
+
+            # ID item
             id_item = QtWidgets.QTableWidgetItem(str(element_id))
             id_item.setData(QtCore.Qt.ItemDataRole.UserRole, element_id)
             id_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             id_item.setFlags(id_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self._lines_table.setItem(row_idx, 1, id_item) # Assuming COL_LINE_ID is 1
+            self._lines_table.setItem(row_idx, COL_LINE_ID, id_item)
 
-            # Placeholder for Frame item (Column 2)
-            # For now, lines have no points, so frame is N/A. Phase 3 will populate this.
-            frame_item = QtWidgets.QTableWidgetItem("N/A") 
+            # Frame item - Populated if the line is defined (has 2 points)
+            frame_str = "Defining..." # Default if still being defined
+            if len(element_data) == 2: # Line is fully defined with two points
+                # Both points of a line are on the same frame.
+                frame_index_of_line = element_data[0][0] # Get frame from first point
+                frame_str = str(frame_index_of_line + 1) # Display 1-based
+            elif self._track_manager._is_defining_element_type == ElementType.MEASUREMENT_LINE and \
+                 self._track_manager.active_element_index != -1 and \
+                 self._track_manager.elements[self._track_manager.active_element_index]['id'] == element_id:
+                # If this line is currently active and being defined
+                if self._track_manager._defining_element_frame_index is not None:
+                    frame_str = f"{self._track_manager._defining_element_frame_index + 1} (Pending)"
+            
+            frame_item = QtWidgets.QTableWidgetItem(frame_str) 
             frame_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             frame_item.setFlags(frame_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            self._lines_table.setItem(row_idx, 2, frame_item) # Assuming COL_LINE_FRAME is 2
+            # If frame_str is a number (line defined), make it a link
+            if frame_str.isdigit():
+                frame_item.setForeground(QtGui.QColor("blue"))
+                frame_item.setToolTip("Click to jump to this frame")
+            self._lines_table.setItem(row_idx, COL_LINE_FRAME, frame_item)
             
-            # Future: Add delete buttons and visibility radio buttons for lines here
-            # similar to update_tracks_table_ui.
-            # For Phase 2, this basic display is sufficient to see new lines appear.
-            
-        # Example: If no lines, or to add a "New Line" button row (if not in ui_setup)
-        if not line_elements_to_display:
-            # Optionally, display a message or ensure the table is just empty
-            # If the "New Line" button is part of this table's layout (not in ui_setup directly),
-            # it would be handled here similar to the "New Track" button.
-            # Since it's in ui_setup.py, we don't add it here.
-            pass
+            # Future: Populate Length, Angle, Delete Button, Visibility Radios
+            # For Length/Angle:
+            # if len(element_data) == 2:
+            #    p1_x, p1_y = element_data[0][2], element_data[0][3]
+            #    p2_x, p2_y = element_data[1][2], element_data[1][3]
+            #    # Calculate length (using scale_manager) and angle
+            #    # Format and set table items
+            # else:
+            #    # Set N/A or empty for length/angle
 
-        # Example of how columns might be set up (adapt actual column constants from config later)
-        # Placeholder indices: 0:Del, 1:ID, 2:Frame, 3:Length, 4:Angle, 5-7:Vis
-        if self._lines_table.columnCount() > 1 : # Check if columns exist before resizing
-             header = self._lines_table.horizontalHeader()
-             header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # ID
-             if self._lines_table.columnCount() > 2:
-                header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # Frame
-        
+        # Configure column resize modes (can be done once in __init__ or here if columns might change)
+        if self._lines_table.columnCount() > 0:
+            header = self._lines_table.horizontalHeader()
+            # Example: if col 0 is delete, 1 is ID, 2 is Frame
+            # if self._lines_table.columnCount() > 0: header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # Delete
+            if self._lines_table.columnCount() > COL_LINE_ID: header.setSectionResizeMode(COL_LINE_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # ID
+            if self._lines_table.columnCount() > COL_LINE_FRAME: header.setSectionResizeMode(COL_LINE_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # Frame
+            # for other columns (Length, Angle, Visibility), set as Stretch or ResizeToContents as needed
+            # e.g., header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch) # Length
+
         logger.debug(f"TrackDataViewController: Lines table UI updated with {len(line_elements_to_display)} lines.")
-    # --- END NEW METHOD ---
 
     @QtCore.Slot()
     def update_points_table_ui(self) -> None:

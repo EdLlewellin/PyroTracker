@@ -54,6 +54,9 @@ class MainWindow(QtWidgets.QMainWindow):
     _auto_advance_enabled: bool = False
     _auto_advance_frames: int = 1
 
+    _is_defining_measurement_line: bool = False
+    _current_line_definition_frame_index: int = -1
+
     mainSplitter: QtWidgets.QSplitter
     leftPanelWidget: QtWidgets.QWidget
     rightPanelWidget: QtWidgets.QWidget
@@ -292,7 +295,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.imageView.sceneMouseMoved.connect(self.coord_panel_controller._on_handle_mouse_moved)
             if self.scale_panel_controller:
                 self.imageView.viewTransformChanged.connect(self.scale_panel_controller._on_view_transform_changed)
-        
+            self.imageView.scaleLinePoint1Clicked.connect(self._handle_measurement_line_first_point_defined)
+            self.imageView.scaleLinePoint2Clicked.connect(self._handle_measurement_line_second_point_defined)
+
         if self.table_data_controller:
             self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             # --- NEW: Connect trackListChanged to update_lines_table_ui (placeholder for now) ---
@@ -447,6 +452,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.view_menu_controller:
             self.view_menu_controller.handle_video_loaded_state_changed(False)
 
+    def _cancel_active_line_definition_ui_reset(self) -> None:
+        """Helper to reset UI and TrackManager state when line definition is cancelled."""
+        if self.track_manager:
+            # This method will need to be implemented in TrackManager:
+            # It should reset TrackManager._is_defining_element_type, 
+            # _defining_element_first_point_data, _defining_element_frame_index
+            # And remove the active element if it's an empty MEASUREMENT_LINE.
+            self.track_manager.cancel_active_line_definition() 
+        
+        self._is_defining_measurement_line = False
+        if self.imageView:
+            self.imageView.set_interaction_mode(InteractionMode.NORMAL)
+            self.imageView.clearTemporaryScaleVisuals()
+        self._handle_disable_frame_navigation(False)
+        self._update_ui_state() # Ensure UI elements like buttons are re-enabled
+        logger.debug("Measurement line definition UI reset.")
 
     def _update_ui_state(self) -> None:
         is_video_loaded: bool = self.video_loaded
@@ -927,6 +948,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float)
     def _handle_add_point_click(self, x: float, y: float) -> None:
+        if self._is_defining_measurement_line:
+            # Clicks during line definition are handled by _handle_measurement_line_first/second_point_defined
+            logger.debug("_handle_add_point_click: Ignoring as currently defining a measurement line.")
+            return
         status_bar = self.statusBar()
         if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode(): return
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
@@ -1008,6 +1033,80 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar: status_bar.showMessage(f"Selected Track {element_id}, jumped to Frame {frame_idx_of_point + 1}.", 3000)
 
 
+    @QtCore.Slot(float, float)
+    def _handle_measurement_line_first_point_defined(self, scene_x: float, scene_y: float) -> None:
+        """Handles the first point click when defining a measurement line."""
+        status_bar = self.statusBar()
+        # Check context: are we actually in the process of defining a measurement line? [cite: 121]
+        if not self._is_defining_measurement_line or \
+           not self.imageView or \
+           self.imageView._current_mode != InteractionMode.SET_SCALE_LINE_START: # Check ImageView mode too
+            logger.debug("_handle_measurement_line_first_point_defined called out of context or wrong mode.")
+            return
+
+        if self.track_manager.active_element_index == -1 or \
+           self.track_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE:
+            logger.warning("No active measurement line to add first point to. Cancelling definition.")
+            if status_bar: status_bar.showMessage("Error: No active line for point. Cancelling.", 3000)
+            self._cancel_active_line_definition_ui_reset()
+            return
+
+        logger.info(f"Measurement Line: First point clicked at ({scene_x:.2f}, {scene_y:.2f}) on frame {self._current_line_definition_frame_index}")
+        
+        time_ms = (self._current_line_definition_frame_index / self.fps) * 1000 if self.fps > 0 else 0.0
+
+        # TrackManager.add_point will store this as the first point internally
+        if self.track_manager.add_point(self._current_line_definition_frame_index, time_ms, scene_x, scene_y): # [cite: 124]
+            active_line_id = self.track_manager.get_active_element_id()
+            if status_bar: status_bar.showMessage(f"Line {active_line_id} - First point set. Click second point on Frame {self._current_line_definition_frame_index + 1}. (Esc to cancel)", 0) # [cite: 125]
+            self.imageView.set_interaction_mode(InteractionMode.SET_SCALE_LINE_END) # [cite: 125]
+            # Frame navigation remains disabled
+        else:
+            logger.error("TrackManager failed to process the first point for measurement line.")
+            if status_bar: status_bar.showMessage("Error setting first line point. Cancelling.", 3000)
+            self._cancel_active_line_definition_ui_reset()
+
+    @QtCore.Slot(float, float, float, float)
+    def _handle_measurement_line_second_point_defined(self, p1x: float, p1y: float, p2x: float, p2y: float) -> None: # p1x, p1y are from the signal, though we use p2x, p2y for the new point
+        """Handles the second point click when defining a measurement line."""
+        status_bar = self.statusBar()
+        if not self._is_defining_measurement_line or \
+           not self.imageView or \
+           self.imageView._current_mode != InteractionMode.SET_SCALE_LINE_END: # Check ImageView mode
+            logger.debug("_handle_measurement_line_second_point_defined called out of context or wrong mode.")
+            return
+
+        if self.track_manager.active_element_index == -1 or \
+           self.track_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE or \
+           self.track_manager._defining_element_first_point_data is None: 
+            logger.warning("No active measurement line or first point not set in TrackManager. Cancelling definition.")
+            if status_bar: status_bar.showMessage("Error: Line definition state inconsistent. Cancelling.", 3000)
+            self._cancel_active_line_definition_ui_reset()
+            return
+
+        # Ensure the second point uses the original _current_line_definition_frame_index
+        # as TrackManager's add_point will validate against it.
+        logger.info(f"Measurement Line: Second point clicked at ({p2x:.2f}, {p2y:.2f}) on frame {self._current_line_definition_frame_index}")
+        
+        time_ms = (self._current_line_definition_frame_index / self.fps) * 1000 if self.fps > 0 else 0.0
+
+        if self.track_manager.add_point(self._current_line_definition_frame_index, time_ms, p2x, p2y): # [cite: 126]
+            active_line_id = self.track_manager.get_active_element_id()
+            if status_bar: status_bar.showMessage(f"Measurement Line {active_line_id} defined.", 3000) # [cite: 126]
+        else:
+            logger.error("TrackManager failed to process the second point for measurement line (e.g., frame mismatch).")
+            if status_bar: status_bar.showMessage("Error: Second point must be on the same frame. Line not defined.", 4000)
+            # Do not reset UI yet, allow user to try clicking second point again on the correct frame or Esc.
+            # The imageView mode is still SET_SCALE_LINE_END.
+            return 
+
+        # Reset UI state after successful definition
+        self._is_defining_measurement_line = False
+        self.imageView.set_interaction_mode(InteractionMode.NORMAL) # [cite: 126]
+        self.imageView.clearTemporaryScaleVisuals() 
+        self._handle_disable_frame_navigation(False) # [cite: 126]
+        self._update_ui_state()
+
     @QtCore.Slot(int)
     def _handle_auto_advance_toggled(self, state: int) -> None:
         self._auto_advance_enabled = (state == QtCore.Qt.CheckState.Checked.value)
@@ -1028,7 +1127,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.dataTabsWidget: self.dataTabsWidget.setCurrentIndex(0) # Assuming Tracks tab is index 0
         self._update_ui_state() 
 
-    # --- NEW SLOT for "New Measurement Line" action ---
+
     @QtCore.Slot()
     def _create_new_line_action(self) -> None:
         """Handles the action to create a new measurement line."""
@@ -1037,34 +1136,56 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar: status_bar.showMessage("Load a video first to create a measurement line.", 3000)
             return
 
-        # Call TrackManager to create a new line element
+        # --- MODIFICATION START ---
+        # If already defining a measurement line, cancel the current one first.
+        if self._is_defining_measurement_line:
+            logger.info("New Measurement Line clicked while another was being defined. Cancelling previous.")
+            self._cancel_active_line_definition_ui_reset() 
+            # Brief pause or status update might be good here so user notices the cancellation.
+            if status_bar: status_bar.showMessage("Previous line definition cancelled. Starting new line.", 2000)
+            # Allow QTimers or event loop to process the cancellation effects before starting new
+            # This might not be strictly necessary but can help if state updates are complex.
+            # QtWidgets.QApplication.processEvents() 
+        # --- MODIFICATION END ---
+
+        # Cancel any *other* ongoing definition modes (scale, origin)
+        if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and self.scale_panel_controller._is_setting_scale_by_line:
+            logger.debug("Cancelling active 'Set Scale by Line' before starting 'New Line'.")
+            self.scale_panel_controller.cancel_set_scale_by_line()
+        if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode():
+            logger.debug("Cancelling active 'Set Origin' mode before starting 'New Line'.")
+            self.coord_panel_controller._is_setting_origin = False 
+            if self.imageView: self.imageView.set_interaction_mode(InteractionMode.NORMAL)
+
         new_line_id = self.track_manager.create_new_line()
         
-        if new_line_id != -1: # Assuming create_new_line returns a valid ID or -1 on failure
-            if status_bar: status_bar.showMessage(f"Created Measurement Line {new_line_id}. Click first point.", 0) # Persistent message
+        if new_line_id != -1:
+            # self._is_defining_measurement_line = True; # This is now set within create_new_line or by TM logic
+            # self._current_line_definition_frame_index = self.current_frame_index; # Also set by TM logic if needed there, or here
+            # The above two lines about setting state are implicitly handled by TrackManager or MainWindow will set it as needed.
+            # What's critical is that TrackManager is ready for a new line.
+            # And MainWindow's _is_defining_measurement_line will be True after a successful create_new_line call
+            # and subsequent mode changes. Let's ensure it's explicitly set here for clarity if TM doesn't set it.
+
+            self._is_defining_measurement_line = True # Explicitly set state in MainWindow
+            self._current_line_definition_frame_index = self.current_frame_index
             
-            # Switch to the "Lines" tab
+            if status_bar: status_bar.showMessage(f"Defining Line {new_line_id}: Click first point on Frame {self.current_frame_index + 1}. (Esc to cancel)", 0)
+            
             if hasattr(self, 'dataTabsWidget') and self.dataTabsWidget and hasattr(self, 'linesTableWidget'):
                 for i in range(self.dataTabsWidget.count()):
-                    if self.dataTabsWidget.tabText(i) == "Measurement Lines": # Or check widget objectName
+                    if self.dataTabsWidget.tabText(i) == "Measurement Lines":
                         self.dataTabsWidget.setCurrentIndex(i)
                         break
             
-            # Set ImageView interaction mode for defining the first point of the line
-            # Phase 3 will handle the actual click and transition to second point mode.
             if self.imageView:
-                self.imageView.set_interaction_mode(InteractionMode.SET_SCALE_LINE_START) # Reusing for now
-                # Optionally, disable frame navigation here too as per plan, if not handled by InteractionMode change
-                self._handle_disable_frame_navigation(True)
-
-
-            # The table_data_controller.update_lines_table_ui() will be called via
-            # self.track_manager.trackListChanged signal.
-            # Selection of the new line in the table can also be handled there.
-            self._update_ui_state() # Update general UI state
+                self.imageView.set_interaction_mode(InteractionMode.SET_SCALE_LINE_START)
+            
+            self._handle_disable_frame_navigation(True)
+            self._update_ui_state()
         else:
             if status_bar: status_bar.showMessage("Failed to create new measurement line.", 3000)
-    # --- END NEW SLOT ---
+
 
     @QtCore.Slot(bool)
     def _handle_disable_frame_navigation(self, disable: bool) -> None:
@@ -1378,7 +1499,12 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = self.statusBar()
 
         if key == QtCore.Qt.Key.Key_Escape:
-            if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
+            if self._is_defining_measurement_line:
+                logger.info("Escape key pressed during measurement line definition. Cancelling.")
+                self._cancel_active_line_definition_ui_reset() # New helper method
+                if status_bar: status_bar.showMessage("Measurement line definition cancelled.", 3000)
+                accepted = True
+            elif self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
                self.scale_panel_controller._is_setting_scale_by_line: 
                 self.scale_panel_controller.cancel_set_scale_by_line() 
                 if status_bar: status_bar.showMessage("Set scale by line cancelled.", 3000)

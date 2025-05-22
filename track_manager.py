@@ -160,6 +160,58 @@ class TrackManager(QtCore.QObject):
         return new_id
     # --- END NEW METHOD ---
 
+    def cancel_active_line_definition(self) -> None:
+        """
+        Cancels the current measurement line definition process.
+        If the active element is a measurement line being defined and has no
+        committed points (i.e., only the first point might have been temporarily stored
+        but not yet added to element['data']), it removes the element.
+        Resets the defining state.
+        """
+        logger.debug("Attempting to cancel active line definition...")
+        if self._is_defining_element_type == ElementType.MEASUREMENT_LINE and \
+           self.active_element_index != -1 and \
+           0 <= self.active_element_index < len(self.elements):
+
+            current_defining_element = self.elements[self.active_element_index]
+            element_id_cancelled = current_defining_element.get('id', 'N/A')
+
+            # A line is only truly "empty" in its data list before the second point is confirmed.
+            # The first point is held in _defining_element_first_point_data.
+            # So, if data is empty, it means either 0 or 1 point has been clicked.
+            if current_defining_element.get('type') == ElementType.MEASUREMENT_LINE and \
+               not current_defining_element['data']: # No points committed yet
+                
+                logger.info(f"Cancelling definition of Measurement Line ID {element_id_cancelled}. Removing empty element.")
+                del self.elements[self.active_element_index]
+                # Adjust active_element_index if it was the one deleted, though we'll reset it anyway
+                # No need to adjust other indices as we are deleting and then deselecting.
+                
+                self._reset_defining_state()
+                self.active_element_index = -1 # Deselect
+                
+                self.trackListChanged.emit()
+                self.activeTrackDataChanged.emit()
+                self.visualsNeedUpdate.emit() # Important to clear temporary visuals
+                self._clear_last_action() # Clear any potential undo state from other actions
+                return
+
+            # If it's a measurement line but already has data (i.e., 2 points),
+            # Escape shouldn't cancel it this way; user should delete it explicitly.
+            # However, the _is_defining_element_type should have been reset if it had 2 points.
+            # This block mainly handles cancelling before the second point is set.
+            logger.debug(f"Line ID {element_id_cancelled} was being defined but might have data or state is unexpected. Resetting defining state only.")
+
+        # Fallback or if the element wasn't empty: just reset the defining state.
+        if self._is_defining_element_type is not None: # If we were in any defining mode
+            self._reset_defining_state()
+            # No need to change active_element_index here unless element was deleted
+            # MainWindow will handle resetting ImageView's interaction mode
+            self.visualsNeedUpdate.emit() # To clear temporary visuals if any were drawn by ImageView
+            logger.debug("Reset defining state in TrackManager due to cancellation request.")
+        else:
+            logger.debug("No active line definition process to cancel in TrackManager.")
+
     def delete_element_by_index(self, element_index_to_delete: int) -> bool:
         """Deletes an element by its current list index."""
         if not (0 <= element_index_to_delete < len(self.elements)):
@@ -361,36 +413,64 @@ class TrackManager(QtCore.QObject):
                 self.visualsNeedUpdate.emit()
             return True
 
-        elif element_type == ElementType.MEASUREMENT_LINE and self._is_defining_element_type == ElementType.MEASUREMENT_LINE:
-            # Logic for defining a line (Phase 3)
-            # For Phase 2, this part isn't fully fleshed out but we acknowledge the type.
-            logger.info(f"Point click received for defining MEASUREMENT_LINE (ID: {element_id}). Phase 3 will handle this.")
-            # In Phase 3:
-            # if self._defining_element_first_point_data is None:
-            #     self._defining_element_first_point_data = new_point_data
-            #     self._defining_element_frame_index = frame_index
-            #     #MainWindow should then transition to "click second point" mode
-            # elif self._defining_element_frame_index == frame_index: # Second point on same frame
-            #     element_data.append(self._defining_element_first_point_data)
-            #     element_data.append(new_point_data)
-            #     self._reset_defining_state()
-            #     # MainWindow should return to normal mode
-            #     self.activeTrackDataChanged.emit() # To update points table for the line
-            #     self.trackListChanged.emit() # To update lines table (length, angle)
-            #     if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN:
-            #         self.visualsNeedUpdate.emit()
-            #     # Record UndoActionType.LINE_ADDED
-            # else:
-            #     logger.warning("Second point for line not on the same frame as the first. Action ignored.")
-            #     return False
-            return False # For Phase 2, don't fully process yet
+        elif element_type == ElementType.MEASUREMENT_LINE and \
+             self._is_defining_element_type == ElementType.MEASUREMENT_LINE and \
+             active_element['id'] == self.get_active_element_id(): # Ensure it's the currently active element
 
+            if self._defining_element_first_point_data is None:
+                # This is the first point for the line [cite: 41]
+                self._defining_element_first_point_data = new_point_data
+                self._defining_element_frame_index = frame_index # [cite: 116]
+                logger.info(f"Measurement Line (ID: {element_id}): First point set at frame {frame_index}. Awaiting second point.")
+                # MainWindow will handle UI updates (status bar, interaction mode change)
+                # No data is added to element_data yet, no undo action recorded yet.
+                self.visualsNeedUpdate.emit() # To draw the temporary first point marker
+                return True # Indicate success for MainWindow to proceed to next step
+
+            else:
+                # This is the second point for the line
+                if self._defining_element_frame_index == frame_index: # [cite: 42, 117]
+                    # Add both points now
+                    element_data.clear() # Ensure it only contains these two points
+                    element_data.append(self._defining_element_first_point_data)
+                    element_data.append(new_point_data)
+                    
+                    logger.info(f"Measurement Line (ID: {element_id}): Second point set at frame {frame_index}. Line defined.")
+                    
+                    # Line definition is complete, reset defining state
+                    defining_element_id_before_reset = self.get_active_element_id()
+                    self._reset_defining_state() # [cite: 43]
+                    
+                    # For undo, we'll consider the line fully added at this stage.
+                    # Future: Refine UndoActionType to LINE_ADDED. For now, clear any point undo.
+                    self._clear_last_action() # No specific undo for line add yet
+                    # self._last_action_type = UndoActionType.LINE_ADDED # Placeholder for future [cite: 44]
+                    # self._last_action_details = {"element_index": self.active_element_index, "line_data": list(element_data)}
+                    # self.undoStateChanged.emit(True)
+
+                    # Emit signals to update UI
+                    if self.active_element_index != -1 and self.elements[self.active_element_index]['id'] == defining_element_id_before_reset :
+                        self.activeTrackDataChanged.emit() # Update points table for this line [cite: 119]
+                    self.trackListChanged.emit() # Update lines table (e.g., for length/angle if calculated) [cite: 119]
+                    if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN:
+                        self.visualsNeedUpdate.emit() # [cite: 119]
+                    return True
+                else:
+                    logger.warning(f"Measurement Line (ID: {element_id}): Second point must be on the same frame "
+                                   f"as the first (expected frame {self._defining_element_frame_index}, got {frame_index}). Action ignored.")
+                    # Optionally, reset the definition process here if the user clicks on a different frame
+                    # self._reset_defining_state()
+                    # self.visualsNeedUpdate.emit() # To clear temporary visuals
+                    # self.trackListChanged.emit() # To remove potentially empty line from table if that's desired behavior
+                    return False
         else:
             logger.warning(f"add_point: Active element (ID: {element_id}) is type {element_type.name}, "
                            f"or not in defining state for it. Cannot add point in current context.")
+            if self._is_defining_element_type is not None and active_element['id'] != self.get_active_element_id():
+                 logger.warning(f"Mismatch: Defining type {self._is_defining_element_type.name} but active element is {active_element['id']} / {element_type.name}")
+
             self._clear_last_action()
             return False
-
 
     def delete_point(self, element_index_for_point_delete: int, frame_index: int) -> bool:
         """Deletes a point from the specified element (if it's a TRACK) at the given frame_index."""

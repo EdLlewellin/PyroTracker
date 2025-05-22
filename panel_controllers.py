@@ -188,26 +188,45 @@ class ScalePanelController(QtCore.QObject):
 
     @QtCore.Slot(float, float)
     def _on_image_view_scale_line_point1_clicked(self, scene_x: float, scene_y: float) -> None:
-        if not self._is_setting_scale_by_line or \
-           self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_START:
+        if not self._is_setting_scale_by_line: # Primary guard: If SPC is not defining scale, ignore.
+            logger.debug("ScalePanelController: Ignoring scaleLinePoint1Clicked as _is_setting_scale_by_line is False.")
+            return
+        
+        # If we reach here, self._is_setting_scale_by_line is True.
+        # Now check other conditions specific to its own scale definition process.
+        if self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_START:
+            logger.warning("ScalePanelController: Received scaleLinePoint1Clicked but ImageView not in SET_SCALE_LINE_START mode. Cancelling its scale definition.")
+            self.cancel_set_scale_by_line() # Cancel its own operation
             return 
 
         self._scale_line_p1_scene = QtCore.QPointF(scene_x, scene_y)
         self._image_view.set_interaction_mode(InteractionMode.SET_SCALE_LINE_END)
         self.statusBarMessage.emit("Set Scale: Click second point of known length. (Esc to cancel)", 0)
-        logger.info(f"Scale line point 1 received: ({scene_x:.2f}, {scene_y:.2f})")
+        logger.info(f"ScalePanelController: Scale line point 1 received: ({scene_x:.2f}, {scene_y:.2f}) for its scale definition.")
 
     @QtCore.Slot(float, float, float, float)
     def _on_image_view_scale_line_point2_clicked(self, x1: float, y1: float, x2: float, y2: float) -> None:
-        if not self._is_setting_scale_by_line or \
-           self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_END or \
-           self._scale_line_p1_scene is None:
-            if self._scale_line_p1_scene is None:
-                logger.warning("Scale line point 2 clicked, but point 1 was not set. Cancelling.")
-            self.cancel_set_scale_by_line()
+        if not self._is_setting_scale_by_line: # Primary guard: If SPC is not defining scale, ignore.
+            logger.debug("ScalePanelController: Ignoring scaleLinePoint2Clicked as _is_setting_scale_by_line is False.")
             return
 
-        logger.info(f"Scale line point 2 received: ({x2:.2f}, {y2:.2f}). Line defined: [({x1:.2f},{y1:.2f}) to ({x2:.2f},{y2:.2f})]")
+        # If we reach here, self._is_setting_scale_by_line is TRUE.
+        # Now, we check conditions specific to ITS OWN scale definition process.
+        if self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_END or \
+           self._scale_line_p1_scene is None: # Its own p1 scene for scale definition
+            
+            log_msg = "ScalePanelController: Cancelling its 'Set Scale by Line' because "
+            if self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_END:
+                log_msg += f"ImageView mode is {self._image_view._current_mode.name} (expected SET_SCALE_LINE_END). "
+            if self._scale_line_p1_scene is None:
+                log_msg += "Its own _scale_line_p1_scene is None."
+            logger.warning(log_msg)
+            
+            self.cancel_set_scale_by_line() # Cancel ITS OWN scale definition process
+            return
+        
+        # Original logic for ScalePanelController processing the second point for SCALE definition:
+        logger.info(f"ScalePanelController: Scale line point 2 received: ({x2:.2f}, {y2:.2f}). Line defined for ITS scale: [({x1:.2f},{y1:.2f}) to ({x2:.2f},{y2:.2f})]")
 
         dx = x2 - x1
         dy = y2 - y1
@@ -215,8 +234,8 @@ class ScalePanelController(QtCore.QObject):
 
         if pixel_distance < 1e-3:
             QtWidgets.QMessageBox.warning(self._main_window_ref, "Set Scale Error",
-                                          "The two points are too close or identical. Please define a longer line.")
-            self.cancel_set_scale_by_line()
+                                          "The two points are too close or identical. Please define a longer line for scale.")
+            self.cancel_set_scale_by_line() # Cancels its own process
             return
 
         dialog = GetDistanceDialog(pixel_distance, self._main_window_ref)
@@ -225,47 +244,25 @@ class ScalePanelController(QtCore.QObject):
             known_distance_m = dialog.get_distance()
             if known_distance_m is not None and known_distance_m > 0:
                 m_per_px = known_distance_m / pixel_distance
-
-                # Set the defined line and the scale in the manager
                 self._scale_manager.set_defined_scale_line(x1, y1, x2, y2)
                 self._scale_manager.set_scale(m_per_px, called_from_line_definition=True)
-
                 self.statusBarMessage.emit(f"Scale set to {m_per_px:.6g} m/px.", 5000)
-                logger.info(f"Scale set by line: {pixel_distance:.2f} px = {known_distance_m:.3f} m. Calculated m/px: {m_per_px:.6g}")
-
-                # --- Automatically check the relevant checkboxes ---
+                logger.info(f"ScalePanelController: Scale set by line: {pixel_distance:.2f} px = {known_distance_m:.3f} m. Calculated m/px: {m_per_px:.6g}")
                 if hasattr(self._main_window_ref, 'showScaleLineCheckBox') and self._main_window_ref.showScaleLineCheckBox:
                     self._main_window_ref.showScaleLineCheckBox.setChecked(True)
-                    logger.debug("Automatically checked 'Show scale line' checkbox.")
-
                 if hasattr(self._main_window_ref, 'showScaleBarCheckBox') and self._main_window_ref.showScaleBarCheckBox:
                     self._main_window_ref.showScaleBarCheckBox.setChecked(True)
-                    logger.debug("Automatically checked 'Show Scale Bar' checkbox.")
-
-                # --- ADDED LINE: Trigger immediate redraw ---
-                # This ensures the potentially newly visible scale line is drawn right away.
                 if hasattr(self._main_window_ref, '_redraw_scene_overlay'):
-                    logger.debug("Requesting immediate scene redraw after setting scale from line.")
                     self._main_window_ref._redraw_scene_overlay()
-                # --- END ADDED LINE ---
-
-            else: # Invalid distance or dialog cancelled by user input validation
+            else:
                 self.statusBarMessage.emit("Set scale by line cancelled or invalid distance.", 3000)
-                self._image_view.clearTemporaryScaleVisuals() # Clear temp visuals from image view
-        else: # Dialog was cancelled directly
+                self._image_view.clearTemporaryScaleVisuals()
+        else:
             self.statusBarMessage.emit("Set scale by line cancelled.", 3000)
-            self._image_view.clearTemporaryScaleVisuals() # Clear temp visuals from image view
+            self._image_view.clearTemporaryScaleVisuals()
 
-        # Reset interaction mode and button text, but don't forcibly reset button text
-        # if dialog was accepted, as update_ui_from_manager will handle it.
-        # Let cancel_set_scale_by_line handle clearing temporary visuals if not already done.
-        self.cancel_set_scale_by_line(reset_button_text=False) # Don't reset button text here
-        self._set_scale_by_feature_button.setText("Set") # Always reset button text after process ends
-
-        # update_ui_from_manager() will be called because ScaleManager emitted scaleOrUnitChanged.
-        # This will update enabled states and ensure visuals are consistent with checkbox states.
-        # If the checkboxes were just programmatically set, update_ui_from_manager will see that.
-        # The explicit redraw call above ensures the graphics update immediately.
+        self.cancel_set_scale_by_line(reset_button_text=False) 
+        self._set_scale_by_feature_button.setText("Set")
 
 
     def cancel_set_scale_by_line(self, reset_button_text: bool = True) -> None:

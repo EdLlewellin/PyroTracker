@@ -57,6 +57,16 @@ COL_POINT_X = 2
 COL_POINT_Y = 3
 TOTAL_POINT_COLUMNS = 4
 
+COL_LINE_DELETE = 0         # For a delete button
+COL_LINE_ID = 1             # Unique ID of the line
+COL_LINE_FRAME = 2          # Frame index on which the line is defined
+COL_LINE_LENGTH = 3         # Calculated length (e.g., in px or m)
+COL_LINE_ANGLE = 4          # Calculated angle (e.g., degrees from horizontal)
+# Visibility columns, similar to tracks (can be implemented later)
+COL_LINE_VIS_HIDDEN = 5
+COL_LINE_VIS_INCREMENTAL = 6
+COL_LINE_VIS_ALWAYS = 7
+TOTAL_LINE_COLUMNS = 8      # Total columns defined for the lines table
 
 # --- Visual Style Constants ---
 # Shared visual style constants.

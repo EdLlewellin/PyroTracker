@@ -143,22 +143,50 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.linesTableWidget = QtWidgets.QTableWidget() # Store as instance variable
     main_window.linesTableWidget.setObjectName("linesTableWidget")
     main_window.linesTableWidget.verticalHeader().setVisible(False)
-    # Define initial columns for the Lines table (Phase 2: ID, Frame. Length/Angle later)
-    # For Phase 2, COL_LINE_ID and COL_LINE_FRAME are conceptual.
-    # We'll use generic column indices for now, and can map them in TrackDataViewController.
-    # Let's assume for now: 0: Delete, 1: ID, 2: Frame, 3-5: Visibility
-    # Actual number of columns needs to accommodate visibility too.
-    # Column setup will be refined in TrackDataViewController when populating.
-    # For now, just set a placeholder column count that includes delete + ID + Frame + 3 visibility.
-    # Actual header labels will also be set by the controller based on config constants.
-    lines_table_num_cols = 1 + 1 + 1 + 3 # Delete, ID, Frame, VisHidden, VisIncr, VisAlways
-    main_window.linesTableWidget.setColumnCount(lines_table_num_cols)
-    # Placeholder headers, will be refined by controller
-    main_window.linesTableWidget.setHorizontalHeaderLabels(["", "ID", "Frame", "", "", ""])
+    
+    main_window.linesTableWidget.setColumnCount(config.TOTAL_LINE_COLUMNS)
+    
+    # Set header labels using constants
+    # Placeholder labels for columns not fully implemented in Phase 3
+    header_labels: List[str] = [""] * config.TOTAL_LINE_COLUMNS
+    header_labels[config.COL_LINE_ID] = "ID"
+    header_labels[config.COL_LINE_FRAME] = "Frame"
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: # Check if constant is defined and table is wide enough
+        header_labels[config.COL_LINE_LENGTH] = "Length" # Placeholder
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE:
+        header_labels[config.COL_LINE_ANGLE] = "Angle"   # Placeholder
+    # Visibility header icons will be set by TrackDataViewController if implemented similarly to tracks.
+    # For now, they can remain empty or have simple text placeholders if preferred.
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: header_labels[config.COL_LINE_VIS_HIDDEN] = "" # Placeholder for icon
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: header_labels[config.COL_LINE_VIS_INCREMENTAL] = "" # Placeholder for icon
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: header_labels[config.COL_LINE_VIS_ALWAYS] = "" # Placeholder for icon
+        
+    main_window.linesTableWidget.setHorizontalHeaderLabels(header_labels)    
+    
     main_window.linesTableWidget.setAlternatingRowColors(True)
     main_window.linesTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     main_window.linesTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
     main_window.linesTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+
+    linesHeader: QtWidgets.QHeaderView = main_window.linesTableWidget.horizontalHeader()
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_DELETE:
+        linesHeader.setSectionResizeMode(config.COL_LINE_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ID:
+        linesHeader.setSectionResizeMode(config.COL_LINE_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_FRAME:
+        linesHeader.setSectionResizeMode(config.COL_LINE_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    # For future columns like Length and Angle, and visibility icons:
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH:
+        linesHeader.setSectionResizeMode(config.COL_LINE_LENGTH, QtWidgets.QHeaderView.ResizeMode.Stretch) # Or ResizeToContents
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE:
+        linesHeader.setSectionResizeMode(config.COL_LINE_ANGLE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # Or Stretch
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN:
+        linesHeader.setSectionResizeMode(config.COL_LINE_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL:
+        linesHeader.setSectionResizeMode(config.COL_LINE_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS:
+        linesHeader.setSectionResizeMode(config.COL_LINE_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+
     # Resize modes will be set by the controller as columns are defined.
     linesTabLayout.addWidget(main_window.linesTableWidget)
 
