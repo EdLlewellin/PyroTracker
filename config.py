@@ -26,6 +26,8 @@ META_SCALE_LINE_P1X = "Scale Line P1 X (Scene px)"
 META_SCALE_LINE_P1Y = "Scale Line P1 Y (Scene px)"
 META_SCALE_LINE_P2X = "Scale Line P2 X (Scene px)"
 META_SCALE_LINE_P2Y = "Scale Line P2 Y (Scene px)"
+# --- NEW: Metadata key for showing measurement line lengths ---
+META_SHOW_MEASUREMENT_LINE_LENGTHS = "Show Measurement Line Lengths" # [cite: 75]
 
 # Metadata keys expected in CSV header for validation and writing.
 EXPECTED_METADATA_KEYS = [
@@ -35,6 +37,7 @@ EXPECTED_METADATA_KEYS = [
     META_SCALE_FACTOR_M_PER_PX, META_DATA_UNITS,
     META_SCALE_LINE_P1X, META_SCALE_LINE_P1Y,
     META_SCALE_LINE_P2X, META_SCALE_LINE_P2Y,
+    META_SHOW_MEASUREMENT_LINE_LENGTHS, # [cite: 75]
 ]
 
 # --- Table Column Indices ---
@@ -57,22 +60,22 @@ COL_POINT_X = 2
 COL_POINT_Y = 3
 TOTAL_POINT_COLUMNS = 4
 
-COL_LINE_DELETE = 0         # For a delete button
-COL_LINE_ID = 1             # Unique ID of the line
-COL_LINE_FRAME = 2          # Frame index on which the line is defined
-COL_LINE_LENGTH = 3         # Calculated length (e.g., in px or m)
-COL_LINE_ANGLE = 4          # Calculated angle (e.g., degrees from horizontal)
-# Visibility columns, similar to tracks (can be implemented later)
+# Lines Table Columns [cite: 53, 76]
+COL_LINE_DELETE = 0
+COL_LINE_ID = 1
+COL_LINE_FRAME = 2
+COL_LINE_LENGTH = 3
+COL_LINE_ANGLE = 4
 COL_LINE_VIS_HIDDEN = 5
 COL_LINE_VIS_INCREMENTAL = 6
 COL_LINE_VIS_ALWAYS = 7
-TOTAL_LINE_COLUMNS = 8      # Total columns defined for the lines table
+TOTAL_LINE_COLUMNS = 8
 
 # --- Visual Style Constants ---
 # Shared visual style constants.
 # Track Markers/Lines
-DEFAULT_MARKER_SIZE = 5.0   # Diameter/length of the marker cross in pixels
-DEFAULT_LINE_WIDTH = 1.0    # Width of the connecting lines in pixels
+DEFAULT_MARKER_SIZE = 5.0
+DEFAULT_LINE_WIDTH = 1.0
 
 # Default color values (as strings).
 DEFAULT_ACTIVE_MARKER_COLOR_STR = "yellow"
@@ -94,36 +97,32 @@ STYLE_MARKER_INACTIVE_CURRENT = "marker_inactive_current"
 STYLE_MARKER_INACTIVE_OTHER = "marker_inactive_other"
 STYLE_LINE_ACTIVE = "line_active"
 STYLE_LINE_INACTIVE = "line_inactive"
+# --- NEW: Style identifiers for Measurement Lines ---
+STYLE_MEASUREMENT_LINE_NORMAL = "style_measurement_line_normal"
+STYLE_MEASUREMENT_LINE_ACTIVE = "style_measurement_line_active"
+# --- END NEW ---
 
-CLICK_TOLERANCE = 10.0      # Pixel distance tolerance for selecting tracks via click
-CLICK_TOLERANCE_SQ = CLICK_TOLERANCE * CLICK_TOLERANCE # Squared tolerance avoids sqrt
+CLICK_TOLERANCE = 10.0
+CLICK_TOLERANCE_SQ = CLICK_TOLERANCE * CLICK_TOLERANCE
 
 # --- Formatting Constants for Scale Display ---
-# Unit prefixes and their factor relative to meters
-# (value, singular_abbr, plural_abbr_or_none_if_same)
-# Ordered from largest to smallest for formatting preference
 UNIT_PREFIXES = [
-    (1e3, "km", None),          # Kilometer
-    (1.0, "m", None),           # Meter
-    (1e-2, "cm", None),         # Centimeter
-    (1e-3, "mm", None),         # Millimeter
-    (1e-6, "µm", None),         # Micrometer (micron)
-    (1e-9, "nm", None)          # Nanometer
+    (1e3, "km", None),
+    (1.0, "m", None),
+    (1e-2, "cm", None),
+    (1e-3, "mm", None),
+    (1e-6, "µm", None),
+    (1e-9, "nm", None)
 ]
-# Thresholds for scientific notation
-SCIENTIFIC_NOTATION_UPPER_THRESHOLD = 1000e3 # Above 1000 km
-SCIENTIFIC_NOTATION_LOWER_THRESHOLD = 1e-9   # Below 1 nm (or 0.001 µm)
-
-# Preferred "round number" sequence for scale bar lengths (in powers of 10 of base unit)
-# This is currently only used in scale_bar_widget.py but can live here for consistency.
+SCIENTIFIC_NOTATION_UPPER_THRESHOLD = 1000e3
+SCIENTIFIC_NOTATION_LOWER_THRESHOLD = 1e-9
 ROUND_NUMBER_SEQUENCE = [1.0, 2.0, 2.5, 5.0]
 
 # --- Interaction Constants ---
-# Shared interaction constants.
-DRAG_THRESHOLD = 5      # Pixels mouse must move to register as a drag, not a click
-MAX_ABS_SCALE = 50.0    # Absolute maximum allowed view scale factor (e.g., 50x zoom)
+DRAG_THRESHOLD = 5
+MAX_ABS_SCALE = 50.0
 
 # --- Application Info ---
 APP_NAME = "PyroTracker"
 APP_ORGANIZATION = "Durham University"
-APP_VERSION = "2.4.0 Beta" # Updated in source files
+APP_VERSION = "2.4.0 Beta"

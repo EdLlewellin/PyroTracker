@@ -57,8 +57,8 @@ class PreferencesDialog(QtWidgets.QDialog):
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Preferences")
-        self.setMinimumWidth(500) # Adjusted for potentially more controls
-        self.setMinimumHeight(450) # Adjusted for potentially more controls
+        self.setMinimumWidth(500) 
+        self.setMinimumHeight(500) # Increased slightly for new tab
 
         self.setting_widgets: Dict[str, QtWidgets.QWidget] = {}
         self.tab_widget: Optional[QtWidgets.QTabWidget] = None
@@ -77,7 +77,8 @@ class PreferencesDialog(QtWidgets.QDialog):
         self._create_tracks_tab()
         self._create_origin_tab()
         self._create_scales_tab()
-        self._create_info_overlays_tab() # <-- NEW: Call to create the new tab
+        self._create_info_overlays_tab()
+        self._create_measurement_lines_tab() # <-- NEW: Call to create the Measurement Lines tab
 
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.StandardButton.Ok |
@@ -112,7 +113,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                 widget.setSingleStep(widget_params.get("step", 1))
         elif widget_type == "checkbox":
             widget = QtWidgets.QCheckBox()
-            # CheckBox doesn't need tooltip here, it's set directly if needed.
+            # CheckBox text is set by the label_text in QFormLayout.addRow
 
         if widget:
             if widget_params and "tooltip" in widget_params:
@@ -193,49 +194,79 @@ class PreferencesDialog(QtWidgets.QDialog):
         if self.tab_widget:
             self.tab_widget.addTab(scales_tab_widget, "Scales")
 
-    # --- NEW METHOD: _create_info_overlays_tab ---
     def _create_info_overlays_tab(self) -> None:
         info_tab_widget = QtWidgets.QWidget()
         info_main_layout = QtWidgets.QVBoxLayout(info_tab_widget)
-        info_main_layout.setSpacing(15) # Spacing between groups
+        info_main_layout.setSpacing(15) 
 
-        # Group for Filename Overlay
         filename_group = QtWidgets.QGroupBox("Filename Overlay")
         filename_layout = QtWidgets.QFormLayout(filename_group)
         filename_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
         filename_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        filename_layout.setHorizontalSpacing(10)
-        filename_layout.setVerticalSpacing(8)
+        filename_layout.setHorizontalSpacing(10); filename_layout.setVerticalSpacing(8)
         self._add_setting_to_form(filename_layout, "Text Color:", settings_manager.KEY_INFO_OVERLAY_FILENAME_COLOR, "color")
         self._add_setting_to_form(filename_layout, "Font Size (pt):", settings_manager.KEY_INFO_OVERLAY_FILENAME_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1})
         info_main_layout.addWidget(filename_group)
 
-        # Group for Time Overlay
         time_group = QtWidgets.QGroupBox("Time Overlay (Current / Total)")
         time_layout = QtWidgets.QFormLayout(time_group)
         time_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
         time_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        time_layout.setHorizontalSpacing(10)
-        time_layout.setVerticalSpacing(8)
+        time_layout.setHorizontalSpacing(10); time_layout.setVerticalSpacing(8)
         self._add_setting_to_form(time_layout, "Text Color:", settings_manager.KEY_INFO_OVERLAY_TIME_COLOR, "color")
         self._add_setting_to_form(time_layout, "Font Size (pt):", settings_manager.KEY_INFO_OVERLAY_TIME_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1})
         info_main_layout.addWidget(time_group)
 
-        # Group for Frame Number Overlay
         frame_group = QtWidgets.QGroupBox("Frame Number Overlay (Current / Total)")
         frame_layout = QtWidgets.QFormLayout(frame_group)
         frame_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
         frame_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-        frame_layout.setHorizontalSpacing(10)
-        frame_layout.setVerticalSpacing(8)
+        frame_layout.setHorizontalSpacing(10); frame_layout.setVerticalSpacing(8)
         self._add_setting_to_form(frame_layout, "Text Color:", settings_manager.KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR, "color")
         self._add_setting_to_form(frame_layout, "Font Size (pt):", settings_manager.KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1})
         info_main_layout.addWidget(frame_group)
 
-        info_main_layout.addStretch() # Push groups to the top
+        info_main_layout.addStretch() 
 
         if self.tab_widget:
             self.tab_widget.addTab(info_tab_widget, "Info Overlays")
+
+    # --- NEW METHOD: _create_measurement_lines_tab ---
+    def _create_measurement_lines_tab(self) -> None:
+        measure_lines_tab_widget = QtWidgets.QWidget()
+        measure_lines_main_layout = QtWidgets.QVBoxLayout(measure_lines_tab_widget)
+        measure_lines_main_layout.setSpacing(15)
+
+        # Group for Line Appearance
+        line_appearance_group = QtWidgets.QGroupBox("Line Appearance")
+        line_appearance_layout = QtWidgets.QFormLayout(line_appearance_group)
+        line_appearance_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        line_appearance_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        line_appearance_layout.setHorizontalSpacing(10)
+        line_appearance_layout.setVerticalSpacing(8)
+
+        self._add_setting_to_form(line_appearance_layout, "Line Color:", settings_manager.KEY_MEASUREMENT_LINE_COLOR, "color", {"tooltip": "Default color for measurement lines."})
+        self._add_setting_to_form(line_appearance_layout, "Active Line Color:", settings_manager.KEY_MEASUREMENT_LINE_ACTIVE_COLOR, "color", {"tooltip": "Color for the currently selected/active measurement line."})
+        self._add_setting_to_form(line_appearance_layout, "Line Width (px):", settings_manager.KEY_MEASUREMENT_LINE_WIDTH, "double_spinbox", {"min_val": 0.5, "max_val": 10.0, "decimals": 1, "step": 0.5, "tooltip": "Width of measurement lines."})
+        measure_lines_main_layout.addWidget(line_appearance_group)
+
+        # Group for Length Label Appearance
+        length_label_group = QtWidgets.QGroupBox("Length Label Appearance")
+        length_label_layout = QtWidgets.QFormLayout(length_label_group)
+        length_label_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        length_label_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
+        length_label_layout.setHorizontalSpacing(10)
+        length_label_layout.setVerticalSpacing(8)
+        
+        self._add_setting_to_form(length_label_layout, "Show Length Labels:", settings_manager.KEY_SHOW_MEASUREMENT_LINE_LENGTHS, "checkbox", {"tooltip": "Globally show or hide length labels for all measurement lines."})
+        self._add_setting_to_form(length_label_layout, "Text Color:", settings_manager.KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR, "color", {"tooltip": "Color of the length label text."})
+        self._add_setting_to_form(length_label_layout, "Font Size (pt):", settings_manager.KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE, "int_spinbox", {"min_val": 6, "max_val": 48, "step": 1, "tooltip": "Font size for the length label text."})
+        measure_lines_main_layout.addWidget(length_label_group)
+
+        measure_lines_main_layout.addStretch()
+
+        if self.tab_widget:
+            self.tab_widget.addTab(measure_lines_tab_widget, "Measurement Lines")
     # --- END NEW METHOD ---
 
     def _load_settings(self) -> None:
@@ -246,7 +277,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                 if isinstance(widget, ColorButton):
                     if isinstance(current_value_from_manager, QtGui.QColor) and current_value_from_manager.isValid():
                         widget.set_color(current_value_from_manager)
-                    else: # Fallback if stored value is not a valid QColor string or None
+                    else: 
                         default_color = settings_manager.DEFAULT_SETTINGS.get(key, QtGui.QColor("black"))
                         logger.warning(f"Invalid or wrong type for ColorButton key '{key}'. Value: '{current_value_from_manager}'. Using default: {default_color.name()}.")
                         widget.set_color(default_color)
@@ -262,7 +293,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                         widget.setValue(current_value_from_manager)
                     elif isinstance(current_value_from_manager, float) and current_value_from_manager.is_integer():
                         widget.setValue(int(current_value_from_manager))
-                    else: # Handles strings or other types by trying conversion or using default
+                    else: 
                         try:
                             widget.setValue(int(float(str(current_value_from_manager))))
                         except (ValueError, TypeError):
@@ -272,7 +303,7 @@ class PreferencesDialog(QtWidgets.QDialog):
                 elif isinstance(widget, QtWidgets.QCheckBox):
                     if isinstance(current_value_from_manager, bool):
                         widget.setChecked(current_value_from_manager)
-                    else: # Handle string "true"/"false" or int 0/1 common from QSettings
+                    else: 
                         str_val = str(current_value_from_manager).lower()
                         if str_val == "true": widget.setChecked(True)
                         elif str_val == "false": widget.setChecked(False)
@@ -285,7 +316,6 @@ class PreferencesDialog(QtWidgets.QDialog):
                                 widget.setChecked(default_val)
             except Exception as e:
                 logger.error(f"Error setting widget value for key '{key}' with value '{current_value_from_manager}': {e}", exc_info=True)
-                # Attempt to set to a hardcoded default type for the widget to prevent crashes
                 if isinstance(widget, ColorButton): widget.set_color(QtGui.QColor("black"))
                 elif isinstance(widget, QtWidgets.QDoubleSpinBox): widget.setValue(0.0)
                 elif isinstance(widget, QtWidgets.QSpinBox): widget.setValue(0)

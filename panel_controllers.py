@@ -165,12 +165,21 @@ class ScalePanelController(QtCore.QObject):
             return
 
         if self._is_setting_scale_by_line:
-            # If already in this mode, clicking "Set" again could mean cancel
             self.cancel_set_scale_by_line()
         else:
+            # --- MODIFICATION: Cancel other definition modes ---
+            if hasattr(self._main_window_ref, '_is_defining_measurement_line') and self._main_window_ref._is_defining_measurement_line:
+                logger.debug("Cancelling active measurement line definition before starting 'Set Scale by Line'.")
+                self._main_window_ref._cancel_active_line_definition_ui_reset()
+            if hasattr(self._main_window_ref, 'coord_panel_controller') and self._main_window_ref.coord_panel_controller and self._main_window_ref.coord_panel_controller.is_setting_origin_mode():
+                logger.debug("Cancelling active 'Set Origin' mode before starting 'Set Scale by Line'.")
+                self._main_window_ref.coord_panel_controller._is_setting_origin = False
+                self._image_view.set_interaction_mode(InteractionMode.NORMAL)
+            # --- END MODIFICATION ---
+
             self._is_setting_scale_by_line = True
             self._image_view.set_interaction_mode(InteractionMode.SET_SCALE_LINE_START)
-            self._scale_line_p1_scene = None # Reset first point
+            self._scale_line_p1_scene = None 
             
             if hasattr(self._main_window_ref, 'current_frame_index'):
                  self._scale_line_definition_frame_index = self._main_window_ref.current_frame_index
@@ -188,58 +197,58 @@ class ScalePanelController(QtCore.QObject):
 
     @QtCore.Slot(float, float)
     def _on_image_view_scale_line_point1_clicked(self, scene_x: float, scene_y: float) -> None:
-        if not self._is_setting_scale_by_line: # Primary guard: If SPC is not defining scale, ignore.
+        # Primary guard: If SPC is not defining scale, ignore.
+        if not self._is_setting_scale_by_line:
             logger.debug("ScalePanelController: Ignoring scaleLinePoint1Clicked as _is_setting_scale_by_line is False.")
             return
         
         # If we reach here, self._is_setting_scale_by_line is True.
-        # Now check other conditions specific to its own scale definition process.
-        if self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_START:
-            logger.warning("ScalePanelController: Received scaleLinePoint1Clicked but ImageView not in SET_SCALE_LINE_START mode. Cancelling its scale definition.")
-            self.cancel_set_scale_by_line() # Cancel its own operation
-            return 
-
+        # The ImageView emitted this signal, indicating it was in SET_SCALE_LINE_START mode.
+        # We don't need to re-check ImageView's mode here as it might have already changed.
+        
         self._scale_line_p1_scene = QtCore.QPointF(scene_x, scene_y)
+        # Controller tells ImageView to change mode for the *next* expected click.
         self._image_view.set_interaction_mode(InteractionMode.SET_SCALE_LINE_END)
         self.statusBarMessage.emit("Set Scale: Click second point of known length. (Esc to cancel)", 0)
         logger.info(f"ScalePanelController: Scale line point 1 received: ({scene_x:.2f}, {scene_y:.2f}) for its scale definition.")
 
     @QtCore.Slot(float, float, float, float)
     def _on_image_view_scale_line_point2_clicked(self, x1: float, y1: float, x2: float, y2: float) -> None:
-        if not self._is_setting_scale_by_line: # Primary guard: If SPC is not defining scale, ignore.
+        # Primary guard: If SPC is not defining scale, ignore.
+        if not self._is_setting_scale_by_line:
             logger.debug("ScalePanelController: Ignoring scaleLinePoint2Clicked as _is_setting_scale_by_line is False.")
             return
 
-        # If we reach here, self._is_setting_scale_by_line is TRUE.
-        # Now, we check conditions specific to ITS OWN scale definition process.
-        if self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_END or \
-           self._scale_line_p1_scene is None: # Its own p1 scene for scale definition
-            
-            log_msg = "ScalePanelController: Cancelling its 'Set Scale by Line' because "
-            if self._image_view._current_mode != InteractionMode.SET_SCALE_LINE_END:
-                log_msg += f"ImageView mode is {self._image_view._current_mode.name} (expected SET_SCALE_LINE_END). "
-            if self._scale_line_p1_scene is None:
-                log_msg += "Its own _scale_line_p1_scene is None."
-            logger.warning(log_msg)
-            
-            self.cancel_set_scale_by_line() # Cancel ITS OWN scale definition process
+        # If we reach here, self._is_setting_scale_by_line is True.
+        # Check if the first point for scale definition was actually set by this controller.
+        if self._scale_line_p1_scene is None:
+            logger.warning("ScalePanelController: Received scaleLinePoint2Clicked but its _scale_line_p1_scene is None. Cancelling.")
+            self.cancel_set_scale_by_line()
             return
         
-        # Original logic for ScalePanelController processing the second point for SCALE definition:
+        # Check if the received x1,y1 match the stored _scale_line_p1_scene
+        # This ensures we are processing the second point corresponding to our stored first point.
+        # Compare with a small tolerance for floating point comparisons.
+        tolerance = 1e-5 
+        if not (math.isclose(self._scale_line_p1_scene.x(), x1, rel_tol=tolerance) and \
+                math.isclose(self._scale_line_p1_scene.y(), y1, rel_tol=tolerance)):
+            logger.warning(f"ScalePanelController: scaleLinePoint2Clicked received with x1,y1 ({x1:.2f},{y1:.2f}) "
+                           f"that don't match stored p1 ({self._scale_line_p1_scene.x():.2f},{self._scale_line_p1_scene.y():.2f}). "
+                           "This might be a stray signal if multiple line definitions are interleaved. Ignoring.")
+            # Not cancelling, as this might be a signal for a different process (e.g. measurement line)
+            return
+
         logger.info(f"ScalePanelController: Scale line point 2 received: ({x2:.2f}, {y2:.2f}). Line defined for ITS scale: [({x1:.2f},{y1:.2f}) to ({x2:.2f},{y2:.2f})]")
 
-        dx = x2 - x1
-        dy = y2 - y1
+        dx = x2 - x1; dy = y2 - y1
         pixel_distance = math.sqrt(dx*dx + dy*dy)
 
         if pixel_distance < 1e-3:
-            QtWidgets.QMessageBox.warning(self._main_window_ref, "Set Scale Error",
-                                          "The two points are too close or identical. Please define a longer line for scale.")
-            self.cancel_set_scale_by_line() # Cancels its own process
+            QtWidgets.QMessageBox.warning(self._main_window_ref, "Set Scale Error", "The two points are too close or identical. Please define a longer line for scale.")
+            self.cancel_set_scale_by_line()
             return
 
         dialog = GetDistanceDialog(pixel_distance, self._main_window_ref)
-        known_distance_m: Optional[float] = None
         if dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
             known_distance_m = dialog.get_distance()
             if known_distance_m is not None and known_distance_m > 0:
@@ -247,7 +256,6 @@ class ScalePanelController(QtCore.QObject):
                 self._scale_manager.set_defined_scale_line(x1, y1, x2, y2)
                 self._scale_manager.set_scale(m_per_px, called_from_line_definition=True)
                 self.statusBarMessage.emit(f"Scale set to {m_per_px:.6g} m/px.", 5000)
-                logger.info(f"ScalePanelController: Scale set by line: {pixel_distance:.2f} px = {known_distance_m:.3f} m. Calculated m/px: {m_per_px:.6g}")
                 if hasattr(self._main_window_ref, 'showScaleLineCheckBox') and self._main_window_ref.showScaleLineCheckBox:
                     self._main_window_ref.showScaleLineCheckBox.setChecked(True)
                 if hasattr(self._main_window_ref, 'showScaleBarCheckBox') and self._main_window_ref.showScaleBarCheckBox:
@@ -263,7 +271,6 @@ class ScalePanelController(QtCore.QObject):
 
         self.cancel_set_scale_by_line(reset_button_text=False) 
         self._set_scale_by_feature_button.setText("Set")
-
 
     def cancel_set_scale_by_line(self, reset_button_text: bool = True) -> None:
         if self._is_setting_scale_by_line or self._image_view._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
@@ -504,6 +511,7 @@ class CoordinatePanelController(QtCore.QObject):
     statusBarMessage = QtCore.Signal(str, int) # message, timeout
 
     def __init__(self,
+                 main_window_ref: 'MainWindow', # Added MainWindow reference
                  coord_transformer: 'CoordinateTransformer',
                  image_view: 'InteractiveImageView',
                  scale_manager: 'ScaleManager',
@@ -516,38 +524,20 @@ class CoordinatePanelController(QtCore.QObject):
                  coord_custom_origin_label: QtWidgets.QLabel,
                  set_origin_button: QtWidgets.QPushButton,
                  show_origin_checkbox: QtWidgets.QCheckBox,
-                 cursor_pos_labels_px: Dict[str, QtWidgets.QLabel], # e.g., {"TL": tl_label, "BL": bl_label ...}
+                 cursor_pos_labels_px: Dict[str, QtWidgets.QLabel],
                  cursor_pos_labels_m: Dict[str, QtWidgets.QLabel],
                  parent: Optional[QtCore.QObject] = None):
         super().__init__(parent)
-
-        self._coord_transformer = coord_transformer
-        self._image_view = image_view
-        self._scale_manager = scale_manager # For metric cursor display
-
-        self._coord_system_group = coord_system_group
-        self._coord_top_left_radio = coord_top_left_radio
-        self._coord_bottom_left_radio = coord_bottom_left_radio
-        self._coord_custom_radio = coord_custom_radio
-        self._coord_top_left_origin_label = coord_top_left_origin_label
-        self._coord_bottom_left_origin_label = coord_bottom_left_origin_label
-        self._coord_custom_origin_label = coord_custom_origin_label
-        self._set_origin_button = set_origin_button
-        self._show_origin_checkbox = show_origin_checkbox
-        self._cursor_pos_labels_px = cursor_pos_labels_px # Store the dictionary
-        self._cursor_pos_labels_m = cursor_pos_labels_m   # Store the dictionary for metric labels
-
-        self._is_setting_origin: bool = False
-        self._show_origin_marker: bool = True # Default, will be synced by update_ui_display
-        self._last_scene_mouse_x: float = -1.0
-        self._last_scene_mouse_y: float = -1.0
-        self._video_loaded: bool = False
-
-        # Connect signals from UI elements
+        self._main_window_ref = main_window_ref # Store MainWindow reference
+        self._coord_transformer = coord_transformer; self._image_view = image_view; self._scale_manager = scale_manager
+        self._coord_system_group = coord_system_group; self._coord_top_left_radio = coord_top_left_radio; self._coord_bottom_left_radio = coord_bottom_left_radio
+        self._coord_custom_radio = coord_custom_radio; self._coord_top_left_origin_label = coord_top_left_origin_label; self._coord_bottom_left_origin_label = coord_bottom_left_origin_label
+        self._coord_custom_origin_label = coord_custom_origin_label; self._set_origin_button = set_origin_button; self._show_origin_checkbox = show_origin_checkbox
+        self._cursor_pos_labels_px = cursor_pos_labels_px; self._cursor_pos_labels_m = cursor_pos_labels_m
+        self._is_setting_origin: bool = False; self._show_origin_marker: bool = True; self._last_scene_mouse_x: float = -1.0; self._last_scene_mouse_y: float = -1.0; self._video_loaded: bool = False
         self._coord_system_group.buttonToggled.connect(self._on_coordinate_mode_changed)
         self._set_origin_button.clicked.connect(self._on_enter_set_origin_mode)
         self._show_origin_checkbox.stateChanged.connect(self._on_toggle_show_origin)
-
         self.update_ui_display()
 
     def set_video_loaded_status(self, is_loaded: bool) -> None:
@@ -581,13 +571,17 @@ class CoordinatePanelController(QtCore.QObject):
 
     @QtCore.Slot()
     def _on_enter_set_origin_mode(self) -> None:
-        if not self._video_loaded:
-            self.statusBarMessage.emit("Load a video first to set origin.", 3000)
-            return
-        self._is_setting_origin = True
-        self._image_view.set_interaction_mode(InteractionMode.SET_ORIGIN)
+        if not self._video_loaded: self.statusBarMessage.emit("Load a video first to set origin.", 3000); return
+        # --- MODIFICATION: Cancel other definition modes ---
+        if hasattr(self._main_window_ref, '_is_defining_measurement_line') and self._main_window_ref._is_defining_measurement_line:
+            logger.debug("Cancelling active measurement line definition before 'Set Origin'.")
+            self._main_window_ref._cancel_active_line_definition_ui_reset()
+        if hasattr(self._main_window_ref, 'scale_panel_controller') and self._main_window_ref.scale_panel_controller and self._main_window_ref.scale_panel_controller._is_setting_scale_by_line:
+            logger.debug("Cancelling active 'Set Scale by Line' before 'Set Origin'.")
+            self._main_window_ref.scale_panel_controller.cancel_set_scale_by_line()
+        # --- END MODIFICATION ---
+        self._is_setting_origin = True; self._image_view.set_interaction_mode(InteractionMode.SET_ORIGIN)
         self.statusBarMessage.emit("Click on the image to set the custom origin.", 0)
-        logger.info("Entered 'Set Custom Origin' mode.")
 
     @QtCore.Slot(float, float)
     def _on_set_custom_origin(self, scene_x: float, scene_y: float) -> None:

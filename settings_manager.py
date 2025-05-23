@@ -36,24 +36,30 @@ KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR = f"{SCALES_GROUP}/featureScaleLineTic
 KEY_SCALE_BAR_RECT_HEIGHT = f"{SCALES_GROUP}/scaleBarRectHeight"
 KEY_SCALE_BAR_TEXT_FONT_SIZE = f"{SCALES_GROUP}/scaleBarTextFontSize"
 
-# --- NEW: Info Overlays Group and Keys ---
+# --- Info Overlays Group and Keys ---
 INFO_OVERLAYS_GROUP = "info_overlays"
 # Visibility Keys
 KEY_INFO_OVERLAY_SHOW_FILENAME = f"{INFO_OVERLAYS_GROUP}/showFilename"
 KEY_INFO_OVERLAY_SHOW_TIME = f"{INFO_OVERLAYS_GROUP}/showTime"
 KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER = f"{INFO_OVERLAYS_GROUP}/showFrameNumber"
-
 # Appearance Keys (Color)
 KEY_INFO_OVERLAY_FILENAME_COLOR = f"{INFO_OVERLAYS_GROUP}/filenameColor"
 KEY_INFO_OVERLAY_TIME_COLOR = f"{INFO_OVERLAYS_GROUP}/timeColor"
 KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR = f"{INFO_OVERLAYS_GROUP}/frameNumberColor"
-
 # Appearance Keys (Font Size)
 KEY_INFO_OVERLAY_FILENAME_FONT_SIZE = f"{INFO_OVERLAYS_GROUP}/filenameFontSize"
 KEY_INFO_OVERLAY_TIME_FONT_SIZE = f"{INFO_OVERLAYS_GROUP}/timeFontSize"
 KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE = f"{INFO_OVERLAYS_GROUP}/frameNumberFontSize"
 
-# (Future: Position keys could be added here, e.g., KEY_INFO_OVERLAY_FILENAME_POSITION)
+# --- NEW: Measurement Lines Group and Keys --- [cite: 60, 137, 149]
+MEASUREMENT_LINES_GROUP = "measurement_lines_visuals"
+KEY_MEASUREMENT_LINE_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurementLineColor"
+KEY_MEASUREMENT_LINE_ACTIVE_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurementLineActiveColor"
+KEY_MEASUREMENT_LINE_WIDTH = f"{MEASUREMENT_LINES_GROUP}/measurementLineWidth"
+KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurementLineLengthTextColor"
+KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE = f"{MEASUREMENT_LINES_GROUP}/measurementLineLengthTextFontSize"
+KEY_SHOW_MEASUREMENT_LINE_LENGTHS = f"{MEASUREMENT_LINES_GROUP}/showMeasurementLineLengths"
+
 
 DEFAULT_SETTINGS = {
     KEY_ACTIVE_MARKER_COLOR: QtGui.QColor("yellow"),
@@ -77,21 +83,24 @@ DEFAULT_SETTINGS = {
     KEY_SCALE_BAR_RECT_HEIGHT: 4,
     KEY_SCALE_BAR_TEXT_FONT_SIZE: 10,
 
-    # --- NEW: Default values for Info Overlays ---
-    # Visibility (default to visible for now, user can hide via View menu)
+    # Default values for Info Overlays
     KEY_INFO_OVERLAY_SHOW_FILENAME: True,
     KEY_INFO_OVERLAY_SHOW_TIME: True,
     KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER: True,
-
-    # Appearance (Colors - default to white like scale bar)
     KEY_INFO_OVERLAY_FILENAME_COLOR: QtGui.QColor("white"),
     KEY_INFO_OVERLAY_TIME_COLOR: QtGui.QColor("white"),
     KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR: QtGui.QColor("white"),
-
-    # Appearance (Font Sizes - default to a readable size)
     KEY_INFO_OVERLAY_FILENAME_FONT_SIZE: 10, # pt
     KEY_INFO_OVERLAY_TIME_FONT_SIZE: 10,     # pt
     KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE: 10, # pt
+
+    # --- NEW: Default values for Measurement Lines --- [cite: 60, 137, 149]
+    KEY_MEASUREMENT_LINE_COLOR: QtGui.QColor("lime"), # A distinct default color
+    KEY_MEASUREMENT_LINE_ACTIVE_COLOR: QtGui.QColor("aqua"), # Color when line is "active/selected"
+    KEY_MEASUREMENT_LINE_WIDTH: 1.5, # Similar to feature scale line width
+    KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR: QtGui.QColor("lime"), # Default to same as line
+    KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE: 12, # pt, slightly larger than scale bar
+    KEY_SHOW_MEASUREMENT_LINE_LENGTHS: True, # Default to showing lengths
 }
 
 _settings_instance: Optional[QtCore.QSettings] = None
