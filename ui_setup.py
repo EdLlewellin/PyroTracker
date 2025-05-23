@@ -56,40 +56,40 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     frame_nav_layout.addWidget(QtWidgets.QLabel("Frame:"))
     main_window.currentFrameLineEdit = QtWidgets.QLineEdit("-")
     main_window.currentFrameLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.currentFrameLineEdit.setMaximumWidth(60) 
+    main_window.currentFrameLineEdit.setMaximumWidth(60)
     main_window.currentFrameLineEdit.setToolTip("Current frame (Press Enter to seek)")
-    main_window.currentFrameLineEdit.setReadOnly(True) 
+    main_window.currentFrameLineEdit.setReadOnly(True)
     frame_nav_layout.addWidget(main_window.currentFrameLineEdit)
 
     main_window.totalFramesLabel = QtWidgets.QLabel("/ -")
     main_window.totalFramesLabel.setMinimumWidth(50)
     main_window.totalFramesLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
     frame_nav_layout.addWidget(main_window.totalFramesLabel)
-    frame_nav_layout.addSpacing(10) 
+    frame_nav_layout.addSpacing(10)
 
     frame_nav_layout.addWidget(QtWidgets.QLabel("Time:"))
     main_window.currentTimeLineEdit = QtWidgets.QLineEdit("--:--.---")
     main_window.currentTimeLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.currentTimeLineEdit.setMaximumWidth(75) 
+    main_window.currentTimeLineEdit.setMaximumWidth(75)
     main_window.currentTimeLineEdit.setToolTip("Current time (Enter MM:SS.mmm or SSS.mmm to seek)")
-    main_window.currentTimeLineEdit.setReadOnly(True) 
+    main_window.currentTimeLineEdit.setReadOnly(True)
     frame_nav_layout.addWidget(main_window.currentTimeLineEdit)
 
     main_window.totalTimeLabel = QtWidgets.QLabel("/ --:--.---")
-    main_window.totalTimeLabel.setMinimumWidth(90) 
+    main_window.totalTimeLabel.setMinimumWidth(90)
     main_window.totalTimeLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
     frame_nav_layout.addWidget(main_window.totalTimeLabel)
-    frame_nav_layout.addSpacing(10) 
+    frame_nav_layout.addSpacing(10)
 
     frame_nav_layout.addWidget(QtWidgets.QLabel("Zoom:"))
-    main_window.zoomLevelLineEdit = QtWidgets.QLineEdit("---.-") 
+    main_window.zoomLevelLineEdit = QtWidgets.QLineEdit("---.-")
     main_window.zoomLevelLineEdit.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    main_window.zoomLevelLineEdit.setMaximumWidth(70) 
+    main_window.zoomLevelLineEdit.setMaximumWidth(70)
     main_window.zoomLevelLineEdit.setToolTip("Current zoom (100% = fit to view). Enter value and press Enter.")
-    main_window.zoomLevelLineEdit.setReadOnly(True) 
+    main_window.zoomLevelLineEdit.setReadOnly(True)
     frame_nav_layout.addWidget(main_window.zoomLevelLineEdit)
     frame_nav_layout.addWidget(QtWidgets.QLabel("%"))
-    
+
     video_controls_layout.addLayout(frame_nav_layout)
     leftPanelLayout.addWidget(video_controls_group, stretch=0)
     main_window.mainSplitter.addWidget(main_window.leftPanelWidget)
@@ -97,8 +97,8 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     # --- Right Panel (Controls and Data Tabs) ---
     main_window.rightPanelWidget = QtWidgets.QWidget()
-    main_window.rightPanelWidget.setMaximumWidth(450) 
-    main_window.rightPanelWidget.setMinimumWidth(380) 
+    main_window.rightPanelWidget.setMaximumWidth(450)
+    main_window.rightPanelWidget.setMinimumWidth(380)
     rightPanelLayout = QtWidgets.QVBoxLayout(main_window.rightPanelWidget)
     rightPanelLayout.setContentsMargins(5, 5, 5, 5)
     rightPanelLayout.setSpacing(6)
@@ -110,17 +110,26 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     auto_advance_layout.addWidget(main_window.autoAdvanceCheckBox)
     main_window.autoAdvanceSpinBox = QtWidgets.QSpinBox(); main_window.autoAdvanceSpinBox.setMinimum(1); main_window.autoAdvanceSpinBox.setMaximum(100); main_window.autoAdvanceSpinBox.setValue(1); main_window.autoAdvanceSpinBox.setToolTip("Number of frames to advance automatically")
     auto_advance_layout.addWidget(main_window.autoAdvanceSpinBox); auto_advance_layout.addStretch(1)
-    rightPanelLayout.addWidget(auto_advance_group) 
+    rightPanelLayout.addWidget(auto_advance_group)
     logger.debug("Auto-Advance panel configured.")
 
     main_window.dataTabsWidget = QtWidgets.QTabWidget()
     main_window.dataTabsWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
-    rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1) 
-    
+    rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1)
+
     # --- Tracks Tab ---
     tracksTab = QtWidgets.QWidget()
     tracksTabLayout = QtWidgets.QVBoxLayout(tracksTab)
     tracksTabLayout.setContentsMargins(2, 2, 2, 2)
+
+    # --- MODIFICATION: Create and add newTrackButton to tracksTabLayout ---
+    main_window.newTrackButton = QtWidgets.QPushButton("New Track")
+    main_window.newTrackButton.setObjectName("newTrackButton")
+    main_window.newTrackButton.setToolTip("Create a new track for marking points (Ctrl+N)")
+    main_window.newTrackButton.setEnabled(False) # Initially disabled
+    tracksTabLayout.addWidget(main_window.newTrackButton) # Add button to Tracks tab layout FIRST
+    # --- END MODIFICATION ---
+
     main_window.tracksTableWidget = QtWidgets.QTableWidget()
     main_window.tracksTableWidget.verticalHeader().setVisible(False)
     main_window.tracksTableWidget.setColumnCount(config.TOTAL_TRACK_COLUMNS)
@@ -147,28 +156,25 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     tracksHeader.setSectionResizeMode(config.COL_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksHeader.setSectionResizeMode(config.COL_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     main_window.tracksTableWidget.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    tracksTabLayout.addWidget(main_window.tracksTableWidget)
+    tracksTabLayout.addWidget(main_window.tracksTableWidget) # Add table AFTER newTrackButton
     main_window.dataTabsWidget.addTab(tracksTab, "Tracks")
-    logger.debug("Tracks tab configured.")
+    logger.debug("Tracks tab configured with New Track button at the top.")
 
-    # --- NEW: Lines Tab (Phase 2) ---
+    # --- Lines Tab ---
     linesTab = QtWidgets.QWidget()
     linesTabLayout = QtWidgets.QVBoxLayout(linesTab)
     linesTabLayout.setContentsMargins(2, 2, 2, 2)
 
-    # --- MODIFICATION: Add "New Line" button BEFORE the table ---
     main_window.newLineButton = QtWidgets.QPushButton("New Measurement Line")
     main_window.newLineButton.setObjectName("newLineButton")
     main_window.newLineButton.setToolTip("Create a new measurement line")
-    main_window.newLineButton.setEnabled(False) 
-    linesTabLayout.addWidget(main_window.newLineButton) # Add button to the Lines tab layout FIRST
-    # --- END MODIFICATION ---
+    main_window.newLineButton.setEnabled(False)
+    linesTabLayout.addWidget(main_window.newLineButton)
 
     main_window.linesTableWidget = QtWidgets.QTableWidget()
     main_window.linesTableWidget.setObjectName("linesTableWidget")
     main_window.linesTableWidget.verticalHeader().setVisible(False)
     main_window.linesTableWidget.setColumnCount(config.TOTAL_LINE_COLUMNS)
-    
     header_labels: List[str] = [""] * config.TOTAL_LINE_COLUMNS
     header_labels[config.COL_LINE_ID] = "ID"
     header_labels[config.COL_LINE_FRAME] = "Frame"
@@ -177,12 +183,11 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: header_labels[config.COL_LINE_VIS_HIDDEN] = ""
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: header_labels[config.COL_LINE_VIS_INCREMENTAL] = ""
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: header_labels[config.COL_LINE_VIS_ALWAYS] = ""
-    main_window.linesTableWidget.setHorizontalHeaderLabels(header_labels)    
+    main_window.linesTableWidget.setHorizontalHeaderLabels(header_labels)
     main_window.linesTableWidget.setAlternatingRowColors(True)
     main_window.linesTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     main_window.linesTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
     main_window.linesTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-
     linesHeader: QtWidgets.QHeaderView = main_window.linesTableWidget.horizontalHeader()
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_DELETE: linesHeader.setSectionResizeMode(config.COL_LINE_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ID: linesHeader.setSectionResizeMode(config.COL_LINE_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
@@ -192,14 +197,12 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-
-    linesTabLayout.addWidget(main_window.linesTableWidget) # Add table AFTER the button
-
-    main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines") 
+    linesTabLayout.addWidget(main_window.linesTableWidget)
+    main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines")
     logger.debug("Measurement Lines tab configured with table and New Line button at the top.")
-    # --- END NEW: Lines Tab ---
 
     # --- Points Tab (Remains the same) ---
+    # ... (Code for pointsTab remains the same) ...
     pointsTab = QtWidgets.QWidget(); pointsTabLayout = QtWidgets.QVBoxLayout(pointsTab); pointsTabLayout.setContentsMargins(2, 2, 2, 2); pointsTabLayout.setSpacing(4)
     main_window.pointsTabLabel = QtWidgets.QLabel("Points for Track: -"); main_window.pointsTabLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     pointsTabLayout.addWidget(main_window.pointsTabLabel)
@@ -212,7 +215,9 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.dataTabsWidget.addTab(pointsTab, "Points")
     logger.debug("Points tab configured.")
 
+
     # --- Collapsible Group Boxes (Scale, Coords) remain the same ---
+    # ... (Code for scale_config_group remains the same) ...
     main_window.scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
     main_window.scale_config_group.setCheckable(True); main_window.scale_config_group.setChecked(False)
     main_window.scale_config_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -242,6 +247,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     rightPanelLayout.addWidget(main_window.scale_config_group) 
     logger.debug("Scale Configuration panel configured.")
 
+    # ... (Code for coords_group remains the same) ...
     main_window.coords_group = QtWidgets.QGroupBox("Coordinate System")
     main_window.coords_group.setCheckable(True); main_window.coords_group.setChecked(False)
     main_window.coords_group.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
@@ -283,6 +289,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     coords_contents_widget.setVisible(main_window.coords_group.isChecked())
     rightPanelLayout.addWidget(main_window.coords_group) 
     logger.debug("Coordinate System panel configured.")
+
 
     main_window.mainSplitter.addWidget(main_window.rightPanelWidget)
     logger.debug("Right panel UI configured.")

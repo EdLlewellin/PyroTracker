@@ -351,8 +351,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
 
+        # Connect newTrackButton from ui_setup.py
+        if hasattr(self, 'newTrackButton') and self.newTrackButton:
+            self.newTrackButton.clicked.connect(self._create_new_track)
+            logger.debug("Connected newTrackButton (from Tracks tab) clicked signal.")
+        else:
+            logger.warning("newTrackButton (from Tracks tab) not found after UI setup. Cannot connect signal.")
+
+        # Connect newLineButton from ui_setup.py
         if hasattr(self, 'newLineButton') and self.newLineButton:
-            self.newLineButton.clicked.connect(self._create_new_line_action)
+            self.newLineButton.clicked.connect(self._create_new_line_action) # Ensure this line is present and active
             logger.debug("Connected newLineButton clicked signal.")
         else:
             logger.warning("newLineButton not found after UI setup. Cannot connect signal.")
@@ -520,9 +528,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.zoomLevelLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
             if not is_video_loaded: self.zoomLevelLineEdit.setText("---.-")
 
-        if self.newTrackAction: self.newTrackAction.setEnabled(is_video_loaded and not is_defining_any_line) # Disable if defining any line
+        # Manage enabled state for New Track Action (menu) and New Track Button (tab)
+        can_create_new_element = is_video_loaded and not is_defining_any_line
+        if self.newTrackAction: 
+            self.newTrackAction.setEnabled(can_create_new_element)
+        
+        if hasattr(self, 'newTrackButton') and self.newTrackButton: # For the button in the Tracks tab
+            self.newTrackButton.setEnabled(can_create_new_element)
+
         if hasattr(self, 'newLineButton') and self.newLineButton:
-            self.newLineButton.setEnabled(is_video_loaded and not is_defining_any_line) # Disable if defining any line
+            self.newLineButton.setEnabled(can_create_new_element)
 
         if self.autoAdvanceCheckBox: self.autoAdvanceCheckBox.setEnabled(is_video_loaded)
         if self.autoAdvanceSpinBox: self.autoAdvanceSpinBox.setEnabled(is_video_loaded)
