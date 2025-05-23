@@ -118,17 +118,34 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     rightPanelLayout.addWidget(main_window.dataTabsWidget, stretch=1) 
     
     # --- Tracks Tab ---
-    tracksTab = QtWidgets.QWidget(); tracksTabLayout = QtWidgets.QVBoxLayout(tracksTab); tracksTabLayout.setContentsMargins(2, 2, 2, 2)
-    main_window.tracksTableWidget = QtWidgets.QTableWidget(); main_window.tracksTableWidget.verticalHeader().setVisible(False)
+    tracksTab = QtWidgets.QWidget()
+    tracksTabLayout = QtWidgets.QVBoxLayout(tracksTab)
+    tracksTabLayout.setContentsMargins(2, 2, 2, 2)
+    main_window.tracksTableWidget = QtWidgets.QTableWidget()
+    main_window.tracksTableWidget.verticalHeader().setVisible(False)
     main_window.tracksTableWidget.setColumnCount(config.TOTAL_TRACK_COLUMNS)
     main_window.tracksTableWidget.setHorizontalHeaderLabels(["", "ID", "Points", "Start", "End", "", "", ""])
     main_window.tracksTableWidget.setAlternatingRowColors(True); main_window.tracksTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-    main_window.tracksTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows); main_window.tracksTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+    main_window.tracksTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+    main_window.tracksTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
     tracksHeader: QtWidgets.QHeaderView = main_window.tracksTableWidget.horizontalHeader()
-    icon_hidden = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogCancelButton); tracksHeader.model().setHeaderData(config.COL_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, icon_hidden, QtCore.Qt.ItemDataRole.DecorationRole); tracksHeader.model().setHeaderData(config.COL_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, "Hidden: Track is never shown.", QtCore.Qt.ItemDataRole.ToolTipRole)
-    icon_incremental = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowRight); tracksHeader.model().setHeaderData(config.COL_VIS_INCREMENTAL, QtCore.Qt.Orientation.Horizontal, icon_incremental, QtCore.Qt.ItemDataRole.DecorationRole); tracksHeader.model().setHeaderData(config.COL_VIS_INCREMENTAL, QtCore.Qt.Orientation.Horizontal, "Incremental: Track appears point-by-point as video advances.", QtCore.Qt.ItemDataRole.ToolTipRole)
-    icon_always = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogApplyButton); tracksHeader.model().setHeaderData(config.COL_VIS_ALWAYS, QtCore.Qt.Orientation.Horizontal, icon_always, QtCore.Qt.ItemDataRole.DecorationRole); tracksHeader.model().setHeaderData(config.COL_VIS_ALWAYS, QtCore.Qt.Orientation.Horizontal, "Always Visible: Entire track is shown on all frames.", QtCore.Qt.ItemDataRole.ToolTipRole)
-    tracksHeader.setSectionResizeMode(config.COL_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents); tracksHeader.setSectionResizeMode(config.COL_TRACK_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents); tracksHeader.setSectionResizeMode(config.COL_TRACK_POINTS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents); tracksHeader.setSectionResizeMode(config.COL_TRACK_START_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch); tracksHeader.setSectionResizeMode(config.COL_TRACK_END_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch); tracksHeader.setSectionResizeMode(config.COL_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents); tracksHeader.setSectionResizeMode(config.COL_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents); tracksHeader.setSectionResizeMode(config.COL_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    icon_hidden = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogCancelButton)
+    tracksHeader.model().setHeaderData(config.COL_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, icon_hidden, QtCore.Qt.ItemDataRole.DecorationRole)
+    tracksHeader.model().setHeaderData(config.COL_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, "Hidden: Track is never shown.", QtCore.Qt.ItemDataRole.ToolTipRole)
+    icon_incremental = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowRight)
+    tracksHeader.model().setHeaderData(config.COL_VIS_INCREMENTAL, QtCore.Qt.Orientation.Horizontal, icon_incremental, QtCore.Qt.ItemDataRole.DecorationRole)
+    tracksHeader.model().setHeaderData(config.COL_VIS_INCREMENTAL, QtCore.Qt.Orientation.Horizontal, "Incremental: Track appears point-by-point as video advances.", QtCore.Qt.ItemDataRole.ToolTipRole)
+    icon_always = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogApplyButton)
+    tracksHeader.model().setHeaderData(config.COL_VIS_ALWAYS, QtCore.Qt.Orientation.Horizontal, icon_always, QtCore.Qt.ItemDataRole.DecorationRole)
+    tracksHeader.model().setHeaderData(config.COL_VIS_ALWAYS, QtCore.Qt.Orientation.Horizontal, "Always Visible: Entire track is shown on all frames.", QtCore.Qt.ItemDataRole.ToolTipRole)
+    tracksHeader.setSectionResizeMode(config.COL_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    tracksHeader.setSectionResizeMode(config.COL_TRACK_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    tracksHeader.setSectionResizeMode(config.COL_TRACK_POINTS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    tracksHeader.setSectionResizeMode(config.COL_TRACK_START_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch)
+    tracksHeader.setSectionResizeMode(config.COL_TRACK_END_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch)
+    tracksHeader.setSectionResizeMode(config.COL_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    tracksHeader.setSectionResizeMode(config.COL_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    tracksHeader.setSectionResizeMode(config.COL_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     main_window.tracksTableWidget.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksTabLayout.addWidget(main_window.tracksTableWidget)
     main_window.dataTabsWidget.addTab(tracksTab, "Tracks")
@@ -137,70 +154,49 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     # --- NEW: Lines Tab (Phase 2) ---
     linesTab = QtWidgets.QWidget()
     linesTabLayout = QtWidgets.QVBoxLayout(linesTab)
-    linesTabLayout.setContentsMargins(2, 2, 2, 2) # Consistent margins
+    linesTabLayout.setContentsMargins(2, 2, 2, 2)
 
-    # Create linesTableWidget and set its properties
-    main_window.linesTableWidget = QtWidgets.QTableWidget() # Store as instance variable
+    # --- MODIFICATION: Add "New Line" button BEFORE the table ---
+    main_window.newLineButton = QtWidgets.QPushButton("New Measurement Line")
+    main_window.newLineButton.setObjectName("newLineButton")
+    main_window.newLineButton.setToolTip("Create a new measurement line")
+    main_window.newLineButton.setEnabled(False) 
+    linesTabLayout.addWidget(main_window.newLineButton) # Add button to the Lines tab layout FIRST
+    # --- END MODIFICATION ---
+
+    main_window.linesTableWidget = QtWidgets.QTableWidget()
     main_window.linesTableWidget.setObjectName("linesTableWidget")
     main_window.linesTableWidget.verticalHeader().setVisible(False)
-    
     main_window.linesTableWidget.setColumnCount(config.TOTAL_LINE_COLUMNS)
     
-    # Set header labels using constants
-    # Placeholder labels for columns not fully implemented in Phase 3
     header_labels: List[str] = [""] * config.TOTAL_LINE_COLUMNS
     header_labels[config.COL_LINE_ID] = "ID"
     header_labels[config.COL_LINE_FRAME] = "Frame"
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: # Check if constant is defined and table is wide enough
-        header_labels[config.COL_LINE_LENGTH] = "Length" # Placeholder
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE:
-        header_labels[config.COL_LINE_ANGLE] = "Angle"   # Placeholder
-    # Visibility header icons will be set by TrackDataViewController if implemented similarly to tracks.
-    # For now, they can remain empty or have simple text placeholders if preferred.
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: header_labels[config.COL_LINE_VIS_HIDDEN] = "" # Placeholder for icon
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: header_labels[config.COL_LINE_VIS_INCREMENTAL] = "" # Placeholder for icon
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: header_labels[config.COL_LINE_VIS_ALWAYS] = "" # Placeholder for icon
-        
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: header_labels[config.COL_LINE_LENGTH] = "Length"
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE: header_labels[config.COL_LINE_ANGLE] = "Angle"
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: header_labels[config.COL_LINE_VIS_HIDDEN] = ""
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: header_labels[config.COL_LINE_VIS_INCREMENTAL] = ""
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: header_labels[config.COL_LINE_VIS_ALWAYS] = ""
     main_window.linesTableWidget.setHorizontalHeaderLabels(header_labels)    
-    
     main_window.linesTableWidget.setAlternatingRowColors(True)
     main_window.linesTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     main_window.linesTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
     main_window.linesTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
 
     linesHeader: QtWidgets.QHeaderView = main_window.linesTableWidget.horizontalHeader()
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_DELETE:
-        linesHeader.setSectionResizeMode(config.COL_LINE_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ID:
-        linesHeader.setSectionResizeMode(config.COL_LINE_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_FRAME:
-        linesHeader.setSectionResizeMode(config.COL_LINE_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    # For future columns like Length and Angle, and visibility icons:
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH:
-        linesHeader.setSectionResizeMode(config.COL_LINE_LENGTH, QtWidgets.QHeaderView.ResizeMode.Stretch) # Or ResizeToContents
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE:
-        linesHeader.setSectionResizeMode(config.COL_LINE_ANGLE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # Or Stretch
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN:
-        linesHeader.setSectionResizeMode(config.COL_LINE_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL:
-        linesHeader.setSectionResizeMode(config.COL_LINE_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS:
-        linesHeader.setSectionResizeMode(config.COL_LINE_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_DELETE: linesHeader.setSectionResizeMode(config.COL_LINE_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ID: linesHeader.setSectionResizeMode(config.COL_LINE_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_FRAME: linesHeader.setSectionResizeMode(config.COL_LINE_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: linesHeader.setSectionResizeMode(config.COL_LINE_LENGTH, QtWidgets.QHeaderView.ResizeMode.Stretch)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE: linesHeader.setSectionResizeMode(config.COL_LINE_ANGLE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
 
-    # Resize modes will be set by the controller as columns are defined.
-    linesTabLayout.addWidget(main_window.linesTableWidget)
+    linesTabLayout.addWidget(main_window.linesTableWidget) # Add table AFTER the button
 
-    # Add "New Line" button within the Lines tab (as per plan [cite: 54])
-    # The plan suggests it's "likely in a new 'Lines' UI tab".
-    # Let's add it at the bottom of the Lines tab for now.
-    main_window.newLineButton = QtWidgets.QPushButton("New Measurement Line") # Store as instance variable
-    main_window.newLineButton.setObjectName("newLineButton")
-    main_window.newLineButton.setToolTip("Create a new measurement line")
-    main_window.newLineButton.setEnabled(False) # Initially disabled until video loaded
-    linesTabLayout.addWidget(main_window.newLineButton) # Add button to the Lines tab layout
-
-    main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines") # Add the new tab [cite: 52, 106]
-    logger.debug("Measurement Lines tab configured with table and New Line button.")
+    main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines") 
+    logger.debug("Measurement Lines tab configured with table and New Line button at the top.")
     # --- END NEW: Lines Tab ---
 
     # --- Points Tab (Remains the same) ---
