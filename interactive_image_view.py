@@ -16,11 +16,10 @@ logger = logging.getLogger(__name__)
 
 class InteractionMode(Enum):
     """Defines the possible interaction modes for the view."""
-    NORMAL = auto()       # Standard panning, track clicking, point adding
-    SET_ORIGIN = auto()   # Next click sets the coordinate system origin
-    # --- NEW INTERACTION MODES ---
-    SET_SCALE_LINE_START = auto() # Next click sets the first point of the scale line
-    SET_SCALE_LINE_END = auto()   # Next click sets the second point of the scale line
+    NORMAL = auto()
+    SET_ORIGIN = auto()
+    SET_SCALE_LINE_START = auto()
+    SET_SCALE_LINE_END = auto()
 
 class InteractiveImageView(QtWidgets.QGraphicsView):
     """
@@ -38,6 +37,14 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     # --- NEW SIGNALS FOR SCALE LINE DEFINITION ---
     scaleLinePoint1Clicked = QtCore.Signal(float, float) # scene_x, scene_y of the first point
     scaleLinePoint2Clicked = QtCore.Signal(float, float, float, float) # x1, y1, x2, y2 of the line
+
+    # --- Snap Angle Constants ---
+    # Angles in degrees, relative to positive x-axis, counter-clockwise positive
+    # We'll also handle their negative counterparts and 180-deg offsets implicitly
+    _BASE_SNAP_ANGLES_DEG: List[float] = [0.0, 30.0, 45.0, 60.0, 90.0, 
+                                          120.0, 135.0, 150.0, 180.0,
+                                          -30.0, -45.0, -60.0, -90.0,
+                                          -120.0, -135.0, -150.0] # More comprehensive set
 
     # --- Instance Variables ---
     _scene: QtWidgets.QGraphicsScene
@@ -92,6 +99,22 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         self._temp_scale_marker1: Optional[QtWidgets.QGraphicsEllipseItem] = None
         self._temp_scale_visuals_color: QtGui.QColor = QtGui.QColor(0, 255, 0, 180) # Green, slightly transparent
 
+        # --- Snap-to-Angle Instance Variables ---
+        self._snap_angles_rad: List[float] = [math.radians(angle) for angle in self._BASE_SNAP_ANGLES_DEG]
+        self._is_snapping_active: bool = False
+        self._snapped_angle_for_display_deg: float = 0.0
+        
+        # Determine snap line color (more opaque version of temp line color)
+        snap_r = self._temp_scale_visuals_color.red()
+        snap_g = self._temp_scale_visuals_color.green()
+        snap_b = self._temp_scale_visuals_color.blue()
+        self._snap_line_color: QtGui.QColor = QtGui.QColor(snap_r, snap_g, snap_b, 255) # Fully opaque
+        
+        self._snap_text_color: QtGui.QColor = QtGui.QColor(QtCore.Qt.GlobalColor.white)
+        self._snap_text_font: QtGui.QFont = QtGui.QFont()
+        self._snap_text_font.setPointSize(8) # Small font for the angle display
+        self._snap_text_font.setBold(True)
+
         self.setTransformationAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QtWidgets.QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -100,6 +123,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         self.setRenderHints(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         self.setMouseTracking(True)
+        
         logger.debug("View appearance and behavior configured.")
 
         self._create_overlay_buttons()
@@ -596,34 +620,172 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         super().drawForeground(painter, rect)
 
         if self._current_mode == InteractionMode.SET_SCALE_LINE_END and \
-           self._scale_line_point1_scene is not None:
+           self._scale_line_point1_scene is not None and \
+           self._current_mouse_scene_pos is not None: # Check if target for line end is set
 
             p1_scene = self._scale_line_point1_scene
-            p1_viewport_mapped = self.mapFromScene(p1_scene)
-            current_mouse_viewport_pos = self.viewport().mapFromGlobal(QtGui.QCursor.pos())
+            # _current_mouse_scene_pos is already the (potentially snapped) P2 in scene coords
+            p2_scene = self._current_mouse_scene_pos 
 
-            if self.viewport().rect().contains(current_mouse_viewport_pos):
-                painter.save()
-                painter.setTransform(QtGui.QTransform()) # Ensure identity transform
+            # Map scene points to viewport coordinates for drawing
+            p1_viewport = self.mapFromScene(p1_scene)
+            p2_viewport = self.mapFromScene(p2_scene)
 
-                pen = QtGui.QPen(self._temp_scale_visuals_color, 1.5)
+            painter.save()
+            painter.setTransform(QtGui.QTransform()) # Draw in viewport coordinates
+
+            pen = QtGui.QPen()
+            pen.setWidth(1) # Use a thin line for temporary drawing
+
+            if self._is_snapping_active:
+                pen.setColor(self._snap_line_color)
+                pen.setStyle(QtCore.Qt.PenStyle.SolidLine)
+                painter.setPen(pen)
+                painter.drawLine(p1_viewport, p2_viewport)
+
+                # Draw Angle Text
+                painter.setFont(self._snap_text_font)
+                painter.setPen(self._snap_text_color)
+                angle_string = f"{self._snapped_angle_for_display_deg:.0f}°"
+                
+                # Position text near the second point (p2_viewport)
+                text_rect = painter.fontMetrics().boundingRect(angle_string)
+                text_offset_x = 10 # Offset from p2
+                text_offset_y = -text_rect.height() / 2 # Center vertically
+                
+                # Adjust offset based on which side of P1 P2 is
+                if p2_viewport.x() < p1_viewport.x():
+                    text_offset_x = -text_rect.width() - 10
+                
+                text_pos = QtCore.QPointF(p2_viewport.x() + text_offset_x, 
+                                         p2_viewport.y() + text_offset_y + text_rect.height()) # Baseline adjustment
+
+                # Simple background for readability
+                bg_rect = text_rect.translated(text_pos.x(), text_pos.y() - text_rect.height() + painter.fontMetrics().ascent() - 2) # Approximate
+                bg_rect.adjust(-2, -1, 2, 1)
+                painter.setBrush(QtGui.QColor(0,0,0,120))
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(bg_rect, 2, 2)
+                
+                painter.setPen(self._snap_text_color) # Ensure text color is reset after no-pen for bg
+                painter.drawText(text_pos, angle_string)
+
+            else: # Not snapping
+                pen.setColor(self._temp_scale_visuals_color)
                 pen.setStyle(QtCore.Qt.PenStyle.DashLine)
                 painter.setPen(pen)
-                painter.drawLine(p1_viewport_mapped, current_mouse_viewport_pos)
-                
-                painter.restore()
+                painter.drawLine(p1_viewport, p2_viewport)
+            
+            painter.restore()
+
 
     def clearTemporaryScaleVisuals(self) -> None:
-        logger.debug("Clearing temporary scale visuals.")
+        logger.debug("Clearing temporary scale visuals and snap state.")
         if self._temp_scale_marker1 and self._temp_scale_marker1.scene() == self._scene:
             self._scene.removeItem(self._temp_scale_marker1)
             self._temp_scale_marker1 = None
     
         self._scale_line_point1_scene = None
         self._current_mouse_scene_pos = None
+        
+        self._is_snapping_active = False
+        self._snapped_angle_for_display_deg = 0.0
     
-        self.viewport().update()
-        logger.debug("Temporary scale visuals cleared and state reset.")
+        self.viewport().update() # Ensure any lingering snap visuals are cleared
+        logger.debug("Temporary scale visuals and snap state cleared.")
+
+
+    def _get_closest_snap_angle(self, current_angle_rad: float) -> float:
+        """
+        Finds the closest predefined snap angle to the given current_angle_rad.
+        Angles are expected in radians, in the range (-pi, pi].
+        """
+        if not self._snap_angles_rad:
+            return current_angle_rad # No snap angles defined, return original
+
+        min_diff = float('inf')
+        closest_angle = current_angle_rad
+
+        for snap_angle_rad in self._snap_angles_rad:
+            # Calculate difference, handling wrap-around pi
+            diff = abs(current_angle_rad - snap_angle_rad)
+            # diff can be > pi if angles are e.g. -170deg and +170deg.
+            # The shorter way around is 2*pi - diff
+            if diff > math.pi:
+                diff = 2 * math.pi - diff
+            
+            if diff < min_diff:
+                min_diff = diff
+                closest_angle = snap_angle_rad
+        
+        return closest_angle
+
+
+    def _calculate_orthogonally_constrained_snap_point(self, 
+                                                       p1: QtCore.QPointF, 
+                                                       cursor_pos: QtCore.QPointF, 
+                                                       snapped_angle_rad: float) -> QtCore.QPointF:
+        """
+        Calculates the P2 for a line from P1 at snapped_angle_rad, constrained
+        by the orthogonal boundaries of the rectangle formed by P1 and cursor_pos.
+        """
+        x1, y1 = p1.x(), p1.y()
+        cx, cy = cursor_pos.x(), cursor_pos.y()
+
+        # Handle horizontal and vertical snaps directly to avoid division by zero
+        # and for perfect alignment. Compare with a small epsilon.
+        epsilon = 1e-9
+        if abs(snapped_angle_rad - 0.0) < epsilon or abs(snapped_angle_rad - math.pi) < epsilon or abs(snapped_angle_rad + math.pi) < epsilon : # Horizontal
+            return QtCore.QPointF(cx, y1)
+        if abs(snapped_angle_rad - math.pi/2) < epsilon or abs(snapped_angle_rad + math.pi/2) < epsilon: # Vertical
+            return QtCore.QPointF(x1, cy)
+
+        # For angled snaps
+        cos_theta = math.cos(snapped_angle_rad)
+        sin_theta = math.sin(snapped_angle_rad)
+
+        # Distances from p1 to the cursor-defined boundaries along the ray
+        t_to_vertical_boundary = float('inf')
+        if abs(cos_theta) > epsilon: # Avoid division by zero
+            t_candidate_v = (cx - x1) / cos_theta
+            # Only consider if ray is heading towards or at the boundary
+            if t_candidate_v >= -epsilon: # Allow t_candidate_v to be zero
+                 t_to_vertical_boundary = t_candidate_v
+
+        t_to_horizontal_boundary = float('inf')
+        if abs(sin_theta) > epsilon: # Avoid division by zero
+            t_candidate_h = (cy - y1) / sin_theta
+            # Only consider if ray is heading towards or at the boundary
+            if t_candidate_h >= -epsilon: # Allow t_candidate_h to be zero
+                 t_to_horizontal_boundary = t_candidate_h
+        
+        # Choose the shorter positive distance to a boundary
+        final_t = 0.0 # Default if cursor is at P1 or no valid boundary hit
+        
+        valid_ts = []
+        if t_to_vertical_boundary != float('inf'):
+            valid_ts.append(t_to_vertical_boundary)
+        if t_to_horizontal_boundary != float('inf'):
+            valid_ts.append(t_to_horizontal_boundary)
+
+        if not valid_ts: # Should not happen if not horizontal/vertical, unless cursor is at p1
+             if math.isclose(x1, cx) and math.isclose(y1, cy):
+                final_t = 0.0
+             else: # Fallback, should indicate an issue if reached for non-degenerate cases
+                logger.warning(f"Snap calc: No valid t for angle {math.degrees(snapped_angle_rad)}, P1({x1},{y1}), C({cx},{cy})")
+                return cursor_pos # Fallback to cursor if calculation fails catastrophically
+        else:
+            # We need the minimum *absolute* t that is positive or zero,
+            # as t represents distance along the ray.
+            # The earlier checks (t_candidate >= -epsilon) should ensure we only have non-negative candidates.
+            final_t = min(t for t in valid_ts if t >= -epsilon)
+
+
+        snapped_p2_x = x1 + final_t * cos_theta
+        snapped_p2_y = y1 + final_t * sin_theta
+        
+        return QtCore.QPointF(snapped_p2_x, snapped_p2_y)
+
 
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         if not self._pixmap_item:
@@ -780,21 +942,27 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         viewport_pos = event.pos()
         scene_x, scene_y = -1.0, -1.0
-        current_scene_pos_for_move: Optional[QtCore.QPointF] = None
+        current_scene_pos_for_move: Optional[QtCore.QPointF] = None # Raw cursor scene pos
 
         if self._pixmap_item:
             current_scene_pos_for_move = self.mapToScene(viewport_pos)
             if self._pixmap_item.sceneBoundingRect().contains(current_scene_pos_for_move):
                 scene_x, scene_y = current_scene_pos_for_move.x(), current_scene_pos_for_move.y()
             else:
-                current_scene_pos_for_move = None
+                # Cursor is off the image, but still in the viewport
+                # Keep current_scene_pos_for_move as is, for line drawing extending off image
+                pass # No, if off image, scene_x,y are -1, so this var should be None too
+                current_scene_pos_for_move = None # Corrected
 
-        self.sceneMouseMoved.emit(scene_x, scene_y)
 
+        self.sceneMouseMoved.emit(scene_x, scene_y) # Emits raw cursor based on image bounds
+
+        # --- Pan Logic (existing) ---
         if self._is_potential_pan and self._left_button_press_pos is not None and \
            (event.buttons() & QtCore.Qt.MouseButton.LeftButton):
             distance_moved = (viewport_pos - self._left_button_press_pos).manhattanLength()
             if distance_moved >= config.DRAG_THRESHOLD:
+                # ... (existing pan activation logic) ...
                 if self._current_mode in [InteractionMode.NORMAL, InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END, InteractionMode.SET_ORIGIN]:
                     logger.debug(f"Drag threshold ({config.DRAG_THRESHOLD}px) exceeded. Starting pan in mode {self._current_mode.name}.")
                     self._is_panning = True
@@ -803,13 +971,15 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
                 if self._is_panning:
                     self._last_pan_point = viewport_pos
                     self.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor)
+                    # If starting a pan during line definition, clear temp line end for redraw
                     if self._current_mode == InteractionMode.SET_SCALE_LINE_END:
-                        self._current_mouse_scene_pos = None
+                        self._current_mouse_scene_pos = None 
                         self.viewport().update()
                     event.accept()
                     return
 
         if self._is_panning and (event.buttons() & QtCore.Qt.MouseButton.LeftButton):
+            # ... (existing panning update logic) ...
             if self._last_pan_point is not None:
                 delta = viewport_pos - self._last_pan_point
                 self._last_pan_point = viewport_pos
@@ -821,86 +991,140 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             event.accept()
             return
         
+        # --- Snap Logic & Temporary Line Update ---
         if not self._is_panning and \
            self._current_mode == InteractionMode.SET_SCALE_LINE_END and \
            self._scale_line_point1_scene is not None:
             
-            if current_scene_pos_for_move is not None:
-                if self._current_mouse_scene_pos != current_scene_pos_for_move:
-                    self._current_mouse_scene_pos = current_scene_pos_for_move
-                    self.viewport().update()
-            else:
-                if self._current_mouse_scene_pos is not None:
-                    self._current_mouse_scene_pos = None
-                    self.viewport().update()
+            # current_scene_pos_for_move is the raw cursor position in scene coordinates
+            # (or None if cursor left pixmap, but mouse events are still on viewport)
+            # For line drawing, we need a target point even if off-image. Use mapToScene directly.
+            raw_cursor_scene_pos = self.mapToScene(viewport_pos)
 
-        super().mouseMoveEvent(event)
+            p1 = self._scale_line_point1_scene
+            p2_target_for_line: QtCore.QPointF
+
+            if QtWidgets.QApplication.keyboardModifiers() == QtCore.Qt.KeyboardModifier.ShiftModifier:
+                self._is_snapping_active = True
+                # Calculate angle from p1 to raw cursor position
+                dx = raw_cursor_scene_pos.x() - p1.x()
+                dy = raw_cursor_scene_pos.y() - p1.y()
+                
+                if math.isclose(dx, 0) and math.isclose(dy, 0): # Cursor at p1
+                    snapped_angle_rad = 0.0 # Default or last snap
+                    p2_target_for_line = p1 
+                else:
+                    current_angle_rad = math.atan2(dy, dx)
+                    snapped_angle_rad = self._get_closest_snap_angle(current_angle_rad)
+                    p2_target_for_line = self._calculate_orthogonally_constrained_snap_point(
+                        p1, raw_cursor_scene_pos, snapped_angle_rad
+                    )
+                self._snapped_angle_for_display_deg = math.degrees(snapped_angle_rad)
+
+            else: # Shift not pressed
+                self._is_snapping_active = False
+                p2_target_for_line = raw_cursor_scene_pos
+            
+            # Update the position for drawForeground
+            if self._current_mouse_scene_pos != p2_target_for_line:
+                self._current_mouse_scene_pos = p2_target_for_line
+                self.viewport().update() # Trigger drawForeground
+            
+        super().mouseMoveEvent(event) # Call base for other event processing
+
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         button: QtCore.Qt.MouseButton = event.button()
         logger.debug(f"Mouse release: Button={button}, Mode={self._current_mode.name}, Panning={self._is_panning}, PotentialPan={self._is_potential_pan}")
 
         if button == QtCore.Qt.MouseButton.LeftButton:
+            # ... (existing was_panning, is_click_intent logic) ...
             was_panning = self._is_panning
             is_click_intent = self._is_potential_pan
 
             self._is_panning = False
-            self._is_potential_pan = False
+            self._is_potential_pan = False # Reset this flag
 
             if was_panning:
                 logger.debug("Panning finished.")
             elif is_click_intent and self._pixmap_item and self._left_button_press_pos is not None:
-                click_scene_pos: QtCore.QPointF = self.mapToScene(self._left_button_press_pos)
-                logger.debug(f"Click resolved at scene pos: ({click_scene_pos.x():.2f}, {click_scene_pos.y():.2f}) in mode {self._current_mode.name}")
+                # Use the current _current_mouse_scene_pos for P2 if in line drawing mode,
+                # otherwise calculate click_scene_pos from _left_button_press_pos.
+                # This ensures that if snapping was active, the snapped point is used.
+                
+                final_click_scene_pos: QtCore.QPointF
+                if self._current_mode == InteractionMode.SET_SCALE_LINE_END and \
+                   self._scale_line_point1_scene is not None and \
+                   self._current_mouse_scene_pos is not None:
+                    final_click_scene_pos = self._current_mouse_scene_pos # Use the (snapped) point
+                else:
+                    # For other modes or SET_SCALE_LINE_START, the initial press position is the click
+                    final_click_scene_pos = self.mapToScene(self._left_button_press_pos)
 
-                if self._pixmap_item.sceneBoundingRect().contains(click_scene_pos):
+                logger.debug(f"Click resolved at scene pos: ({final_click_scene_pos.x():.2f}, {final_click_scene_pos.y():.2f}) in mode {self._current_mode.name}")
+
+                if self._pixmap_item.sceneBoundingRect().contains(final_click_scene_pos) or \
+                   self._current_mode == InteractionMode.SET_SCALE_LINE_END: # Allow line end to be off-image
+                    
                     if self._current_mode == InteractionMode.SET_SCALE_LINE_START:
-                        self.clearTemporaryScaleVisuals()
-                        self._scale_line_point1_scene = click_scene_pos
+                        self.clearTemporaryScaleVisuals() # Clears snap state too
+                        self._scale_line_point1_scene = final_click_scene_pos
                         self._temp_scale_marker1 = self._draw_temporary_scale_marker(self._scale_line_point1_scene)
-                        self._current_mouse_scene_pos = click_scene_pos
-                        self.viewport().update()
-                        logger.info(f"Scale line point 1 set at scene: ({click_scene_pos.x():.2f}, {click_scene_pos.y():.2f})")
-                        self.scaleLinePoint1Clicked.emit(click_scene_pos.x(), click_scene_pos.y())
+                        # self._current_mouse_scene_pos will be updated on next move
+                        self.viewport().update() 
+                        logger.info(f"Scale line point 1 set at scene: ({final_click_scene_pos.x():.2f}, {final_click_scene_pos.y():.2f})")
+                        self.scaleLinePoint1Clicked.emit(final_click_scene_pos.x(), final_click_scene_pos.y())
                         event.accept()
                     
                     elif self._current_mode == InteractionMode.SET_SCALE_LINE_END:
                         if self._scale_line_point1_scene is not None:
-                            final_p2_scene_pos = click_scene_pos 
-                            logger.info(f"Scale line point 2 set at scene: ({final_p2_scene_pos.x():.2f}, {final_p2_scene_pos.y():.2f})")
+                            # final_click_scene_pos is already the (potentially snapped) P2
+                            logger.info(f"Scale line point 2 set at scene: ({final_click_scene_pos.x():.2f}, {final_click_scene_pos.y():.2f})")
                             self.scaleLinePoint2Clicked.emit(
                                 self._scale_line_point1_scene.x(), self._scale_line_point1_scene.y(),
-                                final_p2_scene_pos.x(), final_p2_scene_pos.y()
+                                final_click_scene_pos.x(), final_click_scene_pos.y()
                             )
-                            self._current_mouse_scene_pos = None
-                            self.viewport().update()
+                            # Don't clear temp visuals here, MainWindow/ScalePanelController will change mode
+                            # which will then call clearTemporaryScaleVisuals.
+                            # Resetting snap state happens on mode change or clearTemporaryScaleVisuals.
                         else:
                             logger.warning("SET_SCALE_LINE_END click but _scale_line_point1_scene is None.")
                         event.accept()
 
                     elif self._current_mode == InteractionMode.SET_ORIGIN:
+                        # ... (existing SET_ORIGIN logic using final_click_scene_pos) ...
                         logger.info(f"Click in SET_ORIGIN mode. Emitting originSetRequest.")
-                        self.originSetRequest.emit(click_scene_pos.x(), click_scene_pos.y())
+                        self.originSetRequest.emit(final_click_scene_pos.x(), final_click_scene_pos.y())
                         event.accept()
 
                     elif self._current_mode == InteractionMode.NORMAL:
+                        # ... (existing NORMAL click logic using final_click_scene_pos) ...
                         modifiers = event.modifiers()
                         if (modifiers == QtCore.Qt.KeyboardModifier.ControlModifier or
                             modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier):
                             logger.info(f"Modified click with modifiers: {modifiers}.")
-                            self.modifiedClick.emit(click_scene_pos.x(), click_scene_pos.y(), modifiers)
+                            self.modifiedClick.emit(final_click_scene_pos.x(), final_click_scene_pos.y(), modifiers)
                         else:
                             logger.info(f"Standard point click.")
-                            self.pointClicked.emit(click_scene_pos.x(), click_scene_pos.y())
+                            self.pointClicked.emit(final_click_scene_pos.x(), final_click_scene_pos.y())
                         event.accept()
                     else:
                         super().mouseReleaseEvent(event)
-                else:
+                else: # Click was outside pixmap bounds (and not SET_SCALE_LINE_END)
                     logger.debug("Click was outside pixmap bounds. Ignoring for point/line definition.")
+                    # Reset snap state if it was active from mouse move
+                    if self._is_snapping_active:
+                        self._is_snapping_active = False
+                        self.viewport().update() # Clear snap visuals if mouse exited then released
                     super().mouseReleaseEvent(event)
-            else:
+            else: # Not a click intent (was a pan or click outside)
+                # Reset snap state if it was active from mouse move
+                if self._is_snapping_active:
+                    self._is_snapping_active = False
+                    self.viewport().update()
                 super().mouseReleaseEvent(event)
             
+            # Reset cursor and pan state vars
             if self._current_mode == InteractionMode.NORMAL:
                 self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
             elif self._current_mode in [InteractionMode.SET_ORIGIN, InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
@@ -911,5 +1135,5 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
             self._left_button_press_pos = None
             self._last_pan_point = None
             
-        else:
+        else: # Not a left button release
             super().mouseReleaseEvent(event)
