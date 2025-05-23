@@ -20,14 +20,14 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 if TYPE_CHECKING:
     from main_window import MainWindow
     # MODIFIED: Import ElementType
-    from track_manager import TrackManager, AllElementsForSaving, ElementData, ElementType
+    from element_manager import ElementManager, AllElementsForSaving, ElementData, ElementType
     from scale_manager import ScaleManager
 
 # MODIFIED: Import ElementType here as well for module-level access if needed elsewhere,
 # or specifically where it's used (as done in save_tracks_dialog).
 # For robustness, and since it's used in the function signature type hint if TYPE_CHECKING is false,
 # it's good practice to have it available at the module level.
-from track_manager import ElementType
+from element_manager import ElementType
 
 
 # Type alias for the raw point data structure read from CSV:
@@ -265,14 +265,14 @@ def read_track_csv(filepath: str) -> Tuple[Dict[str, str], List[RawParsedData]]:
 
 # --- UI Interaction Functions ---
 
-def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
+def save_tracks_dialog(main_window: 'MainWindow', element_manager: 'ElementManager',
                        coord_transformer: CoordinateTransformer,
                        scale_manager: 'ScaleManager') -> None:
     # This is where the ElementType import is needed
-    from track_manager import ElementType # Import locally for this function
+    from element_manager import ElementType # Import locally for this function
 
-    if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager or \
-       not any(el['type'] == ElementType.TRACK for el in track_manager.elements):
+    if not main_window.video_loaded or not element_manager or not coord_transformer or not scale_manager or \
+       not any(el['type'] == ElementType.TRACK for el in element_manager.elements):
         logger.warning("Save Tracks action ignored: Video not loaded, components unavailable, or no track-type elements exist.")
         status_bar = main_window.statusBar()
         if status_bar:
@@ -305,7 +305,7 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             config.META_FPS: main_window.fps,
             config.META_DURATION: main_window.total_duration_ms,
         }
-        all_track_type_data_tl_px = track_manager.get_all_track_type_data_for_saving()
+        all_track_type_data_tl_px = element_manager.get_all_track_type_data_for_saving()
         write_track_csv(save_path, video_metadata, all_track_type_data_tl_px,
                         coord_transformer, scale_manager, main_window)
     except Exception as e:
@@ -317,10 +317,10 @@ def save_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             status_bar.showMessage("Error saving tracks. See log.", 5000)
 
 
-def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
+def load_tracks_dialog(main_window: 'MainWindow', element_manager: 'ElementManager',
                        coord_transformer: CoordinateTransformer,
                        scale_manager: 'ScaleManager') -> None:
-    if not main_window.video_loaded or not track_manager or not coord_transformer or not scale_manager:
+    if not main_window.video_loaded or not element_manager or not coord_transformer or not scale_manager:
         logger.warning("Load Tracks action ignored: Video not loaded or components unavailable.")
         status_bar = main_window.statusBar()
         if status_bar:
@@ -328,7 +328,7 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
         return
     logger.info("Load Tracks action triggered.")
 
-    if len(track_manager.elements) > 0:
+    if len(element_manager.elements) > 0:
         logger.debug("Existing elements found, confirming overwrite with user.")
         reply = QtWidgets.QMessageBox.question(
             main_window, "Confirm Load",
@@ -492,13 +492,13 @@ def load_tracks_dialog(main_window: 'MainWindow', track_manager: 'TrackManager',
             except Exception as e: warnings_list.append(f"Skipping point (T{tid},F{fid+1}) due to transformation error: {e}"); points_transform_failed+=1; logger.error(f"Point transform error for (T{tid},F{fid+1}): {e}", exc_info=False)
         if points_transform_failed > 0: QtWidgets.QMessageBox.warning(main_window, "Transform Warning", f"{points_transform_failed} point(s) skipped due to transformation error. See log.")
 
-        success, load_warns = track_manager.load_tracks_from_data(
+        success, load_warns = element_manager.load_tracks_from_data(
             transformed_to_internal_tl_px_data,
             main_window.frame_width, main_window.frame_height,
             main_window.total_frames, main_window.fps
         )
         warnings_list.extend(load_warns)
-        if not success: raise ValueError(f"TrackManager load failed: {'; '.join(load_warns) or 'Unknown critical error'}")
+        if not success: raise ValueError(f"ElementManager load failed: {'; '.join(load_warns) or 'Unknown critical error'}")
 
         scale_manager.set_scale(loaded_scale_m_per_px, called_from_line_definition=bool(loaded_scale_line_coords))
         scale_manager.set_display_in_meters(True if loaded_data_units == "m" and loaded_scale_m_per_px else False)

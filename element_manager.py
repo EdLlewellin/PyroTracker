@@ -1,4 +1,4 @@
-# track_manager.py
+# element_manager.py
 """
 Manages element data (tracks, and eventually other types like lines),
 including points, visibility states, and the active element selection.
@@ -51,13 +51,13 @@ class ElementType(Enum):
     TRACK = auto()
     MEASUREMENT_LINE = auto()
 
-class TrackManager(QtCore.QObject):
+class ElementManager(QtCore.QObject):
     """
     Manages data for different types of elements (tracks, lines) and calculates visual representation.
     """
     # Signals (consider renaming for generality in a later phase if needed)
-    trackListChanged = QtCore.Signal() # Emitted when the list of elements changes (add/delete)
-    activeTrackDataChanged = QtCore.Signal() # Emitted when active element's data or selection changes
+    elementListChanged = QtCore.Signal() # Emitted when the list of elements changes (add/delete)
+    activeElementDataChanged = QtCore.Signal() # Emitted when active element's data or selection changes
     visualsNeedUpdate = QtCore.Signal()
     undoStateChanged = QtCore.Signal(bool)
 
@@ -76,13 +76,13 @@ class TrackManager(QtCore.QObject):
 
     def __init__(self, parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
-        logger.info("Initializing TrackManager...")
+        logger.info("Initializing ElementManager...")
         self.elements = []
         self.active_element_index = -1
         self._next_element_id = 1
         self._clear_last_action()
         self._reset_defining_state() # Initialize defining state
-        logger.info("TrackManager initialized.")
+        logger.info("ElementManager initialized.")
 
     def _reset_defining_state(self) -> None:
         """Resets the internal state variables for defining a new element."""
@@ -97,15 +97,15 @@ class TrackManager(QtCore.QObject):
         self.undoStateChanged.emit(False)
 
     def reset(self) -> None:
-        logger.info("Resetting TrackManager state...")
+        logger.info("Resetting ElementManager state...")
         self.elements = []
         self.active_element_index = -1
         self._next_element_id = 1
         self._clear_last_action()
         self._reset_defining_state() # Also reset defining state on full reset
-        logger.info("TrackManager reset complete.")
-        self.trackListChanged.emit()
-        self.activeTrackDataChanged.emit() # Ensure points table clears
+        logger.info("ElementManager reset complete.")
+        self.elementListChanged.emit()
+        self.activeElementDataChanged.emit() # Ensure points table clears
 
     def _get_new_element_id(self) -> int:
         """Generates a new unique ID for an element."""
@@ -132,7 +132,7 @@ class TrackManager(QtCore.QObject):
 
         logger.info(f"Created new track element ID {new_id} (index {new_element_index}).")
         self._clear_last_action() # Creating a new track clears any previous point undo
-        self.trackListChanged.emit()
+        self.elementListChanged.emit()
         return new_id
 
     def create_new_line(self) -> int:
@@ -156,7 +156,7 @@ class TrackManager(QtCore.QObject):
 
         logger.info(f"Created new measurement line element ID {new_id} (index {new_element_index}). Awaiting first point.")
         self._clear_last_action()
-        self.trackListChanged.emit() 
+        self.elementListChanged.emit() 
         return new_id
 
     def cancel_active_line_definition(self) -> None:
@@ -177,8 +177,8 @@ class TrackManager(QtCore.QObject):
                 self._reset_defining_state()
                 self.active_element_index = -1 
                 
-                self.trackListChanged.emit()
-                self.activeTrackDataChanged.emit()
+                self.elementListChanged.emit()
+                self.activeElementDataChanged.emit()
                 self.visualsNeedUpdate.emit() 
                 self._clear_last_action() 
                 return
@@ -187,9 +187,9 @@ class TrackManager(QtCore.QObject):
         if self._is_defining_element_type is not None: 
             self._reset_defining_state()
             self.visualsNeedUpdate.emit() 
-            logger.debug("Reset defining state in TrackManager due to cancellation request.")
+            logger.debug("Reset defining state in ElementManager due to cancellation request.")
         else:
-            logger.debug("No active line definition process to cancel in TrackManager.")
+            logger.debug("No active line definition process to cancel in ElementManager.")
 
     def delete_element_by_index(self, element_index_to_delete: int) -> bool:
         if not (0 <= element_index_to_delete < len(self.elements)):
@@ -220,9 +220,9 @@ class TrackManager(QtCore.QObject):
             active_element_changed = True
         
         self._clear_last_action()
-        self.trackListChanged.emit() 
+        self.elementListChanged.emit() 
         if active_element_changed:
-            self.activeTrackDataChanged.emit() 
+            self.activeElementDataChanged.emit() 
         if was_visible:
             self.visualsNeedUpdate.emit()
         logger.info(f"Element ID {element_id_deleted} deleted successfully.")
@@ -246,7 +246,7 @@ class TrackManager(QtCore.QObject):
                 if not self.elements[old_active_element_index]['data']:
                     logger.debug(f"Removing empty element ID {self.elements[old_active_element_index]['id']} that was being defined.")
                     del self.elements[old_active_element_index]
-                    self.trackListChanged.emit()
+                    self.elementListChanged.emit()
                 self._reset_defining_state()
 
             self.active_element_index = new_active_idx
@@ -254,7 +254,7 @@ class TrackManager(QtCore.QObject):
             new_vis_mode = self.get_element_visibility_mode(self.active_element_index)
 
             self._clear_last_action()
-            self.activeTrackDataChanged.emit() 
+            self.activeElementDataChanged.emit() 
 
             if (old_active_element_index != -1 and old_active_element_index < len(self.elements) and \
                 self.elements[old_active_element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN) or \
@@ -273,7 +273,7 @@ class TrackManager(QtCore.QObject):
             logger.debug(f"Visibility for element ID {element['id']} (index {element_index}) set to {mode.name}")
             if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
                 self.visualsNeedUpdate.emit()
-            self.trackListChanged.emit() 
+            self.elementListChanged.emit() 
 
     def get_element_visibility_mode(self, element_index: int) -> TrackVisibilityMode:
         if 0 <= element_index < len(self.elements):
@@ -293,7 +293,7 @@ class TrackManager(QtCore.QObject):
                 changed_any = True
                 if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
                     needs_visual_update_overall = True
-        if changed_any: self.trackListChanged.emit()
+        if changed_any: self.elementListChanged.emit()
         if needs_visual_update_overall: self.visualsNeedUpdate.emit()
 
     def get_active_element_id(self) -> int:
@@ -336,7 +336,7 @@ class TrackManager(QtCore.QObject):
             else: self._last_action_type = UndoActionType.POINT_ADDED
             if existing_point_idx_in_list != -1: element_data[existing_point_idx_in_list] = new_point_data
             else: element_data.append(new_point_data); element_data.sort(key=lambda p: p[0])
-            self.undoStateChanged.emit(True); self.activeTrackDataChanged.emit(); self.trackListChanged.emit()
+            self.undoStateChanged.emit(True); self.activeElementDataChanged.emit(); self.elementListChanged.emit()
             if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         elif element_type == ElementType.MEASUREMENT_LINE and self._is_defining_element_type == ElementType.MEASUREMENT_LINE and active_element['id'] == self.get_active_element_id():
@@ -349,8 +349,8 @@ class TrackManager(QtCore.QObject):
                     element_data.clear(); element_data.append(self._defining_element_first_point_data); element_data.append(new_point_data)
                     logger.info(f"Measurement Line (ID: {element_id}): Second point set at frame {frame_index}. Line defined.")
                     defining_element_id_before_reset = self.get_active_element_id(); self._reset_defining_state(); self._clear_last_action()
-                    if self.active_element_index != -1 and 0 <= self.active_element_index < len(self.elements) and self.elements[self.active_element_index]['id'] == defining_element_id_before_reset : self.activeTrackDataChanged.emit()
-                    self.trackListChanged.emit(); 
+                    if self.active_element_index != -1 and 0 <= self.active_element_index < len(self.elements) and self.elements[self.active_element_index]['id'] == defining_element_id_before_reset : self.activeElementDataChanged.emit()
+                    self.elementListChanged.emit(); 
                     if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
                     return True
                 else:
@@ -372,8 +372,8 @@ class TrackManager(QtCore.QObject):
             self._last_action_type = UndoActionType.POINT_DELETED; self._last_action_details = {"element_index": element_index_for_point_delete, "frame_index": frame_index, "deleted_point_data": deleted_point_data_tuple}
             del track_data_list[point_to_remove_idx]; logger.info(f"Deleted point from element ID {target_element['id']} at frame {frame_index}")
             self.undoStateChanged.emit(True)
-            if element_index_for_point_delete == self.active_element_index: self.activeTrackDataChanged.emit()
-            self.trackListChanged.emit(); 
+            if element_index_for_point_delete == self.active_element_index: self.activeElementDataChanged.emit()
+            self.elementListChanged.emit(); 
             if target_element['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         else: self._clear_last_action(); return False
@@ -408,8 +408,8 @@ class TrackManager(QtCore.QObject):
             if p_data[0] == frame_index: point_idx = i; break
         if point_idx != -1:
             del track_data_list[point_idx]
-            if element_index == self.active_element_index: self.activeTrackDataChanged.emit()
-            self.trackListChanged.emit()
+            if element_index == self.active_element_index: self.activeElementDataChanged.emit()
+            self.elementListChanged.emit()
             if self.elements[element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         return False
@@ -420,8 +420,8 @@ class TrackManager(QtCore.QObject):
             if p_data[0] == frame_index: point_idx = i; break
         if point_idx != -1:
             track_data_list[point_idx] = point_to_restore
-            if element_index == self.active_element_index: self.activeTrackDataChanged.emit()
-            self.trackListChanged.emit()
+            if element_index == self.active_element_index: self.activeElementDataChanged.emit()
+            self.elementListChanged.emit()
             if self.elements[element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         logger.error(f"_restore_point_for_undo: Point not found at frame {frame_index} in element ID {self.elements[element_index]['id']}")
@@ -434,8 +434,8 @@ class TrackManager(QtCore.QObject):
                 logger.warning(f"_add_point_for_undo: Point for frame {point_data_to_add[0]} already exists in element ID {self.elements[element_index]['id']}. Overwriting for undo.")
                 track_data_list[i] = point_data_to_add; track_data_list.sort(key=lambda p: p[0]); break
         else: track_data_list.append(point_data_to_add); track_data_list.sort(key=lambda p: p[0])
-        if element_index == self.active_element_index: self.activeTrackDataChanged.emit()
-        self.trackListChanged.emit()
+        if element_index == self.active_element_index: self.activeElementDataChanged.emit()
+        self.elementListChanged.emit()
         if self.elements[element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
         return True
 
@@ -448,8 +448,11 @@ class TrackManager(QtCore.QObject):
             for p_data in track_data:
                 f_idx, _, px, py = p_data
                 is_vis = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
-                if is_vis: dist_sq = (click_x - px)**2 + (click_y - py)**2
-                if is_vis and dist_sq < min_dist_sq: min_dist_sq = dist_sq; closest_element_index = i
+                if is_vis:
+                    dist_sq = (click_x - px)**2 + (click_y - py)**2
+                    if dist_sq < min_dist_sq:
+                        min_dist_sq = dist_sq
+                        closest_element_index = i
         return closest_element_index
 
     def get_visual_elements(self, current_frame_index: int) -> List[VisualElement]:
@@ -577,5 +580,5 @@ class TrackManager(QtCore.QObject):
             if element_id_from_file >= self._next_element_id: self._next_element_id = element_id_from_file + 1
         self.active_element_index = -1 
         logger.info(f"Load from data: {loaded_elements_count} element(s) (assumed TRACK type) loaded with {valid_points_count} points. {skipped_points_count} points skipped. {skipped_empty_tracks_count} empty elements skipped.")
-        self.trackListChanged.emit(); self.activeTrackDataChanged.emit(); self.visualsNeedUpdate.emit() 
+        self.elementListChanged.emit(); self.activeElementDataChanged.emit(); self.visualsNeedUpdate.emit() 
         return True, warnings

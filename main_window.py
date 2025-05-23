@@ -9,8 +9,8 @@ from typing import Optional, List, Tuple, Dict, Any
 from metadata_dialog import MetadataDialog
 import config
 from interactive_image_view import InteractiveImageView, InteractionMode
-# MODIFIED: Import ElementType from track_manager
-from track_manager import TrackManager, TrackVisibilityMode, PointData, VisualElement, UndoActionType, ElementType
+# MODIFIED: Import ElementType from element_manager
+from element_manager import ElementManager, TrackVisibilityMode, PointData, VisualElement, UndoActionType, ElementType
 import file_io
 from video_handler import VideoHandler
 import ui_setup # This will setup the new QLineEdit and QLabel attributes
@@ -31,7 +31,7 @@ ICON_PATH = os.path.join(basedir, "PyroTracker.ico")
 
 class MainWindow(QtWidgets.QMainWindow):
     # --- Instance Variable Type Hinting (ensure these match ui_setup.py) ---
-    track_manager: TrackManager
+    element_manager: ElementManager
     imageView: InteractiveImageView
     video_handler: VideoHandler
     coord_transformer: CoordinateTransformer
@@ -133,7 +133,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.setWindowIcon(QtGui.QIcon(ICON_PATH))
 
         self.video_handler = VideoHandler(self)
-        self.track_manager = TrackManager(self)
+        self.element_manager = ElementManager(self)
         self.coord_transformer = CoordinateTransformer()
         self.scale_manager = ScaleManager(self)
         self._setup_pens() # This will now setup measurement line pens too
@@ -194,9 +194,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             logger.warning("Undo action (self.undoAction) not found after UI setup.")
 
-        if self.track_manager and hasattr(self, 'undoAction') and self.undoAction:
-            self.track_manager.undoStateChanged.connect(self.undoAction.setEnabled)
-            logger.debug("Connected TrackManager.undoStateChanged to undoAction.setEnabled.")
+        if self.element_manager and hasattr(self, 'undoAction') and self.undoAction:
+            self.element_manager.undoStateChanged.connect(self.undoAction.setEnabled)
+            logger.debug("Connected ElementManager.undoStateChanged to undoAction.setEnabled.")
 
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
             'scale_m_per_px_input', 'scale_px_per_m_input', 'scale_reset_button',
@@ -268,11 +268,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.coord_panel_controller = None
 
         if all(hasattr(self, attr) and getattr(self, attr) is not None for attr in [
-            'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'track_manager',
+            'tracksTableWidget', 'pointsTableWidget', 'pointsTabLabel', 'element_manager',
             'video_handler', 'scale_manager', 'coord_transformer'
         ]):
             self.table_data_controller = TrackDataViewController(
-                main_window_ref=self, track_manager=self.track_manager, video_handler=self.video_handler,
+                main_window_ref=self, element_manager=self.element_manager, video_handler=self.video_handler,
                 scale_manager=self.scale_manager, coord_transformer=self.coord_transformer,
                 tracks_table_widget=self.tracksTableWidget, points_table_widget=self.pointsTableWidget,
                 points_tab_label=self.pointsTabLabel, parent=self
@@ -287,7 +287,7 @@ class MainWindow(QtWidgets.QMainWindow):
             status_bar_instance.showMessage("Ready. Load a video via File -> Open Video...")
 
         self._export_handler = ExportHandler(
-            video_handler=self.video_handler, track_manager=self.track_manager,
+            video_handler=self.video_handler, element_manager=self.element_manager,
             scale_manager=self.scale_manager, coord_transformer=self.coord_transformer,
             image_view=self.imageView, main_window=self, parent=self )
         logger.debug("ExportHandler initialized in MainWindow.")
@@ -312,12 +312,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
         if self.table_data_controller:
-            self.track_manager.trackListChanged.connect(self.table_data_controller.update_tracks_table_ui)
+            self.element_manager.elementListChanged.connect(self.table_data_controller.update_tracks_table_ui)
             if self.table_data_controller._lines_table: # Check if lines table is initialized
-                 self.track_manager.trackListChanged.connect(self.table_data_controller.update_lines_table_ui)
-            self.track_manager.activeTrackDataChanged.connect(self.table_data_controller.update_points_table_ui)
-            self.track_manager.activeTrackDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
-        self.track_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
+                 self.element_manager.elementListChanged.connect(self.table_data_controller.update_lines_table_ui)
+            self.element_manager.activeElementDataChanged.connect(self.table_data_controller.update_points_table_ui)
+            self.element_manager.activeElementDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
+        self.element_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
 
         if self.scale_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
         if self.table_data_controller: self.scale_manager.scaleOrUnitChanged.connect(self.table_data_controller.update_points_table_ui)
@@ -483,8 +483,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view_menu_controller.handle_video_loaded_state_changed(False)
 
     def _cancel_active_line_definition_ui_reset(self) -> None:
-        if self.track_manager:
-            self.track_manager.cancel_active_line_definition()
+        if self.element_manager:
+            self.element_manager.cancel_active_line_definition()
 
         self._is_defining_measurement_line = False
         if self.imageView:
@@ -533,8 +533,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.loadTracksAction: self.loadTracksAction.setEnabled(is_video_loaded)
 
-        can_save: bool = is_video_loaded and self.track_manager and \
-                         any(el['type'] == ElementType.TRACK for el in self.track_manager.elements) # For now, save only if tracks exist
+        can_save: bool = is_video_loaded and self.element_manager and \
+                         any(el['type'] == ElementType.TRACK for el in self.element_manager.elements) # For now, save only if tracks exist
         if self.saveTracksAction: self.saveTracksAction.setEnabled(can_save)
         if self.videoInfoAction: self.videoInfoAction.setEnabled(is_video_loaded)
 
@@ -544,7 +544,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.exportFrameAction.setEnabled(is_video_loaded)
 
         if hasattr(self, 'undoAction') and self.undoAction:
-            self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action() and is_video_loaded)
+            self.undoAction.setEnabled(self.element_manager.can_undo_last_point_action() and is_video_loaded)
 
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(is_video_loaded)
@@ -621,18 +621,18 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.info("Releasing video resources and resetting state...")
         self.video_handler.release_video(); self.video_loaded = False; self.total_frames = 0; self.current_frame_index = -1; self.fps = 0.0
         self.total_duration_ms = 0.0; self.video_filepath = ""; self.frame_width = 0; self.frame_height = 0; self.is_playing = False
-        self.track_manager.reset(); self.scale_manager.reset(); self._reset_ui_after_video_close()
+        self.element_manager.reset(); self.scale_manager.reset(); self._reset_ui_after_video_close()
         logger.info("Video release and associated reset complete.")
 
     @QtCore.Slot()
     def _trigger_save_tracks(self) -> None:
-        if self.video_loaded and self.track_manager and self.coord_transformer and self.scale_manager: file_io.save_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager)
+        if self.video_loaded and self.element_manager and self.coord_transformer and self.scale_manager: file_io.save_tracks_dialog(self, self.element_manager, self.coord_transformer, self.scale_manager)
         elif self.statusBar(): self.statusBar().showMessage("Save Error: Components missing or video not loaded.", 3000)
 
     @QtCore.Slot()
     def _trigger_load_tracks(self) -> None:
-        if self.video_loaded and self.track_manager and self.coord_transformer and self.scale_manager:
-            file_io.load_tracks_dialog(self, self.track_manager, self.coord_transformer, self.scale_manager)
+        if self.video_loaded and self.element_manager and self.coord_transformer and self.scale_manager:
+            file_io.load_tracks_dialog(self, self.element_manager, self.coord_transformer, self.scale_manager)
             if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(False)
         elif self.statusBar(): self.statusBar().showMessage("Load Error: Components missing or video not loaded.", 3000)
 
@@ -719,7 +719,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_height = video_info.get('height', 0); self.is_playing = False; self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {video_info.get('filename', 'N/A')}")
         self.coord_transformer.set_video_height(self.frame_height)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_height(self.frame_height)
-        self.track_manager.reset()
+        self.element_manager.reset()
         if self.frameSlider: self.frameSlider.setMaximum(self.total_frames - 1 if self.total_frames > 0 else 0); self.frameSlider.setValue(0)
         if self.imageView:
             self.imageView.resetInitialLoadFlag()
@@ -771,18 +771,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and self.scale_panel_controller._is_setting_scale_by_line: return
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Cannot add point: No video loaded.", 3000); return
-        if self.track_manager.active_element_index == -1:
+        if self.element_manager.active_element_index == -1:
             if status_bar: status_bar.showMessage("Select a track to add points.", 3000); return
         time_ms = (self.current_frame_index / self.fps) * 1000 if self.fps > 0 else -1.0
-        if self.track_manager.add_point(self.current_frame_index, time_ms, x, y):
-            x_d, y_d = self.coord_transformer.transform_point_for_display(x,y); active_id = self.track_manager.get_active_element_id()
+        if self.element_manager.add_point(self.current_frame_index, time_ms, x, y):
+            x_d, y_d = self.coord_transformer.transform_point_for_display(x,y); active_id = self.element_manager.get_active_element_id()
             msg = f"Point for Track {active_id} on Frame {self.current_frame_index+1}: ({x_d:.1f}, {y_d:.1f})"
             if status_bar: status_bar.showMessage(msg, 3000)
             if self._auto_advance_enabled and self._auto_advance_frames > 0:
                 target = min(self.current_frame_index + self._auto_advance_frames, self.total_frames - 1)
                 if target > self.current_frame_index: self.video_handler.seek_frame(target)
         elif status_bar: status_bar.showMessage("Failed to add point (see log).", 3000)
-        if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action())
+        if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(self.element_manager.can_undo_last_point_action())
 
     @QtCore.Slot(float, float, QtCore.Qt.KeyboardModifiers)
     def _handle_modified_click(self, x: float, y: float, modifiers: QtCore.Qt.KeyboardModifiers) -> None:
@@ -790,26 +790,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Cannot interact: Video/components not ready.", 3000); return
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
+            result = self.element_manager.find_closest_visible_point(x, y, self.current_frame_index)
             if result is None:
-                if self.track_manager.active_element_index != -1: self.track_manager.set_active_element(-1); 
-                if status_bar: status_bar.showMessage("Track deselected." if self.track_manager.active_element_index == -1 else "No track to deselect.", 3000)
+                if self.element_manager.active_element_index != -1: self.element_manager.set_active_element(-1); 
+                if status_bar: status_bar.showMessage("Track deselected." if self.element_manager.active_element_index == -1 else "No track to deselect.", 3000)
                 return
-        result = self.track_manager.find_closest_visible_point(x, y, self.current_frame_index)
+        result = self.element_manager.find_closest_visible_point(x, y, self.current_frame_index)
         if result is None:
             if modifiers != QtCore.Qt.KeyboardModifier.ControlModifier and status_bar: status_bar.showMessage("No track marker found near click.", 3000)
             return
         element_idx, point_data = result; element_id = -1
-        if 0 <= element_idx < len(self.track_manager.elements): element_id = self.track_manager.elements[element_idx]['id']
+        if 0 <= element_idx < len(self.element_manager.elements): element_id = self.element_manager.elements[element_idx]['id']
         if element_id == -1: return
         frame_idx_of_point = point_data[0]
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            if self.track_manager.active_element_index != element_idx:
-                self.track_manager.set_active_element(element_idx)
+            if self.element_manager.active_element_index != element_idx:
+                self.element_manager.set_active_element(element_idx)
                 if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id)) # Changed method name
                 if status_bar: status_bar.showMessage(f"Selected Track {element_id}.", 3000)
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
-            if self.track_manager.active_element_index != element_idx: self.track_manager.set_active_element(element_idx)
+            if self.element_manager.active_element_index != element_idx: self.element_manager.set_active_element(element_idx)
             if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id)) # Changed method name
             if self.current_frame_index != frame_idx_of_point: self.video_handler.seek_frame(frame_idx_of_point)
             if status_bar: status_bar.showMessage(f"Selected Track {element_id}, jumped to Frame {frame_idx_of_point + 1}.", 3000)
@@ -846,16 +846,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._is_defining_measurement_line or not self.imageView or self.imageView._current_mode != InteractionMode.SET_SCALE_LINE_START:
              logger.debug("_handle_measurement_line_first_point_defined called out of context or wrong ImageView mode.")
              return
-        if self.track_manager.active_element_index == -1 or self.track_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE:
+        if self.element_manager.active_element_index == -1 or self.element_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE:
             logger.warning("No active measurement line. Cancelling."); self._cancel_active_line_definition_ui_reset(); return
-        logger.info(f"Measurement Line: First point for ID {self.track_manager.get_active_element_id()} at ({scene_x:.2f}, {scene_y:.2f}) on frame {self._current_line_definition_frame_index}")
+        logger.info(f"Measurement Line: First point for ID {self.element_manager.get_active_element_id()} at ({scene_x:.2f}, {scene_y:.2f}) on frame {self._current_line_definition_frame_index}")
         time_ms = (self._current_line_definition_frame_index / self.fps) * 1000 if self.fps > 0 else 0.0
-        if self.track_manager.add_point(self._current_line_definition_frame_index, time_ms, scene_x, scene_y):
-            active_line_id = self.track_manager.get_active_element_id()
+        if self.element_manager.add_point(self._current_line_definition_frame_index, time_ms, scene_x, scene_y):
+            active_line_id = self.element_manager.get_active_element_id()
             if status_bar: status_bar.showMessage(f"Line {active_line_id} - First point. Click second point on Frame {self._current_line_definition_frame_index + 1}. (Esc to cancel)", 0)
             self.imageView.set_interaction_mode(InteractionMode.SET_SCALE_LINE_END)
         else:
-            logger.error("TrackManager failed to process first point for measurement line.")
+            logger.error("ElementManager failed to process first point for measurement line.")
             if status_bar: status_bar.showMessage("Error setting first line point. Cancelling.", 3000)
             self._cancel_active_line_definition_ui_reset()
 
@@ -865,17 +865,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._is_defining_measurement_line or not self.imageView or self.imageView._current_mode != InteractionMode.SET_SCALE_LINE_END:
             logger.debug("_handle_measurement_line_second_point_defined called out of context or wrong ImageView mode.")
             return
-        if self.track_manager.active_element_index == -1 or self.track_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE or self.track_manager._defining_element_first_point_data is None:
+        if self.element_manager.active_element_index == -1 or self.element_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE or self.element_manager._defining_element_first_point_data is None:
             logger.warning("No active measurement line or first point not set. Cancelling."); self._cancel_active_line_definition_ui_reset(); return
-        logger.info(f"Measurement Line: Second point for ID {self.track_manager.get_active_element_id()} at ({p2x:.2f}, {p2y:.2f}) on frame {self._current_line_definition_frame_index}")
+        logger.info(f"Measurement Line: Second point for ID {self.element_manager.get_active_element_id()} at ({p2x:.2f}, {p2y:.2f}) on frame {self._current_line_definition_frame_index}")
         time_ms = (self._current_line_definition_frame_index / self.fps) * 1000 if self.fps > 0 else 0.0
-        if self.track_manager.add_point(self._current_line_definition_frame_index, time_ms, p2x, p2y):
-            active_line_id = self.track_manager.get_active_element_id()
+        if self.element_manager.add_point(self._current_line_definition_frame_index, time_ms, p2x, p2y):
+            active_line_id = self.element_manager.get_active_element_id()
             if status_bar: status_bar.showMessage(f"Measurement Line {active_line_id} defined.", 3000)
             self._is_defining_measurement_line = False; self.imageView.set_interaction_mode(InteractionMode.NORMAL)
             self.imageView.clearTemporaryScaleVisuals(); self._handle_disable_frame_navigation(False); self._update_ui_state()
         else:
-            logger.error("TrackManager failed to process second point for measurement line (e.g., frame mismatch).")
+            logger.error("ElementManager failed to process second point for measurement line (e.g., frame mismatch).")
             if status_bar: status_bar.showMessage("Error: Second point must be on the same frame. Line not defined.", 4000)
             # User needs to click again or Esc. Mode remains SET_SCALE_LINE_END.
 
@@ -888,7 +888,7 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar = self.statusBar()
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Load a video first to create tracks.", 3000); return
-        new_id = self.track_manager.create_new_track()
+        new_id = self.element_manager.create_new_track()
         if status_bar: status_bar.showMessage(f"Created Track {new_id}. It is now active.", 3000)
         if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(new_id)) # Changed method name
         if self.dataTabsWidget: self.dataTabsWidget.setCurrentIndex(0)
@@ -908,7 +908,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode():
             self.coord_panel_controller._is_setting_origin = False
             if self.imageView: self.imageView.set_interaction_mode(InteractionMode.NORMAL)
-        new_line_id = self.track_manager.create_new_line()
+        new_line_id = self.element_manager.create_new_line()
         if new_line_id != -1:
             self._is_defining_measurement_line = True; self._current_line_definition_frame_index = self.current_frame_index
             if status_bar: status_bar.showMessage(f"Defining Line {new_line_id}: Click first point on Frame {self.current_frame_index + 1}. (Esc to cancel)", 0)
@@ -954,7 +954,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-            visual_elements_to_draw = self.track_manager.get_visual_elements(self.current_frame_index)
+            visual_elements_to_draw = self.element_manager.get_visual_elements(self.current_frame_index)
 
             # Ensure all pens are initialized, including measurement line pens
             pens = {
@@ -966,7 +966,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
                 # --- NEW: Add Measurement Line Pens to the pens dictionary ---
                 # These string keys ("style_measurement_line_normal", "style_measurement_line_active")
-                # must match what TrackManager.get_visual_elements() uses.
+                # must match what ElementManager.get_visual_elements() uses.
                 # Ideally, these string keys should be constants from config.py.
                 "style_measurement_line_normal": self.pen_measurement_line_normal,
                 "style_measurement_line_active": self.pen_measurement_line_active,
@@ -1138,12 +1138,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 nav_disabled = (self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and self.scale_panel_controller._is_setting_scale_by_line) or self._is_defining_measurement_line
                 if not nav_disabled: self._toggle_playback(); accepted = True
         elif key == QtCore.Qt.Key.Key_Delete or key == QtCore.Qt.Key.Key_Backspace:
-            if self.video_loaded and self.track_manager.active_element_index != -1 and self.current_frame_index != -1:
-                deleted = self.track_manager.delete_point(self.track_manager.active_element_index, self.current_frame_index)
+            if self.video_loaded and self.element_manager.active_element_index != -1 and self.current_frame_index != -1:
+                deleted = self.element_manager.delete_point(self.element_manager.active_element_index, self.current_frame_index)
                 if status_bar: status_bar.showMessage(f"Deleted point..." if deleted else "No point to delete on this frame.", 3000)
-                if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action())
+                if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(self.element_manager.can_undo_last_point_action())
                 accepted = True
-            elif self.video_loaded and self.track_manager.active_element_index == -1:
+            elif self.video_loaded and self.element_manager.active_element_index == -1:
                 if status_bar: status_bar.showMessage("No track selected to delete points from.", 3000); accepted = True
             elif status_bar: status_bar.showMessage("Cannot delete point.", 3000)
         elif modifiers == QtCore.Qt.KeyboardModifier.ControlModifier and key == QtCore.Qt.Key.Key_Z:
@@ -1184,11 +1184,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _trigger_undo_point_action(self) -> None:
         if not self.video_loaded:
             if self.statusBar(): self.statusBar().showMessage("Cannot undo: No video loaded.", 3000); return
-        if self.track_manager.undo_last_point_action():
+        if self.element_manager.undo_last_point_action():
             if self.statusBar(): self.statusBar().showMessage("Last point action undone.", 3000)
         else:
             if self.statusBar(): self.statusBar().showMessage("Nothing to undo.", 3000)
-        if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(self.track_manager.can_undo_last_point_action())
+        if hasattr(self, 'undoAction') and self.undoAction: self.undoAction.setEnabled(self.element_manager.can_undo_last_point_action())
 
     @QtCore.Slot()
     def _show_video_info_dialog(self) -> None:

@@ -19,7 +19,7 @@ import settings_manager # For accessing visual settings
 if TYPE_CHECKING:
     from main_window import MainWindow # For QProgressDialog parent and style access
     from video_handler import VideoHandler
-    from track_manager import TrackManager
+    from element_manager import ElementManager
     from scale_manager import ScaleManager
     from coordinate_transformer import CoordinateTransformer
     from interactive_image_view import InteractiveImageView
@@ -46,14 +46,14 @@ class ExportHandler(QtCore.QObject):
 
     _main_window: Optional['MainWindow']
     _video_handler: 'VideoHandler'
-    _track_manager: 'TrackManager'
+    _element_manager: 'ElementManager'
     _scale_manager: 'ScaleManager'
     _coord_transformer: 'CoordinateTransformer'
     _image_view: 'InteractiveImageView'
 
     def __init__(self,
                  video_handler: 'VideoHandler',
-                 track_manager: 'TrackManager',
+                 element_manager: 'ElementManager',
                  scale_manager: 'ScaleManager',
                  coord_transformer: 'CoordinateTransformer',
                  image_view: 'InteractiveImageView',
@@ -61,7 +61,7 @@ class ExportHandler(QtCore.QObject):
                  parent: Optional[QtCore.QObject] = None) -> None:
         super().__init__(parent)
         self._video_handler = video_handler
-        self._track_manager = track_manager
+        self._element_manager = element_manager
         self._scale_manager = scale_manager
         self._coord_transformer = coord_transformer
         self._image_view = image_view
@@ -178,7 +178,7 @@ class ExportHandler(QtCore.QObject):
                                    visible_scene_rect: QtCore.QRectF, # The portion of the scene visible in the export view
                                    export_mode: ExportResolutionMode
                                    ) -> None:
-        if not self._track_manager or not self._coord_transformer or \
+        if not self._element_manager or not self._coord_transformer or \
            not self._scale_manager or not self._image_view or \
            not self._main_window or not self._video_handler: # Added _video_handler check
             logger.error("Overlay rendering skipped: one or more required managers/views are missing.")
@@ -205,7 +205,7 @@ class ExportHandler(QtCore.QObject):
         # (Existing code for drawing tracks, origin marker, and defined scale line)
         # ... (ensure this existing code remains and functions as before) ...
         marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-        track_elements = self._track_manager.get_visual_elements(current_frame_index)
+        track_elements = self._element_manager.get_visual_elements(current_frame_index)
         pens = {
             config.STYLE_MARKER_ACTIVE_CURRENT: self._main_window.pen_marker_active_current,
             config.STYLE_MARKER_ACTIVE_OTHER: self._main_window.pen_marker_active_other,
@@ -418,7 +418,7 @@ class ExportHandler(QtCore.QObject):
         self.exportStarted.emit()
 
         if not self._video_handler or not self._video_handler.is_loaded or \
-           not self._image_view or not self._track_manager or \
+           not self._image_view or not self._element_manager or \
            not self._scale_manager or not self._coord_transformer or not self._main_window:
             logger.error("ExportHandler: Core component(s) missing for video export.")
             self.exportFinished.emit(False, "Internal error: Core components missing.")
@@ -574,7 +574,7 @@ class ExportHandler(QtCore.QObject):
         self.exportStarted.emit() # Although quick, emit for consistency if progress dialog is managed externally
 
         if not self._video_handler or not self._video_handler.is_loaded or self._video_handler.current_frame_index < 0 or \
-           not self._image_view or not self._track_manager or \
+           not self._image_view or not self._element_manager or \
            not self._scale_manager or not self._coord_transformer or not self._main_window:
             logger.error("ExportHandler: Core component(s) missing for frame export.")
             self.exportFinished.emit(False, "Internal error: Core components missing or no frame selected.")
