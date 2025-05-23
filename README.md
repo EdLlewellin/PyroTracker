@@ -166,15 +166,15 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * `info_overlay_widget.py`: `InfoOverlayWidget` class; custom widget for rendering fixed informational text overlays (filename, time, frame number) on the image view.
 * `settings_manager.py`: Manages persistent application settings (visuals) using QSettings.
 * `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus for the `MainWindow`.
-* `main_window.py`: `MainWindow` class; orchestrates core components (VideoHandler, TrackManager, etc.), main application signals/slots, menu actions, and drawing of scene overlays. Initializes UI controllers.
+* `main_window.py`: `MainWindow` class; orchestrates core components (VideoHandler, ElementManager, etc.), main application signals/slots, menu actions, and drawing of scene overlays. Initializes UI controllers.
 * `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display, mouse interaction, and hosting overlay widgets.
 * `video_handler.py`: `VideoHandler` class; manages video loading (OpenCV), playback (QTimer), navigation, frame extraction.
-* `track_manager.py`: `TrackManager` class; stores and manages multi-track point data, visibility settings, and point operation undo logic.
+* `element_manager.py`: `ElementManager` class; stores and manages multi-element (tracks, lines) point data, visibility settings, and point operation undo logic.
 * `file_io.py`: Functions for CSV track data reading/writing, including metadata and coordinate transformations.
 * `export_handler.py`: `ExportHandler` class; manages logic for exporting video frames with overlays as new video files or individual images.
 * `export_options_dialog.py`: `ExportOptionsDialog` class for selecting video export range and resolution.
 * `panel_controllers.py`: Contains controller classes (`ScalePanelController`, `CoordinatePanelController`) that manage UI logic for specific QGroupBox panels.
-* `table_controllers.py`: Contains `TrackDataViewController` class that manages UI logic for the Tracks and Points data tables.
+* `table_controllers.py`: Contains `TrackDataViewController` class that manages UI logic for the Tracks, Lines, and Points data tables.
 * `view_menu_controller.py`: `ViewMenuController` class; manages the View menu and actions related to overlay visibility.
 * `preferences_dialog.py`: `PreferencesDialog` class for editing visual settings.
 * `metadata_dialog.py`: `MetadataDialog` class for displaying video metadata.
