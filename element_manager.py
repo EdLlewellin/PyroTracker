@@ -33,9 +33,10 @@ VisualElement = Dict[str, Any]
 """Type alias for the visual element structure passed for drawing.
    e.g., {'type': 'marker', 'pos': (x,y), 'style': STYLE_*, 'element_id': int}"""
 
-class TrackVisibilityMode(Enum): # Renaming this can be a future step if it applies to more than tracks
-    """Enum defining the visibility modes for elements like tracks."""
+class ElementVisibilityMode(Enum):
+    """Enum defining the visibility modes for elements."""
     HIDDEN = auto()
+    HOME_FRAME = auto() # New visibility mode
     INCREMENTAL = auto()
     ALWAYS_VISIBLE = auto()
 
@@ -55,9 +56,8 @@ class ElementManager(QtCore.QObject):
     """
     Manages data for different types of elements (tracks, lines) and calculates visual representation.
     """
-    # Signals (consider renaming for generality in a later phase if needed)
-    elementListChanged = QtCore.Signal() # Emitted when the list of elements changes (add/delete)
-    activeElementDataChanged = QtCore.Signal() # Emitted when active element's data or selection changes
+    elementListChanged = QtCore.Signal()
+    activeElementDataChanged = QtCore.Signal()
     visualsNeedUpdate = QtCore.Signal()
     undoStateChanged = QtCore.Signal(bool)
 
@@ -68,7 +68,6 @@ class ElementManager(QtCore.QObject):
     _last_action_type: Optional[UndoActionType] = None
     _last_action_details: Dict[str, Any] = {}
 
-    # --- NEW: Internal state for line definition ---
     _is_defining_element_type: Optional[ElementType] = None
     _defining_element_first_point_data: Optional[PointData] = None
     _defining_element_frame_index: Optional[int] = None
@@ -81,7 +80,7 @@ class ElementManager(QtCore.QObject):
         self.active_element_index = -1
         self._next_element_id = 1
         self._clear_last_action()
-        self._reset_defining_state() # Initialize defining state
+        self._reset_defining_state()
         logger.info("ElementManager initialized.")
 
     def _reset_defining_state(self) -> None:
@@ -102,10 +101,10 @@ class ElementManager(QtCore.QObject):
         self.active_element_index = -1
         self._next_element_id = 1
         self._clear_last_action()
-        self._reset_defining_state() # Also reset defining state on full reset
+        self._reset_defining_state()
         logger.info("ElementManager reset complete.")
         self.elementListChanged.emit()
-        self.activeElementDataChanged.emit() # Ensure points table clears
+        self.activeElementDataChanged.emit()
 
     def _get_new_element_id(self) -> int:
         """Generates a new unique ID for an element."""
@@ -122,41 +121,41 @@ class ElementManager(QtCore.QObject):
         new_element = {
             'id': new_id,
             'type': ElementType.TRACK,
-            'name': f"Track {new_id}", # Default name
-            'data': [], # Track data is a list of PointData
-            'visibility_mode': TrackVisibilityMode.INCREMENTAL
+            'name': f"Track {new_id}",
+            'data': [],
+            'visibility_mode': ElementVisibilityMode.INCREMENTAL # Use renamed enum
         }
         self.elements.append(new_element)
         new_element_index: int = len(self.elements) - 1
-        self.set_active_element(new_element_index) # Automatically select the new track
+        self.set_active_element(new_element_index)
 
         logger.info(f"Created new track element ID {new_id} (index {new_element_index}).")
-        self._clear_last_action() # Creating a new track clears any previous point undo
+        self._clear_last_action()
         self.elementListChanged.emit()
         return new_id
 
     def create_new_line(self) -> int:
         """Creates a new element of type MEASUREMENT_LINE and prepares for definition."""
         logger.info("Creating new measurement line element...")
-        new_id = self._get_new_element_id() 
+        new_id = self._get_new_element_id()
         new_element = {
             'id': new_id,
-            'type': ElementType.MEASUREMENT_LINE, 
-            'name': f"Line {new_id}", 
-            'data': [], 
-            'visibility_mode': TrackVisibilityMode.INCREMENTAL 
+            'type': ElementType.MEASUREMENT_LINE,
+            'name': f"Line {new_id}",
+            'data': [],
+            'visibility_mode': ElementVisibilityMode.INCREMENTAL # Use renamed enum
         }
-        self.elements.append(new_element) 
+        self.elements.append(new_element)
         new_element_index: int = len(self.elements) - 1
-        self.set_active_element(new_element_index) 
+        self.set_active_element(new_element_index)
 
-        self._is_defining_element_type = ElementType.MEASUREMENT_LINE 
+        self._is_defining_element_type = ElementType.MEASUREMENT_LINE
         self._defining_element_first_point_data = None
-        self._defining_element_frame_index = None 
+        self._defining_element_frame_index = None
 
         logger.info(f"Created new measurement line element ID {new_id} (index {new_element_index}). Awaiting first point.")
         self._clear_last_action()
-        self.elementListChanged.emit() 
+        self.elementListChanged.emit()
         return new_id
 
     def cancel_active_line_definition(self) -> None:
@@ -169,24 +168,24 @@ class ElementManager(QtCore.QObject):
             element_id_cancelled = current_defining_element.get('id', 'N/A')
             
             if current_defining_element.get('type') == ElementType.MEASUREMENT_LINE and \
-               not current_defining_element['data']: 
+               not current_defining_element['data']:
                 
                 logger.info(f"Cancelling definition of Measurement Line ID {element_id_cancelled}. Removing empty element.")
                 del self.elements[self.active_element_index]
                 
                 self._reset_defining_state()
-                self.active_element_index = -1 
+                self.active_element_index = -1
                 
                 self.elementListChanged.emit()
                 self.activeElementDataChanged.emit()
-                self.visualsNeedUpdate.emit() 
-                self._clear_last_action() 
+                self.visualsNeedUpdate.emit()
+                self._clear_last_action()
                 return
             logger.debug(f"Line ID {element_id_cancelled} was being defined but might have data or state is unexpected. Resetting defining state only.")
 
-        if self._is_defining_element_type is not None: 
+        if self._is_defining_element_type is not None:
             self._reset_defining_state()
-            self.visualsNeedUpdate.emit() 
+            self.visualsNeedUpdate.emit()
             logger.debug("Reset defining state in ElementManager due to cancellation request.")
         else:
             logger.debug("No active line definition process to cancel in ElementManager.")
@@ -201,7 +200,7 @@ class ElementManager(QtCore.QObject):
         element_type_deleted: ElementType = deleted_element['type']
 
         logger.info(f"Deleting element index {element_index_to_delete} (ID: {element_id_deleted}, Type: {element_type_deleted.name})...")
-        was_visible = deleted_element['visibility_mode'] != TrackVisibilityMode.HIDDEN
+        was_visible = deleted_element['visibility_mode'] != ElementVisibilityMode.HIDDEN
 
         if self.active_element_index == element_index_to_delete and \
            self._is_defining_element_type is not None:
@@ -213,16 +212,16 @@ class ElementManager(QtCore.QObject):
 
         active_element_changed: bool = False
         if self.active_element_index == element_index_to_delete:
-            self.active_element_index = -1 
+            self.active_element_index = -1
             active_element_changed = True
         elif self.active_element_index > element_index_to_delete:
-            self.active_element_index -= 1 
+            self.active_element_index -= 1
             active_element_changed = True
         
         self._clear_last_action()
-        self.elementListChanged.emit() 
+        self.elementListChanged.emit()
         if active_element_changed:
-            self.activeElementDataChanged.emit() 
+            self.activeElementDataChanged.emit()
         if was_visible:
             self.visualsNeedUpdate.emit()
         logger.info(f"Element ID {element_id_deleted} deleted successfully.")
@@ -232,7 +231,7 @@ class ElementManager(QtCore.QObject):
         new_active_idx: int = -1
         if 0 <= element_index < len(self.elements):
             new_active_idx = element_index
-        elif element_index != -1: 
+        elif element_index != -1:
             logger.warning(f"set_active_element: Invalid index {element_index}. Deselecting.")
 
         if self.active_element_index != new_active_idx:
@@ -254,15 +253,15 @@ class ElementManager(QtCore.QObject):
             new_vis_mode = self.get_element_visibility_mode(self.active_element_index)
 
             self._clear_last_action()
-            self.activeElementDataChanged.emit() 
+            self.activeElementDataChanged.emit()
 
             if (old_active_element_index != -1 and old_active_element_index < len(self.elements) and \
-                self.elements[old_active_element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN) or \
-               (self.active_element_index != -1 and new_vis_mode != TrackVisibilityMode.HIDDEN):
+                self.elements[old_active_element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN) or \
+               (self.active_element_index != -1 and new_vis_mode != ElementVisibilityMode.HIDDEN):
                  self.visualsNeedUpdate.emit()
             logger.debug(f"Active element set to index: {self.active_element_index}")
 
-    def set_element_visibility_mode(self, element_index: int, mode: TrackVisibilityMode) -> None:
+    def set_element_visibility_mode(self, element_index: int, mode: ElementVisibilityMode) -> None: # Updated type hint
         if not (0 <= element_index < len(self.elements)):
             return
         
@@ -271,16 +270,16 @@ class ElementManager(QtCore.QObject):
             old_mode = element['visibility_mode']
             element['visibility_mode'] = mode
             logger.debug(f"Visibility for element ID {element['id']} (index {element_index}) set to {mode.name}")
-            if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
+            if old_mode != ElementVisibilityMode.HIDDEN or mode != ElementVisibilityMode.HIDDEN:
                 self.visualsNeedUpdate.emit()
-            self.elementListChanged.emit() 
+            self.elementListChanged.emit()
 
-    def get_element_visibility_mode(self, element_index: int) -> TrackVisibilityMode:
+    def get_element_visibility_mode(self, element_index: int) -> ElementVisibilityMode: # Updated return type
         if 0 <= element_index < len(self.elements):
             return self.elements[element_index]['visibility_mode']
-        return TrackVisibilityMode.HIDDEN 
+        return ElementVisibilityMode.HIDDEN
 
-    def set_all_elements_visibility(self, mode: TrackVisibilityMode, element_type_filter: Optional[ElementType] = None) -> None:
+    def set_all_elements_visibility(self, mode: ElementVisibilityMode, element_type_filter: Optional[ElementType] = None) -> None: # Updated type hint
         if not self.elements: return
         changed_any = False
         needs_visual_update_overall = False
@@ -291,7 +290,7 @@ class ElementManager(QtCore.QObject):
                 old_mode = element['visibility_mode']
                 element['visibility_mode'] = mode
                 changed_any = True
-                if old_mode != TrackVisibilityMode.HIDDEN or mode != TrackVisibilityMode.HIDDEN:
+                if old_mode != ElementVisibilityMode.HIDDEN or mode != ElementVisibilityMode.HIDDEN:
                     needs_visual_update_overall = True
         if changed_any: self.elementListChanged.emit()
         if needs_visual_update_overall: self.visualsNeedUpdate.emit()
@@ -309,7 +308,7 @@ class ElementManager(QtCore.QObject):
     def get_point_for_active_element(self, frame_index: int) -> Optional[PointData]:
         if self.active_element_index == -1: return None
         active_element = self.elements[self.active_element_index]
-        if active_element['type'] == ElementType.TRACK:
+        if active_element['type'] == ElementType.TRACK: # Only tracks have per-frame points in this manner
             track_data: ElementData = active_element['data']
             for point_data in track_data:
                 if point_data[0] == frame_index:
@@ -337,7 +336,7 @@ class ElementManager(QtCore.QObject):
             if existing_point_idx_in_list != -1: element_data[existing_point_idx_in_list] = new_point_data
             else: element_data.append(new_point_data); element_data.sort(key=lambda p: p[0])
             self.undoStateChanged.emit(True); self.activeElementDataChanged.emit(); self.elementListChanged.emit()
-            if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+            if active_element['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         elif element_type == ElementType.MEASUREMENT_LINE and self._is_defining_element_type == ElementType.MEASUREMENT_LINE and active_element['id'] == self.get_active_element_id():
             if self._defining_element_first_point_data is None:
@@ -351,7 +350,7 @@ class ElementManager(QtCore.QObject):
                     defining_element_id_before_reset = self.get_active_element_id(); self._reset_defining_state(); self._clear_last_action()
                     if self.active_element_index != -1 and 0 <= self.active_element_index < len(self.elements) and self.elements[self.active_element_index]['id'] == defining_element_id_before_reset : self.activeElementDataChanged.emit()
                     self.elementListChanged.emit(); 
-                    if active_element['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+                    if active_element['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
                     return True
                 else:
                     logger.warning(f"Measurement Line (ID: {element_id}): Second point must be on the same frame as the first (expected frame {self._defining_element_frame_index}, got {frame_index}). Action ignored.")
@@ -364,7 +363,7 @@ class ElementManager(QtCore.QObject):
     def delete_point(self, element_index_for_point_delete: int, frame_index: int) -> bool:
         if not (0 <= element_index_for_point_delete < len(self.elements)): self._clear_last_action(); return False
         target_element = self.elements[element_index_for_point_delete]
-        if target_element['type'] != ElementType.TRACK: self._clear_last_action(); return False
+        if target_element['type'] != ElementType.TRACK: self._clear_last_action(); return False # Only allow deleting points from tracks this way
         track_data_list: ElementData = target_element['data']; point_to_remove_idx: int = -1; deleted_point_data_tuple: Optional[PointData] = None
         for i, p_data in enumerate(track_data_list):
             if p_data[0] == frame_index: point_to_remove_idx = i; deleted_point_data_tuple = p_data; break
@@ -374,7 +373,7 @@ class ElementManager(QtCore.QObject):
             self.undoStateChanged.emit(True)
             if element_index_for_point_delete == self.active_element_index: self.activeElementDataChanged.emit()
             self.elementListChanged.emit(); 
-            if target_element['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+            if target_element['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         else: self._clear_last_action(); return False
 
@@ -382,13 +381,14 @@ class ElementManager(QtCore.QObject):
         if self._last_action_type in [UndoActionType.POINT_ADDED, UndoActionType.POINT_MODIFIED, UndoActionType.POINT_DELETED]:
             details = self._last_action_details; element_idx_to_undo = details.get("element_index")
             if element_idx_to_undo is not None and 0 <= element_idx_to_undo < len(self.elements):
-                if self.elements[element_idx_to_undo]['type'] == ElementType.TRACK: return True
+                if self.elements[element_idx_to_undo]['type'] == ElementType.TRACK: return True # Currently only for tracks
         return False
 
     def undo_last_point_action(self) -> bool:
         if not self.can_undo_last_point_action(): return False
         action_type = self._last_action_type; details = self._last_action_details; element_idx_to_undo = details.get("element_index")
-        target_element = self.elements[element_idx_to_undo]; frame_idx_to_undo = details.get("frame_index"); undone_successfully = False
+        # target_element = self.elements[element_idx_to_undo] # Not needed directly if element_idx is used
+        frame_idx_to_undo = details.get("frame_index"); undone_successfully = False
         if action_type == UndoActionType.POINT_ADDED:
             if frame_idx_to_undo is not None: undone_successfully = self._delete_point_for_undo(element_idx_to_undo, frame_idx_to_undo)
         elif action_type == UndoActionType.POINT_MODIFIED:
@@ -410,7 +410,7 @@ class ElementManager(QtCore.QObject):
             del track_data_list[point_idx]
             if element_index == self.active_element_index: self.activeElementDataChanged.emit()
             self.elementListChanged.emit()
-            if self.elements[element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+            if self.elements[element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         return False
 
@@ -422,7 +422,7 @@ class ElementManager(QtCore.QObject):
             track_data_list[point_idx] = point_to_restore
             if element_index == self.active_element_index: self.activeElementDataChanged.emit()
             self.elementListChanged.emit()
-            if self.elements[element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+            if self.elements[element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         logger.error(f"_restore_point_for_undo: Point not found at frame {frame_index} in element ID {self.elements[element_index]['id']}")
         return False
@@ -436,7 +436,7 @@ class ElementManager(QtCore.QObject):
         else: track_data_list.append(point_data_to_add); track_data_list.sort(key=lambda p: p[0])
         if element_index == self.active_element_index: self.activeElementDataChanged.emit()
         self.elementListChanged.emit()
-        if self.elements[element_index]['visibility_mode'] != TrackVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+        if self.elements[element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
         return True
 
     def find_closest_visible_track_element_index(self, click_x: float, click_y: float, current_frame_index: int) -> int:
@@ -444,11 +444,12 @@ class ElementManager(QtCore.QObject):
         for i, element in enumerate(self.elements):
             if element['type'] != ElementType.TRACK: continue 
             vis_mode = element['visibility_mode']; track_data: ElementData = element['data']
-            if vis_mode == TrackVisibilityMode.HIDDEN: continue
+            if vis_mode == ElementVisibilityMode.HIDDEN: continue
             for p_data in track_data:
                 f_idx, _, px, py = p_data
-                is_vis = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
-                if is_vis:
+                is_vis = (vis_mode == ElementVisibilityMode.ALWAYS_VISIBLE) or \
+                         (vis_mode == ElementVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
+                if is_vis: # This logic for INCREMENTAL tracks needs care if HOME_FRAME is different
                     dist_sq = (click_x - px)**2 + (click_y - py)**2
                     if dist_sq < min_dist_sq:
                         min_dist_sq = dist_sq
@@ -463,43 +464,60 @@ class ElementManager(QtCore.QObject):
             element_id = element['id']
             element_type = element['type']
             element_data: ElementData = element['data']
-            visibility_mode = element['visibility_mode']
+            visibility_mode: ElementVisibilityMode = element['visibility_mode']
             is_active_element = (i == self.active_element_index)
 
-            if visibility_mode == TrackVisibilityMode.HIDDEN:
+            if visibility_mode == ElementVisibilityMode.HIDDEN:
                 continue
 
             if element_type == ElementType.TRACK:
                 line_style = config.STYLE_LINE_ACTIVE if is_active_element else config.STYLE_LINE_INACTIVE
                 previous_visible_point_coords: Optional[Tuple[float,float]] = None
+                
+                if visibility_mode == ElementVisibilityMode.HOME_FRAME:
+                    for point_data_tuple in element_data:
+                        frame_idx, _, point_x, point_y = point_data_tuple
+                        if frame_idx == current_frame_index:
+                            marker_style = config.STYLE_MARKER_ACTIVE_CURRENT if is_active_element else config.STYLE_MARKER_INACTIVE_CURRENT
+                            visual_elements_list.append({'type': 'marker', 'pos': (point_x, point_y), 'style': marker_style, 'element_id': element_id, 'frame_idx': frame_idx})
+                    # For HOME_FRAME on tracks, no lines are drawn, so we 'continue' to the next element.
+                    continue 
+                
+                # Logic for INCREMENTAL and ALWAYS_VISIBLE tracks (includes drawing lines)
                 for point_data_tuple in element_data:
                     frame_idx, _, point_x, point_y = point_data_tuple
-                    is_point_visible_now = (visibility_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or \
-                                           (visibility_mode == TrackVisibilityMode.INCREMENTAL and frame_idx <= current_frame_index)
+                    is_point_visible_now = (visibility_mode == ElementVisibilityMode.ALWAYS_VISIBLE) or \
+                                           (visibility_mode == ElementVisibilityMode.INCREMENTAL and frame_idx <= current_frame_index)
+                    
                     if is_point_visible_now:
                         is_current_frame_marker = (frame_idx == current_frame_index)
                         marker_style = ""
-                        if is_active_element: marker_style = config.STYLE_MARKER_ACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_ACTIVE_OTHER
-                        else: marker_style = config.STYLE_MARKER_INACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_INACTIVE_OTHER
+                        if is_active_element:
+                            marker_style = config.STYLE_MARKER_ACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_ACTIVE_OTHER
+                        else:
+                            marker_style = config.STYLE_MARKER_INACTIVE_CURRENT if is_current_frame_marker else config.STYLE_MARKER_INACTIVE_OTHER
+                        
                         visual_elements_list.append({'type': 'marker', 'pos': (point_x, point_y), 'style': marker_style, 'element_id': element_id, 'frame_idx': frame_idx})
+                        
                         if previous_visible_point_coords:
                             visual_elements_list.append({'type': 'line', 'p1': previous_visible_point_coords, 'p2': (point_x, point_y), 'style': line_style, 'element_id': element_id})
                         previous_visible_point_coords = (point_x, point_y)
             
-            elif element_type == ElementType.MEASUREMENT_LINE: # [cite: 140]
+            elif element_type == ElementType.MEASUREMENT_LINE:
                 if len(element_data) == 2: # Ensure line is defined with two points
                     p1_data, p2_data = element_data[0], element_data[1]
-                    line_definition_frame = p1_data[0] # Both points are on the same frame
+                    line_definition_frame = p1_data[0] 
 
                     is_line_visible_on_current_frame = False
-                    if visibility_mode == TrackVisibilityMode.ALWAYS_VISIBLE: # [cite: 18]
+                    if visibility_mode == ElementVisibilityMode.ALWAYS_VISIBLE:
                         is_line_visible_on_current_frame = True
-                    elif visibility_mode == TrackVisibilityMode.INCREMENTAL and current_frame_index >= line_definition_frame: # [cite: 18]
+                    elif visibility_mode == ElementVisibilityMode.INCREMENTAL and current_frame_index >= line_definition_frame:
+                        is_line_visible_on_current_frame = True
+                    elif visibility_mode == ElementVisibilityMode.HOME_FRAME and current_frame_index == line_definition_frame: # New condition
                         is_line_visible_on_current_frame = True
                     
                     if is_line_visible_on_current_frame:
-                        # Use style constants from config.py
-                        style_key = config.STYLE_MEASUREMENT_LINE_ACTIVE if is_active_element else config.STYLE_MEASUREMENT_LINE_NORMAL # [cite: 140, 141]
+                        style_key = config.STYLE_MEASUREMENT_LINE_ACTIVE if is_active_element else config.STYLE_MEASUREMENT_LINE_NORMAL
                         
                         _f1, _t1, x1, y1 = p1_data
                         _f2, _t2, x2, y2 = p2_data
@@ -511,26 +529,50 @@ class ElementManager(QtCore.QObject):
                             'style': style_key,     
                             'element_id': element_id 
                         })
-                        # Length label generation will be added in Phase 5 [cite: 50]
+                        # Future: Length label generation for MEASUREMENT_LINE
+                        # if settings_manager.get_setting(settings_manager.KEY_SHOW_MEASUREMENT_LINE_LENGTHS):
+                        # ... logic to calculate length and add text visual element ...
 
         return visual_elements_list
 
     def find_closest_visible_point(self, click_x: float, click_y: float, current_frame_index: int) -> Optional[Tuple[int, PointData]]:
-        min_dist_sq = config.CLICK_TOLERANCE_SQ; closest_element_idx = -1; closest_point_data: Optional[PointData] = None
+        min_dist_sq = config.CLICK_TOLERANCE_SQ
+        closest_element_idx = -1
+        closest_point_data: Optional[PointData] = None
+
         for i, element in enumerate(self.elements):
-            if element['type'] != ElementType.TRACK: continue
-            vis_mode = element['visibility_mode']; track_data: ElementData = element['data']
-            if vis_mode == TrackVisibilityMode.HIDDEN: continue
+            # Currently, point interaction (like Shift+Click to jump) is primarily for tracks.
+            if element['type'] != ElementType.TRACK:
+                continue 
+            
+            vis_mode = element['visibility_mode']
+            track_data: ElementData = element['data']
+
+            if vis_mode == ElementVisibilityMode.HIDDEN:
+                continue
+            
             for p_data_tuple in track_data:
                 f_idx, _, px, py = p_data_tuple
-                is_vis_now = (vis_mode == TrackVisibilityMode.ALWAYS_VISIBLE) or (vis_mode == TrackVisibilityMode.INCREMENTAL and f_idx <= current_frame_index)
+                is_vis_now = False
+                if vis_mode == ElementVisibilityMode.ALWAYS_VISIBLE:
+                    is_vis_now = True
+                elif vis_mode == ElementVisibilityMode.INCREMENTAL and f_idx <= current_frame_index:
+                    is_vis_now = True
+                elif vis_mode == ElementVisibilityMode.HOME_FRAME and f_idx == current_frame_index: # Point is only "visible" if on current frame for HOME_FRAME mode
+                    is_vis_now = True
+                
                 if is_vis_now:
                     dist_sq = (click_x - px)**2 + (click_y - py)**2
-                    if dist_sq < min_dist_sq: min_dist_sq = dist_sq; closest_element_idx = i; closest_point_data = p_data_tuple
-        if closest_element_idx != -1 and closest_point_data is not None: return (closest_element_idx, closest_point_data)
+                    if dist_sq < min_dist_sq:
+                        min_dist_sq = dist_sq
+                        closest_element_idx = i
+                        closest_point_data = p_data_tuple
+                        
+        if closest_element_idx != -1 and closest_point_data is not None:
+            return (closest_element_idx, closest_point_data)
         return None
 
-    def get_track_elements_summary(self) -> List[Tuple[int, int, int, int]]:
+    def get_track_elements_summary(self) -> List[Tuple[int, int, int, int]]: # Only summarizes tracks
         summary = []
         for i, element in enumerate(self.elements):
             if element['type'] == ElementType.TRACK:
@@ -540,18 +582,21 @@ class ElementManager(QtCore.QObject):
                 summary.append((element['id'], num_points, start_frame, end_frame))
         return summary
 
-    def get_active_element_points_if_track(self) -> ElementData:
+    def get_active_element_points_if_track(self) -> ElementData: # Only for tracks
         if self.active_element_index != -1:
             active_element = self.elements[self.active_element_index]
             if active_element['type'] == ElementType.TRACK: return list(active_element['data']) 
         return []
 
-    def get_all_track_type_data_for_saving(self) -> AllElementsForSaving:
-        tracks_data_to_save: AllElementsForSaving = []
+    def get_all_track_type_data_for_saving(self) -> AllElementsForSaving: # Only saves tracks for now
+        # This will need to be updated if/when lines are saved differently or all elements are saved
+        data_to_save: AllElementsForSaving = []
         for element in self.elements:
-            if element['type'] == ElementType.TRACK: # For now, only save tracks
-                tracks_data_to_save.append(list(element['data'])) 
-        return tracks_data_to_save
+            if element['type'] == ElementType.TRACK:
+                data_to_save.append(list(element['data']))
+            elif element['type'] == ElementType.MEASUREMENT_LINE and len(element['data']) == 2 : # Lines are saved if fully defined
+                data_to_save.append(list(element['data'])) # For now, treat line points like track points for saving
+        return data_to_save
 
     def load_tracks_from_data(self, parsed_data: List[Tuple[int, int, float, float, float]],
                               video_width: int, video_height: int, video_frame_count: int, video_fps: float
@@ -569,16 +614,37 @@ class ElementManager(QtCore.QObject):
                 if abs(time_ms - expected_time_ms) > time_tolerance_ms: warnings.append(f"{point_description}: Time ({time_ms:.1f}ms) seems inconsistent with frame index and FPS (expected ~{expected_time_ms:.1f}ms). Using file time.")
             if is_valid_point: loaded_elements_by_id[track_id_from_file].append((frame_idx, time_ms, x, y)); valid_points_count +=1
             else: logger.warning(warnings[-1]); skipped_points_count +=1
-        self.reset(); skipped_empty_tracks_count = 0; loaded_elements_count = 0
-        sorted_track_ids_from_file = sorted(loaded_elements_by_id.keys())
-        for element_id_from_file in sorted_track_ids_from_file:
-            points_for_this_element = loaded_elements_by_id[element_id_from_file]
-            if not points_for_this_element: warnings.append(f"Track ID {element_id_from_file} from file is empty after validation. Skipped."); skipped_empty_tracks_count += 1; continue
-            points_for_this_element.sort(key=lambda p: p[0]) 
-            new_element = {'id': element_id_from_file, 'type': ElementType.TRACK, 'name': f"Track {element_id_from_file}", 'data': points_for_this_element, 'visibility_mode': TrackVisibilityMode.INCREMENTAL}
+        
+        self.reset(); skipped_empty_elements_count = 0; loaded_elements_count = 0
+        sorted_element_ids_from_file = sorted(loaded_elements_by_id.keys())
+        
+        for element_id_from_file in sorted_element_ids_from_file:
+            points_for_this_id = loaded_elements_by_id[element_id_from_file]
+            if not points_for_this_id: 
+                warnings.append(f"ID {element_id_from_file} from file is empty after validation. Skipped."); skipped_empty_elements_count += 1; continue
+            
+            points_for_this_id.sort(key=lambda p: p[0]) 
+            
+            element_type_loaded = ElementType.TRACK # Default to TRACK
+            # Infer type: If exactly two points on the same frame, assume MEASUREMENT_LINE [cite: 80, 180]
+            if len(points_for_this_id) == 2 and points_for_this_id[0][0] == points_for_this_id[1][0]: # [cite: 33, 81]
+                element_type_loaded = ElementType.MEASUREMENT_LINE
+                logger.debug(f"Loading ID {element_id_from_file} as MEASUREMENT_LINE (2 points on same frame).")
+            else:
+                logger.debug(f"Loading ID {element_id_from_file} as TRACK.")
+
+            new_element = {
+                'id': element_id_from_file, 
+                'type': element_type_loaded, 
+                'name': f"{element_type_loaded.name.title().replace('_',' ')} {element_id_from_file}", 
+                'data': points_for_this_id, 
+                'visibility_mode': ElementVisibilityMode.INCREMENTAL # Default for loaded elements
+            }
             self.elements.append(new_element); loaded_elements_count += 1
             if element_id_from_file >= self._next_element_id: self._next_element_id = element_id_from_file + 1
+        
         self.active_element_index = -1 
-        logger.info(f"Load from data: {loaded_elements_count} element(s) (assumed TRACK type) loaded with {valid_points_count} points. {skipped_points_count} points skipped. {skipped_empty_tracks_count} empty elements skipped.")
+        logger.info(f"Load from data: {loaded_elements_count} element(s) loaded ({sum(1 for el in self.elements if el['type']==ElementType.TRACK)} tracks, {sum(1 for el in self.elements if el['type']==ElementType.MEASUREMENT_LINE)} lines) "
+                    f"with {valid_points_count} points. {skipped_points_count} points skipped. {skipped_empty_elements_count} empty elements skipped.")
         self.elementListChanged.emit(); self.activeElementDataChanged.emit(); self.visualsNeedUpdate.emit() 
         return True, warnings

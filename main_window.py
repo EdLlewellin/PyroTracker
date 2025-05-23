@@ -10,7 +10,7 @@ from metadata_dialog import MetadataDialog
 import config
 from interactive_image_view import InteractiveImageView, InteractionMode
 # MODIFIED: Import ElementType from element_manager
-from element_manager import ElementManager, TrackVisibilityMode, PointData, VisualElement, UndoActionType, ElementType
+from element_manager import ElementManager, ElementVisibilityMode, PointData, VisualElement, UndoActionType, ElementType
 import file_io
 from video_handler import VideoHandler
 import ui_setup # This will setup the new QLineEdit and QLabel attributes
@@ -316,7 +316,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.table_data_controller._lines_table: # Check if lines table is initialized
                  self.element_manager.elementListChanged.connect(self.table_data_controller.update_lines_table_ui)
             self.element_manager.activeElementDataChanged.connect(self.table_data_controller.update_points_table_ui)
-            self.element_manager.activeElementDataChanged.connect(self.table_data_controller._sync_tracks_table_selection_with_manager)
+            self.element_manager.activeElementDataChanged.connect(self.table_data_controller._sync_active_element_selection_in_tables)
         self.element_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
 
         if self.scale_panel_controller: self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
