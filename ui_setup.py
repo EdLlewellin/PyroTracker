@@ -104,15 +104,8 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     rightPanelLayout.setContentsMargins(5, 5, 5, 5)
     rightPanelLayout.setSpacing(6)
 
-    auto_advance_group = QtWidgets.QGroupBox("Frame Advance")
-    auto_advance_layout = QtWidgets.QHBoxLayout(auto_advance_group)
-    auto_advance_layout.setContentsMargins(6, 2, 6, 6); auto_advance_layout.setSpacing(6)
-    main_window.autoAdvanceCheckBox = QtWidgets.QCheckBox("Auto-Advance on Click"); main_window.autoAdvanceCheckBox.setToolTip("Automatically advance frame after adding/updating a point")
-    auto_advance_layout.addWidget(main_window.autoAdvanceCheckBox)
-    main_window.autoAdvanceSpinBox = QtWidgets.QSpinBox(); main_window.autoAdvanceSpinBox.setMinimum(1); main_window.autoAdvanceSpinBox.setMaximum(100); main_window.autoAdvanceSpinBox.setValue(1); main_window.autoAdvanceSpinBox.setToolTip("Number of frames to advance automatically")
-    auto_advance_layout.addWidget(main_window.autoAdvanceSpinBox); auto_advance_layout.addStretch(1)
-    rightPanelLayout.addWidget(auto_advance_group)
-    logger.debug("Auto-Advance panel configured.")
+    # Removed Auto-Advance GroupBox from here
+    # logger.debug("Auto-Advance panel configured.") # This log line is also removed
 
     main_window.dataTabsWidget = QtWidgets.QTabWidget()
     main_window.dataTabsWidget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
@@ -121,13 +114,39 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     # --- Tracks Tab ---
     tracksTab = QtWidgets.QWidget()
     tracksTabLayout = QtWidgets.QVBoxLayout(tracksTab)
-    tracksTabLayout.setContentsMargins(2, 2, 2, 2)
+    tracksTabLayout.setContentsMargins(2, 2, 2, 2) # Keep existing margins for the tab's main layout
+
+    # Create a QHBoxLayout for the "New Track" button and "Auto-Advance" controls
+    track_controls_layout = QtWidgets.QHBoxLayout()
+    track_controls_layout.setContentsMargins(0, 0, 0, 0) # No extra margins for this inner layout
+    track_controls_layout.setSpacing(6)
 
     main_window.newTrackButton = QtWidgets.QPushButton("New Track")
     main_window.newTrackButton.setObjectName("newTrackButton")
     main_window.newTrackButton.setToolTip("Create a new track for marking points (Ctrl+N)")
     main_window.newTrackButton.setEnabled(False)
-    tracksTabLayout.addWidget(main_window.newTrackButton)
+    track_controls_layout.addWidget(main_window.newTrackButton) # Add to the new HBox
+
+    # Add a small spacer for better visual separation if desired
+    track_controls_layout.addSpacing(10)
+
+    # Initialize and configure Auto-Advance elements (these attributes should already exist on main_window)
+    main_window.autoAdvanceCheckBox = QtWidgets.QCheckBox("Auto-advance") # Shortened text
+    main_window.autoAdvanceCheckBox.setToolTip("Automatically advance frame after adding/updating a point")
+    track_controls_layout.addWidget(main_window.autoAdvanceCheckBox) # Add to HBox
+
+    main_window.autoAdvanceSpinBox = QtWidgets.QSpinBox()
+    main_window.autoAdvanceSpinBox.setMinimum(1)
+    main_window.autoAdvanceSpinBox.setMaximum(100)
+    main_window.autoAdvanceSpinBox.setValue(1)
+    main_window.autoAdvanceSpinBox.setToolTip("Number of frames to advance automatically")
+    track_controls_layout.addWidget(main_window.autoAdvanceSpinBox) # Add to HBox
+    
+    track_controls_layout.addStretch(1) # Add stretch to push controls to the left within the HBox
+
+    tracksTabLayout.addLayout(track_controls_layout) # Add the HBox to the tracks tab's main VBox layout
+    logger.debug("Tracks tab: New Track button and Auto-Advance controls configured in a horizontal layout.")
+
 
     main_window.tracksTableWidget = QtWidgets.QTableWidget()
     main_window.tracksTableWidget.verticalHeader().setVisible(False)
@@ -171,7 +190,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.tracksTableWidget.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksTabLayout.addWidget(main_window.tracksTableWidget)
     main_window.dataTabsWidget.addTab(tracksTab, "Tracks")
-    logger.debug("Tracks tab configured with New Track button at the top.")
+    logger.debug("Tracks tab configured with table.") # Updated log
 
     # --- Lines Tab ---
     linesTab = QtWidgets.QWidget()
