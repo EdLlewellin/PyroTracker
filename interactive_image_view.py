@@ -651,18 +651,33 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
              logger.debug(f"Interaction mode already set to {mode.name}")
 
     def _draw_temporary_scale_marker(self, scene_pos: QtCore.QPointF) -> QtWidgets.QGraphicsEllipseItem:
-        marker_size = 6.0
-        marker = QtWidgets.QGraphicsEllipseItem(
-            scene_pos.x() - marker_size / 2,
-            scene_pos.y() - marker_size / 2,
-            marker_size, marker_size
-        )
-        marker.setPen(QtGui.QPen(self._temp_scale_visuals_color, 1.5))
+        # Define the desired diameter of the marker in screen pixels
+        screen_pixel_diameter = 6.0 
+        radius = screen_pixel_diameter / 2.0
+
+        # Create the ellipse centered at (0,0) in its local coordinates.
+        # This local geometry will be rendered as screen pixels.
+        marker = QtWidgets.QGraphicsEllipseItem(-radius, -radius, screen_pixel_diameter, screen_pixel_diameter)
+        
+        # Set the marker's position in the scene.
+        marker.setPos(scene_pos) 
+
+        # Crucial step: Make the item ignore view transformations for its rendering.
+        marker.setFlag(QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        
+        # Pen width will now also be in screen pixels. A thin line is usually best.
+        pen = QtGui.QPen(self._temp_scale_visuals_color, 1.0) 
+        # pen.setCosmetic(True) # Cosmetic pen is less critical when ItemIgnoresTransformations is true for simple shapes
+        marker.setPen(pen)
         marker.setBrush(self._temp_scale_visuals_color)
         marker.setZValue(20) # Ensure it's on top
-        self._scene.addItem(marker)
+        
+        # Add to scene (if not already handled by a specific logic flow,
+        # though typically this method is called when adding it)
+        if marker.scene() != self._scene: # Avoid re-adding if it was somehow already there
+            self._scene.addItem(marker)
+            
         return marker
-
     def drawForeground(self, painter: QtGui.QPainter, rect: QtCore.QRectF) -> None:
         super().drawForeground(painter, rect)
 
