@@ -957,6 +957,10 @@ class MainWindow(QtWidgets.QMainWindow):
         elif status_bar and status_bar.currentMessage().startswith("Frame navigation disabled"):
             status_bar.clearMessage()
 
+        # Ensure the main UI state (including New Track/Line buttons) is refreshed
+        # when frame navigation is re-enabled after an exclusive action.
+        if not disable:
+            self._update_ui_state()
 
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
