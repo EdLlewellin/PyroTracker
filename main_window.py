@@ -961,17 +961,21 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
         if not (self.imageView and self.imageView._scene and self.video_loaded and self.current_frame_index >= 0):
-            if self.imageView: self.imageView.clearOverlay();
+            if self.imageView: self.imageView.clearOverlay()
             return
 
         scene = self.imageView._scene
-        self.imageView.clearOverlay()
+        self.imageView.clearOverlay() # Clears previously drawn items managed by this method
 
         try:
             marker_sz = float(settings_manager.get_setting(settings_manager.KEY_MARKER_SIZE))
-            visual_elements_to_draw = self.element_manager.get_visual_elements(self.current_frame_index)
+            
+            # Pass scale_manager to get_visual_elements
+            visual_elements_to_draw = self.element_manager.get_visual_elements(
+                self.current_frame_index,
+                self.scale_manager 
+            )
 
-            # Ensure all pens are initialized, including measurement line pens
             pens = {
                 config.STYLE_MARKER_ACTIVE_CURRENT: self.pen_marker_active_current,
                 config.STYLE_MARKER_ACTIVE_OTHER: self.pen_marker_active_other,
@@ -979,68 +983,147 @@ class MainWindow(QtWidgets.QMainWindow):
                 config.STYLE_MARKER_INACTIVE_OTHER: self.pen_marker_inactive_other,
                 config.STYLE_LINE_ACTIVE: self.pen_line_active,
                 config.STYLE_LINE_INACTIVE: self.pen_line_inactive,
-                # --- NEW: Add Measurement Line Pens to the pens dictionary ---
-                # These string keys ("style_measurement_line_normal", "style_measurement_line_active")
-                # must match what ElementManager.get_visual_elements() uses.
-                # Ideally, these string keys should be constants from config.py.
-                "style_measurement_line_normal": self.pen_measurement_line_normal,
-                "style_measurement_line_active": self.pen_measurement_line_active,
+                config.STYLE_MEASUREMENT_LINE_NORMAL: self.pen_measurement_line_normal, # Key from config.py
+                config.STYLE_MEASUREMENT_LINE_ACTIVE: self.pen_measurement_line_active, # Key from config.py
             }
 
+            items_to_add_to_scene = [] # Collect items before adding to avoid modifying during iteration if issues arise
+
             for el in visual_elements_to_draw:
-                pen = pens.get(el.get('style'))
-                if not pen:
-                    # If a style for a measurement line isn't in the pens dict yet (e.g., during development)
-                    # log a warning but don't crash.
-                    logger.warning(f"No pen defined for style '{el.get('style')}' in _redraw_scene_overlay. Skipping element.")
-                    continue
+                el_type = el.get('type')
+                style_key = el.get('style')
+                pen = pens.get(style_key)
 
-                current_pen = QtGui.QPen(pen)
-                current_pen.setCosmetic(True)
+                if el_type == 'marker' and el.get('pos'):
+                    if not pen:
+                        logger.warning(f"No pen defined for marker style '{style_key}'. Skipping.")
+                        continue
+                    current_pen = QtGui.QPen(pen) # Create a new QPen instance from the template
+                    current_pen.setCosmetic(True)
+                    x, y = el['pos']
+                    r = marker_sz / 2.0
+                    path = QtGui.QPainterPath()
+                    path.moveTo(x - r, y)
+                    path.lineTo(x + r, y)
+                    path.moveTo(x, y - r)
+                    path.lineTo(x, y + r)
+                    item = QtWidgets.QGraphicsPathItem(path)
+                    item.setPen(current_pen)
+                    item.setZValue(10) # Markers on top
+                    items_to_add_to_scene.append(item)
 
-                if el.get('type') == 'marker' and el.get('pos'):
-                    x, y = el['pos']; r = marker_sz / 2.0
-                    path = QtGui.QPainterPath(); path.moveTo(x - r, y); path.lineTo(x + r, y); path.moveTo(x, y - r); path.lineTo(x, y + r)
-                    item = QtWidgets.QGraphicsPathItem(path); item.setPen(current_pen); item.setZValue(10); scene.addItem(item)
-                elif el.get('type') == 'line' and el.get('p1') and el.get('p2'):
-                    p1, p2 = el['p1'], el['p2']
-                    item = QtWidgets.QGraphicsLineItem(p1[0], p1[1], p2[0], p2[1]); item.setPen(current_pen)
-                    # Differentiate Z-value if needed, e.g., measurement lines above track lines
-                    # For now, using the same as track lines, can be adjusted.
+                elif el_type == 'line' and el.get('p1') and el.get('p2'):
+                    if not pen:
+                        logger.warning(f"No pen defined for line style '{style_key}'. Skipping.")
+                        continue
+                    current_pen = QtGui.QPen(pen)
+                    current_pen.setCosmetic(True)
+                    p1_coords, p2_coords = el['p1'], el['p2']
+                    item = QtWidgets.QGraphicsLineItem(p1_coords[0], p1_coords[1], p2_coords[0], p2_coords[1])
+                    item.setPen(current_pen)
                     z_value = 9 
-                    if el.get('style') in ["style_measurement_line_normal", "style_measurement_line_active"]:
-                        z_value = 9 # Or a different value like 9.5 if they should be distinct from tracks
+                    # Example: measurement lines slightly above track lines if styles are distinct
+                    if style_key in [config.STYLE_MEASUREMENT_LINE_NORMAL, config.STYLE_MEASUREMENT_LINE_ACTIVE]:
+                        z_value = 9.5 
                     item.setZValue(z_value)
-                    scene.addItem(item)
+                    items_to_add_to_scene.append(item)
+                
+                elif el_type == 'text' and el.get('label_type') == 'measurement_line_length':
+                    # Handle drawing measurement line length labels
+                    text_string = el.get('text')
+                    line_p1_coords = el.get('line_p1')
+                    line_p2_coords = el.get('line_p2')
+                    font_size = el.get('font_size')
+                    text_qcolor = el.get('color') # ElementManager should provide QColor
 
+                    if not all([text_string, line_p1_coords, line_p2_coords, font_size, text_qcolor]):
+                        logger.warning(f"Incomplete data for text visual element (ID: {el.get('element_id')}). Skipping label.")
+                        continue
+                    
+                    if not isinstance(text_qcolor, QtGui.QColor) or not text_qcolor.isValid():
+                        logger.warning(f"Invalid color for text label (ID: {el.get('element_id')}). Using default black.")
+                        text_qcolor = QtGui.QColor("black")
+
+                    text_item = QtWidgets.QGraphicsSimpleTextItem(text_string)
+                    current_font = text_item.font()
+                    current_font.setPointSize(font_size)
+                    text_item.setFont(current_font)
+                    text_item.setBrush(QtGui.QBrush(text_qcolor))
+                    
+                    # Get position and rotation from the utility function
+                    text_pos, text_rot_deg = InteractiveImageView._calculate_text_label_transform(
+                        QtCore.QPointF(line_p1_coords[0], line_p1_coords[1]),
+                        QtCore.QPointF(line_p2_coords[0], line_p2_coords[1]),
+                        text_item.boundingRect(),
+                        self.imageView.sceneRect() # Ensure imageView and its sceneRect are valid
+                    )
+                    
+                    text_item.setPos(text_pos)
+                    # Set transform origin for rotation around text center
+                    text_center_x = text_item.boundingRect().width() / 2.0
+                    text_center_y = text_item.boundingRect().height() / 2.0
+                    text_item.setTransformOriginPoint(text_center_x, text_center_y)
+                    text_item.setRotation(text_rot_deg)
+                    
+                    text_item.setZValue(12) # Ensure labels are on top
+                    items_to_add_to_scene.append(text_item)
+
+            # Add all collected items to the scene
+            for item_to_add in items_to_add_to_scene:
+                scene.addItem(item_to_add)
+
+            # Draw Origin Marker (if enabled)
             if self.coord_panel_controller and self.coord_panel_controller.get_show_origin_marker_status():
                 origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
                 ox, oy = self.coord_transformer.get_current_origin_tl()
                 r_orig = origin_sz / 2.0
-                origin_pen_cosmetic = QtGui.QPen(self.pen_origin_marker); origin_pen_cosmetic.setCosmetic(True)
+                origin_pen_cosmetic = QtGui.QPen(self.pen_origin_marker)
+                origin_pen_cosmetic.setCosmetic(True) # Ensure consistent width regardless of zoom
                 origin_item = QtWidgets.QGraphicsEllipseItem(ox - r_orig, oy - r_orig, origin_sz, origin_sz)
-                origin_item.setPen(origin_pen_cosmetic); origin_item.setBrush(self.pen_origin_marker.color()); origin_item.setZValue(11)
+                origin_item.setPen(origin_pen_cosmetic)
+                origin_item.setBrush(self.pen_origin_marker.color())
+                origin_item.setZValue(11) # Origin marker Z value
                 scene.addItem(origin_item)
 
+            # Draw Defined Scale Line (if enabled and defined)
             if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
                self.scale_manager and self.scale_manager.has_defined_scale_line():
                 line_data = self.scale_manager.get_defined_scale_line_data()
                 scale_m_per_px = self.scale_manager.get_scale_m_per_px()
                 if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
-                    p1x, p1y, p2x, p2y = line_data; dx = p2x - p1x; dy = p2y - p1y
-                    pixel_length = math.sqrt(dx*dx + dy*dy); meter_length = pixel_length * scale_m_per_px
-                    length_text = "Err"
-                    if self._export_handler: length_text = self._export_handler.format_length_value_for_line(meter_length)
-                    else: length_text = f"{meter_length:.2f} m"
+                    # This uses InteractiveImageView's method that adds QGraphicsItems
+                    # It also uses ExportHandler's formatting logic if available.
+                    # This part is okay as is, as it's for the *defined scale line*, not measurement lines.
+                    p1x, p1y, p2x, p2y = line_data
+                    dx = p2x - p1x
+                    dy = p2y - p1y
+                    pixel_length = math.sqrt(dx*dx + dy*dy)
+                    meter_length = pixel_length * scale_m_per_px
+                    length_text = "Err" # Default/fallback
+                    if hasattr(self, '_export_handler') and self._export_handler:
+                        length_text = self._export_handler.format_length_value_for_line(meter_length)
+                    else: # Fallback if export_handler not available (should be)
+                        length_text = f"{meter_length:.2f} m" 
+                    
                     line_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
                     text_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
                     font_sz = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
                     pen_w = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
-                    self.imageView.draw_persistent_scale_line(line_data=line_data, length_text=length_text, line_color=line_clr, text_color=text_clr, font_size=font_sz, pen_width=pen_w)
-        except Exception as e: logger.exception(f"Error during overlay drawing: {e}")
+                    
+                    self.imageView.draw_persistent_scale_line(
+                        line_data=line_data, 
+                        length_text=length_text, 
+                        line_color=line_clr, 
+                        text_color=text_clr, 
+                        font_size=font_sz, 
+                        pen_width=pen_w
+                    )
+        except Exception as e:
+            logger.exception(f"Error during overlay drawing: {e}")
         finally:
-            if self.imageView and self.imageView.viewport(): self.imageView.viewport().update()
-
+            # Ensure viewport is updated to reflect changes
+            if self.imageView and self.imageView.viewport():
+                self.imageView.viewport().update()
     def _get_export_resolution_choice(self) -> Optional[ExportResolutionMode]:
         dialog = QtWidgets.QDialog(self); dialog.setWindowTitle("Choose Export Resolution"); dialog.setModal(True)
         layout = QtWidgets.QVBoxLayout(dialog); label = QtWidgets.QLabel("Select the resolution for the export:"); layout.addWidget(label)

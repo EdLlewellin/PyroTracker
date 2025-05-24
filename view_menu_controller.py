@@ -27,6 +27,8 @@ class ViewMenuController(QtCore.QObject):
     viewShowScaleBarAction: Optional[QtGui.QAction] = None
     viewShowScaleLineAction: Optional[QtGui.QAction] = None
     viewShowOriginMarkerAction: Optional[QtGui.QAction] = None
+    # --- NEW ACTION FOR MEASUREMENT LINE LENGTHS ---
+    viewShowMeasurementLineLengthsAction: Optional[QtGui.QAction] = None
 
     def __init__(self,
                  main_window_ref: 'MainWindow',
@@ -89,6 +91,15 @@ class ViewMenuController(QtCore.QObject):
         )
         self._view_menu.addAction(self.viewShowOriginMarkerAction)
 
+        self._view_menu.addSeparator() # Separator before measurement line specific toggle
+
+        # --- NEW: Action for Measurement Line Lengths --- [cite: 63]
+        self.viewShowMeasurementLineLengthsAction = QtGui.QAction("Show Measurement Line Lengths", self._main_window_ref, checkable=True)
+        self.viewShowMeasurementLineLengthsAction.setStatusTip("Toggle visibility of length labels on measurement lines")
+        self.viewShowMeasurementLineLengthsAction.triggered.connect(self._handle_show_measurement_line_lengths_triggered)
+        self._view_menu.addAction(self.viewShowMeasurementLineLengthsAction)
+        # --- END NEW ---
+
         self.sync_all_menu_items_from_settings_and_panels() # Initial sync
         logger.info("View menu setup complete.")
 
@@ -96,7 +107,6 @@ class ViewMenuController(QtCore.QObject):
     def _handle_info_overlay_action_triggered(self, setting_key: str, checked: bool) -> None:
         """Handles toggling for info overlays (Filename, Time, Frame Number)."""
         if not self._main_window_ref.video_loaded:
-             # This should ideally be prevented by disabling the action, but as a safeguard:
             if setting_key == settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME and self.viewShowFilenameAction: self.viewShowFilenameAction.setChecked(False)
             elif setting_key == settings_manager.KEY_INFO_OVERLAY_SHOW_TIME and self.viewShowTimeAction: self.viewShowTimeAction.setChecked(False)
             elif setting_key == settings_manager.KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER and self.viewShowFrameNumberAction: self.viewShowFrameNumberAction.setChecked(False)
@@ -107,14 +117,25 @@ class ViewMenuController(QtCore.QObject):
         if self._image_view_ref:
             self._image_view_ref.refresh_info_overlay_appearance()
 
+    # --- NEW HANDLER for Measurement Line Lengths Visibility ---
+    @QtCore.Slot(bool)
+    def _handle_show_measurement_line_lengths_triggered(self, checked: bool) -> None:
+        """Handles toggling for showing measurement line lengths."""
+        # This action's enabled state might depend on video loaded, but the setting itself is global.
+        logger.debug(f"ViewMenuController: Show Measurement Line Lengths action triggered to {checked}.")
+        settings_manager.set_setting(settings_manager.KEY_SHOW_MEASUREMENT_LINE_LENGTHS, checked)
+        # Trigger a redraw of the scene overlay in MainWindow
+        if hasattr(self._main_window_ref, '_redraw_scene_overlay'):
+            self._main_window_ref._redraw_scene_overlay()
+        self.sync_all_menu_items_from_settings_and_panels() # Ensure menu is up-to-date
+    # --- END NEW HANDLER ---
+
     @QtCore.Slot(QtWidgets.QCheckBox, bool)
     def _handle_synced_overlay_action_triggered(self,
                                                  panel_checkbox: Optional[QtWidgets.QCheckBox],
                                                  menu_action_checked_state: bool) -> None:
         """
         Handles toggling for synced overlays (Scale Bar, Scale Line, Origin) from the View menu.
-        This will programmatically toggle the panel checkbox, and then directly call the
-        panel controller's handler to ensure the logic runs.
         """
         if not panel_checkbox:
             logger.warning("Synced overlay action triggered but panel_checkbox is None.")
@@ -122,18 +143,12 @@ class ViewMenuController(QtCore.QObject):
 
         logger.debug(f"ViewMenuController: Menu action for '{panel_checkbox.objectName()}' triggered. Desired state: {menu_action_checked_state}")
 
-        # 1. Update the panel checkbox state programmatically
-        # Block signals on the checkbox during this programmatic change to prevent its own
-        # toggled signal from firing and potentially causing loops or redundant actions if
-        # it's connected back to sync the menu.
         if panel_checkbox.isChecked() != menu_action_checked_state:
             panel_checkbox.blockSignals(True)
             panel_checkbox.setChecked(menu_action_checked_state)
             panel_checkbox.blockSignals(False)
             logger.debug(f"ViewMenuController: Panel checkbox '{panel_checkbox.objectName()}' state programmatically set to {menu_action_checked_state}.")
 
-        # 2. Directly call the panel controller's handler method to ensure logic runs
-        # This is crucial for the action to take effect even if the panel is collapsed.
         if panel_checkbox is self._main_window_ref.showScaleBarCheckBox:
             if self._main_window_ref.scale_panel_controller:
                 logger.debug(f"ViewMenuController: Directly calling ScalePanelController._on_show_scale_bar_toggled({menu_action_checked_state})")
@@ -144,27 +159,22 @@ class ViewMenuController(QtCore.QObject):
                 self._main_window_ref.scale_panel_controller._on_show_defined_scale_line_toggled(menu_action_checked_state)
         elif panel_checkbox is self._main_window_ref.showOriginCheckBox:
             if self._main_window_ref.coord_panel_controller:
-                # The _on_toggle_show_origin slot expects an integer (QtCore.Qt.CheckState)
                 qt_check_state = QtCore.Qt.CheckState.Checked.value if menu_action_checked_state else QtCore.Qt.CheckState.Unchecked.value
                 logger.debug(f"ViewMenuController: Directly calling CoordinatePanelController._on_toggle_show_origin({qt_check_state})")
                 self._main_window_ref.coord_panel_controller._on_toggle_show_origin(qt_check_state)
         
-        # After the direct call, the panel controller should have updated the application state
-        # (e.g., settings) and triggered necessary visual redraws.
-        # We should ensure the menu item states are fully consistent.
         self.sync_all_menu_items_from_settings_and_panels()
-
 
     @QtCore.Slot()
     def sync_panel_checkbox_to_menu(self, panel_checkbox: QtWidgets.QCheckBox) -> None:
         """
         Called when a panel checkbox (Scale Bar, Scale Line, Origin) is toggled by the user.
         Updates the corresponding View menu QAction's checked state.
-        The panel checkbox's own slot is responsible for updating SettingsManager and visuals.
         """
         if not self._view_menu: return
 
         action_to_sync: Optional[QtGui.QAction] = None
+        # --- NO CHANGE HERE FOR MEASUREMENT LINE LENGTHS AS IT'S NOT DIRECTLY TIED TO A PANEL CHECKBOX ---
         if panel_checkbox is self._main_window_ref.showScaleBarCheckBox:
             action_to_sync = self.viewShowScaleBarAction
         elif panel_checkbox is self._main_window_ref.showScaleLineCheckBox:
@@ -174,25 +184,18 @@ class ViewMenuController(QtCore.QObject):
 
         if action_to_sync:
             new_checkbox_state = panel_checkbox.isChecked()
-            # Only update the menu's checked state if it's different
             if action_to_sync.isChecked() != new_checkbox_state:
                 logger.debug(f"ViewMenuController: Panel checkbox '{panel_checkbox.objectName()}' changed by user to {new_checkbox_state}. Syncing menu action '{action_to_sync.text()}'.")
                 action_to_sync.blockSignals(True)
                 action_to_sync.setChecked(new_checkbox_state)
                 action_to_sync.blockSignals(False)
             
-            # The panel controller (connected to the checkbox's toggled signal) handles the actual logic.
-            # After the panel checkbox changes state (and its controller logic runs),
-            # it's good to ensure all menu items (including enabled states) are refreshed.
-            # MainWindow._update_ui_state often calls sync_all_menu_items. If not, or for robustness:
             self.sync_all_menu_items_from_settings_and_panels()
-
 
     def sync_all_menu_items_from_settings_and_panels(self) -> None:
         """
         Synchronizes all View menu checkable actions with their current settings
-        or corresponding panel checkbox states. Also updates enabled states based on
-        actual application conditions.
+        or corresponding panel checkbox states. Also updates enabled states.
         """
         if not self._view_menu:
             logger.warning("ViewMenuController: sync_all_menu_items_from_settings_and_panels called but viewMenu not initialized.")
@@ -200,17 +203,15 @@ class ViewMenuController(QtCore.QObject):
         logger.debug("ViewMenuController: Syncing all View menu states...")
 
         video_is_loaded = self._main_window_ref.video_loaded
-        # These conditions are critical for enabling/disabling menu items correctly
         scale_is_set = False
         scale_line_is_defined = False
-        if self._main_window_ref.scale_manager: # Ensure scale_manager exists
+        if self._main_window_ref.scale_manager:
             scale_is_set = self._main_window_ref.scale_manager.get_scale_m_per_px() is not None
             scale_line_is_defined = self._main_window_ref.scale_manager.has_defined_scale_line()
 
-        # Info Overlays (visibility from settings, enabled if video loaded)
+        # Info Overlays
         if self.viewShowFilenameAction:
             self.viewShowFilenameAction.blockSignals(True)
-            # Checked state from settings
             self.viewShowFilenameAction.setChecked(settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME))
             self.viewShowFilenameAction.setEnabled(video_is_loaded)
             self.viewShowFilenameAction.blockSignals(False)
@@ -225,45 +226,43 @@ class ViewMenuController(QtCore.QObject):
             self.viewShowFrameNumberAction.setEnabled(video_is_loaded)
             self.viewShowFrameNumberAction.blockSignals(False)
 
-        # --- Synced Overlays ---
-
-        # Show Origin Marker Action
+        # Synced Overlays
         if self.viewShowOriginMarkerAction and self._main_window_ref.showOriginCheckBox:
             self.viewShowOriginMarkerAction.blockSignals(True)
-            # Checked state mirrors the panel checkbox
             self.viewShowOriginMarkerAction.setChecked(self._main_window_ref.showOriginCheckBox.isChecked())
-            # Enabled state depends on whether a video is loaded
             self.viewShowOriginMarkerAction.setEnabled(video_is_loaded)
             self.viewShowOriginMarkerAction.blockSignals(False)
-
-        # Show Scale Bar Action
         if self.viewShowScaleBarAction and self._main_window_ref.showScaleBarCheckBox:
             self.viewShowScaleBarAction.blockSignals(True)
             self.viewShowScaleBarAction.setChecked(self._main_window_ref.showScaleBarCheckBox.isChecked())
-            # Enabled state depends on video loaded AND scale being set
             self.viewShowScaleBarAction.setEnabled(video_is_loaded and scale_is_set)
             self.viewShowScaleBarAction.blockSignals(False)
-
-        # Show Defined Scale Line Action
         if self.viewShowScaleLineAction and self._main_window_ref.showScaleLineCheckBox:
             self.viewShowScaleLineAction.blockSignals(True)
             self.viewShowScaleLineAction.setChecked(self._main_window_ref.showScaleLineCheckBox.isChecked())
-            # Enabled state depends on video loaded AND a scale line being defined
             self.viewShowScaleLineAction.setEnabled(video_is_loaded and scale_line_is_defined)
             self.viewShowScaleLineAction.blockSignals(False)
+
+        # --- NEW: Sync Measurement Line Lengths Action --- [cite: 64]
+        if self.viewShowMeasurementLineLengthsAction:
+            self.viewShowMeasurementLineLengthsAction.blockSignals(True)
+            # Checked state from settings
+            self.viewShowMeasurementLineLengthsAction.setChecked(settings_manager.get_setting(settings_manager.KEY_SHOW_MEASUREMENT_LINE_LENGTHS))
+            # Enabled if video is loaded (as lengths might be shown for any existing lines)
+            # or perhaps if element_manager has any measurement lines. For simplicity, video_is_loaded for now.
+            self.viewShowMeasurementLineLengthsAction.setEnabled(video_is_loaded)
+            self.viewShowMeasurementLineLengthsAction.blockSignals(False)
+        # --- END NEW ---
 
         logger.debug("ViewMenuController: All View menu states synced.")
 
     def handle_video_loaded_state_changed(self, is_loaded: bool) -> None:
-        """Updates the enabled state of menu items based on video load status."""
         logger.debug(f"ViewMenuController handling video loaded state: {is_loaded}")
-        # This will re-evaluate enabled states and checked states for all menu items.
         self.sync_all_menu_items_from_settings_and_panels()
         if is_loaded and self._image_view_ref:
              self._image_view_ref.refresh_info_overlay_appearance()
 
     def handle_preferences_applied(self) -> None:
-        """Called when preferences have been applied to update menu states and visuals."""
         logger.debug("ViewMenuController handling preferences applied.")
         self.sync_all_menu_items_from_settings_and_panels()
         if self._image_view_ref:
