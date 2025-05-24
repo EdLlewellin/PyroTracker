@@ -371,10 +371,53 @@ class TrackDataViewController(QtCore.QObject):
         else: target_table.clearSelection(); logger.debug(f"Controller: Could not find row for element ID {element_id_to_select} in table {target_table.objectName()}. Cleared selection.")
 
     def _create_centered_cell_widget_for_table(self, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
-        # ... (existing method) ...
-        cell_widget = QtWidgets.QWidget(); layout = QtWidgets.QHBoxLayout(cell_widget)
-        layout.addWidget(widget); layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.setContentsMargins(0, 0, 0, 0); return cell_widget
+        # 'widget' is the QRadioButton instance.
+
+        # 1. Define the core visual width needed for the radio button indicator itself.
+        # A typical QRadioButton indicator is around 13-18px wide depending on the style.
+        # Let's choose a value that ensures the indicator part is fully accommodated.
+        radio_button_indicator_width = 18  # pixels - adjust if needed
+        widget.setMinimumWidth(radio_button_indicator_width)
+        
+        # Set its size policy to Fixed horizontally, so it strictly uses its hint/minimum.
+        widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, 
+                             QtWidgets.QSizePolicy.Policy.Preferred) # Preferred height is usually fine
+
+        # 2. Create the container QWidget. This is what will be placed in the cell.
+        container_widget = QtWidgets.QWidget()
+        
+        # 3. Create a QHBoxLayout for the container.
+        layout = QtWidgets.QHBoxLayout(container_widget) # Assign layout to the container
+        
+        # Set zero margins for the layout itself, as the container's minimum width
+        # will define the space, and stretches will distribute it.
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        layout.addStretch(1)  # Flexible space on the left
+        layout.addWidget(widget) # Add the radio button (now with a fixed width)
+        layout.addStretch(1)  # Flexible space on the right
+        
+        # 4. Set a minimum width for the container_widget.
+        # This should be the radio button's visual width plus symmetrical padding for centering.
+        # This padding will be consumed by the stretch factors.
+        # Let's try 3 pixels of effective padding on each side.
+        padding_each_side_for_centering = 3
+        container_total_min_width = radio_button_indicator_width + (2 * padding_each_side_for_centering)
+        # Example: 18px (radio) + 2*3px (padding) = 24px total for the container.
+        
+        # Use the radio button's height hint for the container's minimum height.
+        radio_height_hint = widget.sizeHint().height()
+        if radio_height_hint <= 0: # Fallback if the hint is unusual
+            # Approximate height based on typical radio button appearance
+            radio_height_hint = radio_button_indicator_width + 2 
+        
+        container_widget.setMinimumSize(container_total_min_width, radio_height_hint)
+        
+        # Set the container's size policy so its sizeHint reflects its minimumSize.
+        container_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, 
+                                       QtWidgets.QSizePolicy.Policy.Preferred) # Minimum horizontally
+
+        return container_widget
 
     @QtCore.Slot()
     def update_tracks_table_ui(self) -> None:

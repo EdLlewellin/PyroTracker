@@ -182,10 +182,14 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     tracksHeader.setSectionResizeMode(config.COL_TRACK_POINTS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksHeader.setSectionResizeMode(config.COL_TRACK_START_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch)
     tracksHeader.setSectionResizeMode(config.COL_TRACK_END_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch)
-    tracksHeader.setSectionResizeMode(config.COL_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    tracksHeader.setSectionResizeMode(config.COL_VIS_HOME_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # New
-    tracksHeader.setSectionResizeMode(config.COL_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    tracksHeader.setSectionResizeMode(config.COL_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+    
+    # For visibility columns, rely only on ResizeToContents now
+    visibility_track_columns = [
+        config.COL_VIS_HIDDEN, config.COL_VIS_HOME_FRAME,
+        config.COL_VIS_INCREMENTAL, config.COL_VIS_ALWAYS
+    ]
+    for col_idx in visibility_track_columns:
+        tracksHeader.setSectionResizeMode(col_idx, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     
     main_window.tracksTableWidget.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksTabLayout.addWidget(main_window.tracksTableWidget)
@@ -247,11 +251,16 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_FRAME: linesHeader.setSectionResizeMode(config.COL_LINE_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: linesHeader.setSectionResizeMode(config.COL_LINE_LENGTH, QtWidgets.QHeaderView.ResizeMode.Stretch)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE: linesHeader.setSectionResizeMode(config.COL_LINE_ANGLE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_HIDDEN, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HOME_FRAME: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_HOME_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # New
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_INCREMENTAL, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: linesHeader.setSectionResizeMode(config.COL_LINE_VIS_ALWAYS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    
+    # For visibility columns in Lines Table, rely only on ResizeToContents
+    visibility_line_columns = []
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: visibility_line_columns.append(config.COL_LINE_VIS_HIDDEN)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HOME_FRAME: visibility_line_columns.append(config.COL_LINE_VIS_HOME_FRAME)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: visibility_line_columns.append(config.COL_LINE_VIS_INCREMENTAL)
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: visibility_line_columns.append(config.COL_LINE_VIS_ALWAYS)
+
+    for col_idx in visibility_line_columns:
+        linesHeader.setSectionResizeMode(col_idx, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        
     linesTabLayout.addWidget(main_window.linesTableWidget)
     main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines")
     logger.debug("Measurement Lines tab configured with table and New Line button at the top.")
