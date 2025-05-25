@@ -5,10 +5,12 @@ Central configuration file for PyroTracker constants.
 from PySide6 import QtGui
 
 # --- CSV Constants ---
-CSV_METADATA_PREFIX = "# "
-CSV_HEADER = ["track_id", "frame_index", "time_ms", "x", "y"]
+# Legacy CSV constants (CSV_METADATA_PREFIX, CSV_HEADER, EXPECTED_METADATA_KEYS)
+# have been removed as they are not used by the new JSON project format
+# or the planned data-only CSV export. New CSV export headers will be
+# defined by the export function itself.
 
-# Metadata Keys
+# Metadata Keys (still relevant for JSON project metadata and potentially new CSV headers)
 META_FILENAME = "Video Filename"
 META_WIDTH = "Frame Width"
 META_HEIGHT = "Frame Height"
@@ -16,7 +18,7 @@ META_FRAMES = "Frame Count"
 META_FPS = "FPS"
 META_DURATION = "Duration (ms)"
 META_SCALE_FACTOR_M_PER_PX = "Scale Factor (m/px)"
-META_DATA_UNITS = "Data Units" # Expected values: "px" or "m"
+META_DATA_UNITS = "Data Units" # Expected values: "px" or "m" for project metadata internal consistency
 META_COORD_SYSTEM_MODE = "Coordinate System Mode"
 META_COORD_ORIGIN_X_TL = "Coordinate Origin X (TL)"
 META_COORD_ORIGIN_Y_TL = "Coordinate Origin Y (TL)"
@@ -26,19 +28,8 @@ META_SCALE_LINE_P1X = "Scale Line P1 X (Scene px)"
 META_SCALE_LINE_P1Y = "Scale Line P1 Y (Scene px)"
 META_SCALE_LINE_P2X = "Scale Line P2 X (Scene px)"
 META_SCALE_LINE_P2Y = "Scale Line P2 Y (Scene px)"
-# --- NEW: Metadata key for showing measurement line lengths ---
 META_SHOW_MEASUREMENT_LINE_LENGTHS = "Show Measurement Line Lengths" # [cite: 75]
 
-# Metadata keys expected in CSV header for validation and writing.
-EXPECTED_METADATA_KEYS = [
-    META_APP_NAME, META_APP_VERSION,
-    META_FILENAME, META_WIDTH, META_HEIGHT, META_FRAMES, META_FPS, META_DURATION,
-    META_COORD_SYSTEM_MODE, META_COORD_ORIGIN_X_TL, META_COORD_ORIGIN_Y_TL,
-    META_SCALE_FACTOR_M_PER_PX, META_DATA_UNITS,
-    META_SCALE_LINE_P1X, META_SCALE_LINE_P1Y,
-    META_SCALE_LINE_P2X, META_SCALE_LINE_P2Y,
-    META_SHOW_MEASUREMENT_LINE_LENGTHS, # [cite: 75]
-]
 
 # --- Table Column Indices ---
 # Shared column indices for UI tables.

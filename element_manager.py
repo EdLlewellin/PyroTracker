@@ -10,6 +10,7 @@ import math # Added for length and angle calculation
 from collections import defaultdict
 from enum import Enum, auto
 from typing import List, Tuple, Dict, Optional, Any, TYPE_CHECKING # Added TYPE_CHECKING
+import copy
 
 from PySide6 import QtCore
 
@@ -595,6 +596,30 @@ class ElementManager(QtCore.QObject):
             active_element = self.elements[self.active_element_index]
             if active_element['type'] == ElementType.TRACK: return list(active_element['data']) 
         return []
+
+
+    def get_elements_by_type(self, element_type_filter: ElementType) -> List[Dict[str, Any]]:
+        """
+        Retrieves all elements of a specific type.
+
+        Args:
+            element_type_filter: The ElementType to filter by (e.g., ElementType.TRACK).
+
+        Returns:
+            A new list containing deep copies of element dictionaries that match
+            the specified type. Returns an empty list if no elements match.
+        """
+        # Return deep copies to prevent accidental modification of internal element data
+        # if the caller modifies the list or dictionaries within it.
+        import copy # Ensure copy module is imported (usually at the top of the file)
+        
+        matching_elements: List[Dict[str, Any]] = []
+        for el in self.elements:
+            if el.get('type') == element_type_filter:
+                matching_elements.append(copy.deepcopy(el))
+        
+        logger.debug(f"Retrieved {len(matching_elements)} elements of type {element_type_filter.name}")
+        return matching_elements
 
 
     def get_all_elements_for_project_save(self) -> List[Dict[str, Any]]:

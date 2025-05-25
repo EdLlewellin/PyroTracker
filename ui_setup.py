@@ -99,7 +99,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     # --- Right Panel (Controls and Data Tabs) ---
     main_window.rightPanelWidget = QtWidgets.QWidget()
     main_window.rightPanelWidget.setMaximumWidth(450)
-    main_window.rightPanelWidget.setMinimumWidth(380) 
+    main_window.rightPanelWidget.setMinimumWidth(380)
     rightPanelLayout = QtWidgets.QVBoxLayout(main_window.rightPanelWidget)
     rightPanelLayout.setContentsMargins(5, 5, 5, 5)
     rightPanelLayout.setSpacing(6)
@@ -114,7 +114,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     tracksTabLayout.setContentsMargins(2, 2, 2, 2)
 
     track_controls_layout = QtWidgets.QHBoxLayout()
-    track_controls_layout.setContentsMargins(0, 0, 0, 0) 
+    track_controls_layout.setContentsMargins(0, 0, 0, 0)
     track_controls_layout.setSpacing(6)
 
     main_window.newTrackButton = QtWidgets.QPushButton("New Track")
@@ -125,7 +125,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     track_controls_layout.addSpacing(10)
 
-    main_window.autoAdvanceCheckBox = QtWidgets.QCheckBox("Auto-advance") 
+    main_window.autoAdvanceCheckBox = QtWidgets.QCheckBox("Auto-advance")
     main_window.autoAdvanceCheckBox.setToolTip("Automatically advance frame after adding/updating a point")
     track_controls_layout.addWidget(main_window.autoAdvanceCheckBox)
 
@@ -134,53 +134,53 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.autoAdvanceSpinBox.setMaximum(100)
     main_window.autoAdvanceSpinBox.setValue(1)
     main_window.autoAdvanceSpinBox.setToolTip("Number of frames to advance automatically")
-    track_controls_layout.addWidget(main_window.autoAdvanceSpinBox) 
-    
-    track_controls_layout.addStretch(1) 
+    track_controls_layout.addWidget(main_window.autoAdvanceSpinBox)
 
-    tracksTabLayout.addLayout(track_controls_layout) 
+    track_controls_layout.addStretch(1)
+
+    tracksTabLayout.addLayout(track_controls_layout)
     logger.debug("Tracks tab: New Track button and Auto-Advance controls configured in a horizontal layout.")
 
 
     main_window.tracksTableWidget = QtWidgets.QTableWidget()
     main_window.tracksTableWidget.verticalHeader().setVisible(False)
-    main_window.tracksTableWidget.setColumnCount(config.TOTAL_TRACK_COLUMNS) 
+    main_window.tracksTableWidget.setColumnCount(config.TOTAL_TRACK_COLUMNS)
     main_window.tracksTableWidget.setHorizontalHeaderLabels(["", "ID", "Points", "Start", "End", "", "", "", ""])
     main_window.tracksTableWidget.setAlternatingRowColors(True); main_window.tracksTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     main_window.tracksTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
     main_window.tracksTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-    
+
     tracksHeader: QtWidgets.QHeaderView = main_window.tracksTableWidget.horizontalHeader()
-    
+
     icon_hidden = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogCancelButton)
     tracksHeader.model().setHeaderData(config.COL_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, icon_hidden, QtCore.Qt.ItemDataRole.DecorationRole)
     tracksHeader.model().setHeaderData(config.COL_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, "Hidden: Track is never shown.", QtCore.Qt.ItemDataRole.ToolTipRole)
 
-    icon_home_frame = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView) 
+    icon_home_frame = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView)
     tracksHeader.model().setHeaderData(config.COL_VIS_HOME_FRAME, QtCore.Qt.Orientation.Horizontal, icon_home_frame, QtCore.Qt.ItemDataRole.DecorationRole)
     tracksHeader.model().setHeaderData(config.COL_VIS_HOME_FRAME, QtCore.Qt.Orientation.Horizontal, "Home Frame: Markers visible only on frames with points. No lines.", QtCore.Qt.ItemDataRole.ToolTipRole)
 
     icon_incremental = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowRight)
     tracksHeader.model().setHeaderData(config.COL_VIS_INCREMENTAL, QtCore.Qt.Orientation.Horizontal, icon_incremental, QtCore.Qt.ItemDataRole.DecorationRole)
     tracksHeader.model().setHeaderData(config.COL_VIS_INCREMENTAL, QtCore.Qt.Orientation.Horizontal, "Incremental: Track appears point-by-point as video advances.", QtCore.Qt.ItemDataRole.ToolTipRole)
-    
+
     icon_always = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogApplyButton)
     tracksHeader.model().setHeaderData(config.COL_VIS_ALWAYS, QtCore.Qt.Orientation.Horizontal, icon_always, QtCore.Qt.ItemDataRole.DecorationRole)
     tracksHeader.model().setHeaderData(config.COL_VIS_ALWAYS, QtCore.Qt.Orientation.Horizontal, "Always Visible: Entire track is shown on all frames.", QtCore.Qt.ItemDataRole.ToolTipRole)
-    
+
     tracksHeader.setSectionResizeMode(config.COL_DELETE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksHeader.setSectionResizeMode(config.COL_TRACK_ID, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksHeader.setSectionResizeMode(config.COL_TRACK_POINTS, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksHeader.setSectionResizeMode(config.COL_TRACK_START_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch)
     tracksHeader.setSectionResizeMode(config.COL_TRACK_END_FRAME, QtWidgets.QHeaderView.ResizeMode.Stretch)
-    
+
     visibility_track_columns = [
         config.COL_VIS_HIDDEN, config.COL_VIS_HOME_FRAME,
         config.COL_VIS_INCREMENTAL, config.COL_VIS_ALWAYS
     ]
     for col_idx in visibility_track_columns:
         tracksHeader.setSectionResizeMode(col_idx, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    
+
     main_window.tracksTableWidget.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     tracksTabLayout.addWidget(main_window.tracksTableWidget)
     main_window.dataTabsWidget.addTab(tracksTab, "Tracks")
@@ -201,7 +201,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.linesTableWidget.setObjectName("linesTableWidget")
     main_window.linesTableWidget.verticalHeader().setVisible(False)
     main_window.linesTableWidget.setColumnCount(config.TOTAL_LINE_COLUMNS)
-    
+
     header_labels_lines: List[str] = [""] * config.TOTAL_LINE_COLUMNS
     header_labels_lines[config.COL_LINE_ID] = "ID"
     header_labels_lines[config.COL_LINE_FRAME] = "Frame"
@@ -212,17 +212,17 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: header_labels_lines[config.COL_LINE_VIS_INCREMENTAL] = ""
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: header_labels_lines[config.COL_LINE_VIS_ALWAYS] = ""
     main_window.linesTableWidget.setHorizontalHeaderLabels(header_labels_lines)
-    
+
     main_window.linesTableWidget.setAlternatingRowColors(True)
     main_window.linesTableWidget.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
     main_window.linesTableWidget.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
     main_window.linesTableWidget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-    
+
     linesHeader: QtWidgets.QHeaderView = main_window.linesTableWidget.horizontalHeader()
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN:
         linesHeader.model().setHeaderData(config.COL_LINE_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, icon_hidden, QtCore.Qt.ItemDataRole.DecorationRole)
         linesHeader.model().setHeaderData(config.COL_LINE_VIS_HIDDEN, QtCore.Qt.Orientation.Horizontal, "Hidden: Line is never shown.", QtCore.Qt.ItemDataRole.ToolTipRole)
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HOME_FRAME: 
+    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HOME_FRAME:
         linesHeader.model().setHeaderData(config.COL_LINE_VIS_HOME_FRAME, QtCore.Qt.Orientation.Horizontal, icon_home_frame, QtCore.Qt.ItemDataRole.DecorationRole)
         linesHeader.model().setHeaderData(config.COL_LINE_VIS_HOME_FRAME, QtCore.Qt.Orientation.Horizontal, "Home Frame: Line visible only on its definition frame.", QtCore.Qt.ItemDataRole.ToolTipRole)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL:
@@ -237,7 +237,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_FRAME: linesHeader.setSectionResizeMode(config.COL_LINE_FRAME, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: linesHeader.setSectionResizeMode(config.COL_LINE_LENGTH, QtWidgets.QHeaderView.ResizeMode.Stretch)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE: linesHeader.setSectionResizeMode(config.COL_LINE_ANGLE, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-    
+
     visibility_line_columns = []
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: visibility_line_columns.append(config.COL_LINE_VIS_HIDDEN)
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HOME_FRAME: visibility_line_columns.append(config.COL_LINE_VIS_HOME_FRAME)
@@ -246,7 +246,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     for col_idx in visibility_line_columns:
         linesHeader.setSectionResizeMode(col_idx, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        
+
     linesTabLayout.addWidget(main_window.linesTableWidget)
     main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines")
     logger.debug("Measurement Lines tab configured with table and New Line button at the top.")
@@ -292,7 +292,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     scale_group_outer_layout.addWidget(scale_contents_widget)
     main_window.scale_config_group.toggled.connect(scale_contents_widget.setVisible)
     scale_contents_widget.setVisible(main_window.scale_config_group.isChecked())
-    rightPanelLayout.addWidget(main_window.scale_config_group) 
+    rightPanelLayout.addWidget(main_window.scale_config_group)
     logger.debug("Scale Configuration panel configured.")
 
     main_window.coords_group = QtWidgets.QGroupBox("Coordinate System")
@@ -334,7 +334,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     coords_group_outer_layout.addWidget(coords_contents_widget)
     main_window.coords_group.toggled.connect(coords_contents_widget.setVisible)
     coords_contents_widget.setVisible(main_window.coords_group.isChecked())
-    rightPanelLayout.addWidget(main_window.coords_group) 
+    rightPanelLayout.addWidget(main_window.coords_group)
     logger.debug("Coordinate System panel configured.")
 
 
@@ -348,7 +348,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     except Exception as e:
         logger.warning(f"Could not set initial splitter sizes dynamically: {e}. Using fixed fallback.")
         main_window.mainSplitter.setSizes([600, 400])
-    main_window.mainSplitter.setStretchFactor(0, 3) 
+    main_window.mainSplitter.setStretchFactor(0, 3)
     main_window.mainSplitter.setStretchFactor(1, 1)
     logger.debug("Main splitter sizes and stretch factors configured.")
 
@@ -356,61 +356,82 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     logger.debug("Creating menus...")
     menu_bar: QtWidgets.QMenuBar = main_window.menuBar()
     file_menu: QtWidgets.QMenu = menu_bar.addMenu("&File")
+
     open_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogOpenButton)
-    open_action = QtGui.QAction(open_icon, "&Open Video...", main_window); open_action.setStatusTip("Select and load a video file"); open_action.setShortcut(QtGui.QKeySequence.StandardKey.Open); open_action.triggered.connect(main_window.open_video)
-    file_menu.addAction(open_action); file_menu.addSeparator()
-    
-    # --- MODIFIED for Phase C: Rename QAction for Load Project and update text ---
+    open_action = QtGui.QAction(open_icon, "&Open Video...", main_window)
+    open_action.setStatusTip("Select and load a video file")
+    open_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
+    open_action.triggered.connect(main_window.open_video)
+    file_menu.addAction(open_action)
+
+    file_menu.addSeparator()
+
     load_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowUp)
-    # The attribute on main_window will be self.loadProjectAction
-    main_window.loadProjectAction = QtGui.QAction(load_icon, "&Open Project...", main_window) # [cite: 58]
-    main_window.loadProjectAction.setStatusTip("Load project data from a JSON file") # [cite: 58]
-    # The connection to _trigger_load_project is handled in MainWindow.__init__
-    main_window.loadProjectAction.setEnabled(True) # Generally allow attempting to load a project
+    main_window.loadProjectAction = QtGui.QAction(load_icon, "&Open Project...", main_window)
+    main_window.loadProjectAction.setStatusTip("Load project data from a JSON file")
+    main_window.loadProjectAction.setEnabled(True) # Connection in MainWindow.__init__
     file_menu.addAction(main_window.loadProjectAction)
-    # --- END MODIFICATION ---
 
-    # --- MODIFIED for Phase B: Renamed QAction and its text for Save Project ---
     save_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton)
-    # The attribute on main_window will be self.saveProjectAction
-    main_window.saveProjectAction = QtGui.QAction(save_icon, "&Save Project As...", main_window) # [cite: 35]
-    main_window.saveProjectAction.setStatusTip("Save current project data to a JSON file") # [cite: 35]
+    main_window.saveProjectAction = QtGui.QAction(save_icon, "&Save Project As...", main_window)
+    main_window.saveProjectAction.setStatusTip("Save current project data to a JSON file")
     main_window.saveProjectAction.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
-    # The connection to _trigger_save_project will be done in main_window.py __init__
-    main_window.saveProjectAction.setEnabled(False) # Initial state
+    main_window.saveProjectAction.setEnabled(False) # Connection in MainWindow.__init__
     file_menu.addAction(main_window.saveProjectAction)
-    # --- END MODIFICATION ---
 
-    export_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton) 
+    file_menu.addSeparator() # Separator before export actions
+
+    # Export Data Submenu (New for Phase F) will be added here by MainWindow after setup
+
+    export_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton)
     main_window.exportViewAction = QtGui.QAction(export_icon, "Export Video with Overlays...", main_window)
     main_window.exportViewAction.setStatusTip("Export the current view with overlays to a video file")
     main_window.exportViewAction.setEnabled(False)
     file_menu.addAction(main_window.exportViewAction)
-    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon) 
+
+    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon)
     main_window.exportFrameAction = QtGui.QAction(export_frame_icon, "Export Current Frame to PNG...", main_window)
     main_window.exportFrameAction.setStatusTip("Export the current frame with overlays to a PNG image file")
-    main_window.exportFrameAction.setEnabled(False) 
+    main_window.exportFrameAction.setEnabled(False)
     file_menu.addAction(main_window.exportFrameAction)
+
     file_menu.addSeparator()
+
     info_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogInfoView)
-    main_window.videoInfoAction = QtGui.QAction(info_icon, "Video Information...", main_window); main_window.videoInfoAction.setStatusTip("Show technical information about the loaded video"); main_window.videoInfoAction.setEnabled(False)
-    file_menu.addAction(main_window.videoInfoAction); file_menu.addSeparator()
+    main_window.videoInfoAction = QtGui.QAction(info_icon, "Video Information...", main_window)
+    main_window.videoInfoAction.setStatusTip("Show technical information about the loaded video")
+    main_window.videoInfoAction.setEnabled(False)
+    file_menu.addAction(main_window.videoInfoAction)
+
+    file_menu.addSeparator()
+
     exit_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogCloseButton)
-    exit_action = QtGui.QAction(exit_icon, "E&xit", main_window); exit_action.setStatusTip("Exit the application"); exit_action.setShortcut(QtGui.QKeySequence.StandardKey.Quit); exit_action.triggered.connect(main_window.close)
+    exit_action = QtGui.QAction(exit_icon, "E&xit", main_window)
+    exit_action.setStatusTip("Exit the application")
+    exit_action.setShortcut(QtGui.QKeySequence.StandardKey.Quit)
+    exit_action.triggered.connect(main_window.close)
     file_menu.addAction(exit_action)
 
     edit_menu: QtWidgets.QMenu = menu_bar.addMenu("&Edit")
-    undo_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack) 
+    undo_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowBack)
     main_window.undoAction = QtGui.QAction(undo_icon, "&Undo Point Action", main_window)
     main_window.undoAction.setStatusTip("Undo the last point addition or modification (Ctrl+Z)")
     main_window.undoAction.setShortcut(QtGui.QKeySequence.StandardKey.Undo)
-    main_window.undoAction.setEnabled(False) 
+    main_window.undoAction.setEnabled(False)
     edit_menu.addAction(main_window.undoAction)
-    edit_menu.addSeparator() 
-    main_window.newTrackAction = QtGui.QAction("&New Track", main_window); main_window.newTrackAction.setStatusTip("Create a new track for marking points"); main_window.newTrackAction.setEnabled(False)
-    edit_menu.addAction(main_window.newTrackAction); edit_menu.addSeparator()
+
+    edit_menu.addSeparator()
+
+    main_window.newTrackAction = QtGui.QAction("&New Track", main_window)
+    main_window.newTrackAction.setStatusTip("Create a new track for marking points")
+    main_window.newTrackAction.setEnabled(False)
+    edit_menu.addAction(main_window.newTrackAction)
+
+    edit_menu.addSeparator()
+
     prefs_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
-    main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window); main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
+    main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window)
+    main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
     edit_menu.addAction(main_window.preferencesAction)
 
     main_window.setStatusBar(QtWidgets.QStatusBar())
