@@ -596,57 +596,194 @@ class ElementManager(QtCore.QObject):
             if active_element['type'] == ElementType.TRACK: return list(active_element['data']) 
         return []
 
-    def get_all_track_type_data_for_saving(self) -> AllElementsForSaving:
-        # ... (existing logic, Measurement lines are already included here) ...
-        data_to_save: AllElementsForSaving = []
-        for element in self.elements:
-            if element['type'] == ElementType.TRACK:
-                data_to_save.append(list(element['data']))
-            elif element['type'] == ElementType.MEASUREMENT_LINE and len(element['data']) == 2 :
-                data_to_save.append(list(element['data'])) 
-        return data_to_save
 
-    def load_tracks_from_data(self, parsed_data: List[Tuple[int, int, float, float, float]],
-                              video_width: int, video_height: int, video_frame_count: int, video_fps: float
-                             ) -> Tuple[bool, List[str]]:
-        # ... (existing logic, already handles inferring MEASUREMENT_LINE type on load) ...
-        warnings: List[str] = []; loaded_elements_by_id: Dict[int, List[PointData]] = defaultdict(list)
-        time_tolerance_ms = (500 / video_fps) if video_fps > 0 else 50.0 
-        valid_points_count = 0; skipped_points_count = 0
-        for track_id_from_file, frame_idx, time_ms, x, y in parsed_data:
-            point_description = f"Point (ID {track_id_from_file}, F{frame_idx})"; is_valid_point = True
-            if not (0 <= frame_idx < video_frame_count): warnings.append(f"{point_description}: Frame index out of video range. Skipped."); is_valid_point = False
-            if is_valid_point and not (0 <= x < video_width): warnings.append(f"{point_description}: X-coordinate out of video width. Skipped."); is_valid_point = False
-            if is_valid_point and not (0 <= y < video_height): warnings.append(f"{point_description}: Y-coordinate out of video height. Skipped."); is_valid_point = False
-            if is_valid_point and video_fps > 0:
-                expected_time_ms = (frame_idx / video_fps) * 1000.0
-                if abs(time_ms - expected_time_ms) > time_tolerance_ms: warnings.append(f"{point_description}: Time ({time_ms:.1f}ms) seems inconsistent with frame index and FPS (expected ~{expected_time_ms:.1f}ms). Using file time.")
-            if is_valid_point: loaded_elements_by_id[track_id_from_file].append((frame_idx, time_ms, x, y)); valid_points_count +=1
-            else: logger.warning(warnings[-1]); skipped_points_count +=1
-        
-        self.reset(); skipped_empty_elements_count = 0; loaded_elements_count = 0
-        sorted_element_ids_from_file = sorted(loaded_elements_by_id.keys())
-        
-        for element_id_from_file in sorted_element_ids_from_file:
-            points_for_this_id = loaded_elements_by_id[element_id_from_file]
-            if not points_for_this_id: 
-                warnings.append(f"ID {element_id_from_file} from file is empty after validation. Skipped."); skipped_empty_elements_count += 1; continue
-            points_for_this_id.sort(key=lambda p: p[0]) 
-            element_type_loaded = ElementType.TRACK 
-            if len(points_for_this_id) == 2 and points_for_this_id[0][0] == points_for_this_id[1][0]: 
-                element_type_loaded = ElementType.MEASUREMENT_LINE
-                logger.debug(f"Loading ID {element_id_from_file} as MEASUREMENT_LINE (2 points on same frame).")
-            else: logger.debug(f"Loading ID {element_id_from_file} as TRACK.")
-            new_element = {
-                'id': element_id_from_file, 'type': element_type_loaded, 
-                'name': f"{element_type_loaded.name.title().replace('_',' ')} {element_id_from_file}", 
-                'data': points_for_this_id, 'visibility_mode': ElementVisibilityMode.INCREMENTAL
+    def get_all_elements_for_project_save(self) -> List[Dict[str, Any]]:
+        """
+        Prepares all elements for saving in the JSON project file format.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries, where each dictionary
+                                 represents an element structured for JSON serialization.
+                                 Points are saved as raw Top-Left pixel coordinates.
+        """
+        elements_for_save: List[Dict[str, Any]] = []
+        for element in self.elements:
+            element_dict_for_save = {
+                'id': element['id'],
+                'type': element['type'].name,  # Store enum name as string [cite: 9]
+                'name': element.get('name', f"{element['type'].name.title()} {element['id']}"), # Ensure name exists [cite: 9]
+                'visibility_mode': element['visibility_mode'].name, # Store enum name as string [cite: 9]
+                'data': []
             }
-            self.elements.append(new_element); loaded_elements_count += 1
-            if element_id_from_file >= self._next_element_id: self._next_element_id = element_id_from_file + 1
+            
+            # Structure point data as a list of dictionaries [cite: 10]
+            point_list_for_save = []
+            for point_tuple in element['data']:
+                frame_idx, time_ms, x_tl_px, y_tl_px = point_tuple
+                point_dict = {
+                    'frame_index': frame_idx,
+                    'time_ms': time_ms,
+                    'x': x_tl_px, # Raw TL pixel coordinates [cite: 10]
+                    'y': y_tl_px  # Raw TL pixel coordinates [cite: 10]
+                }
+                point_list_for_save.append(point_dict)
+            
+            element_dict_for_save['data'] = point_list_for_save
+            elements_for_save.append(element_dict_for_save)
+            
+        logger.info(f"Prepared {len(elements_for_save)} elements for project saving.")
+        return elements_for_save
+
+# MODIFIED for Phase A: Renamed and restructured for JSON project loading
+    def load_elements_from_project_data(self,
+                                        elements_data_from_project: List[Dict[str, Any]],
+                                        video_width: int, # Still needed for point validation
+                                        video_height: int, # Still needed for point validation
+                                        video_frame_count: int, # Still needed for point validation
+                                        video_fps: float # Still needed for time consistency checks (optional)
+                                       ) -> Tuple[bool, List[str]]:
+        """
+        Loads elements from a list of dictionaries (typically from a JSON project file).
+
+        Args:
+            elements_data_from_project: A list of dictionaries, where each dictionary
+                                        represents an element.
+            video_width: Width of the current video for validating point coordinates.
+            video_height: Height of the current video for validating point coordinates.
+            video_frame_count: Total frames in the current video for validation.
+            video_fps: FPS of the current video for optional time consistency checks.
+
+        Returns:
+            Tuple[bool, List[str]]: A tuple containing a success boolean and a list
+                                    of warning messages.
+        """
+        warnings: List[str] = []
+        self.reset() # Clear existing elements before loading new ones
         
-        self.active_element_index = -1 
-        logger.info(f"Load from data: {loaded_elements_count} element(s) loaded ({sum(1 for el in self.elements if el['type']==ElementType.TRACK)} tracks, {sum(1 for el in self.elements if el['type']==ElementType.MEASUREMENT_LINE)} lines) "
-                    f"with {valid_points_count} points. {skipped_points_count} points skipped. {skipped_empty_elements_count} empty elements skipped.")
-        self.elementListChanged.emit(); self.activeElementDataChanged.emit(); self.visualsNeedUpdate.emit() 
+        max_loaded_id = 0
+        loaded_elements_count = 0
+        total_valid_points_loaded = 0
+        total_skipped_points = 0
+
+        time_tolerance_ms = (500 / video_fps) if video_fps > 0 else 50.0
+
+        for element_dict in elements_data_from_project:
+            element_id = element_dict.get('id')
+            element_type_str = element_dict.get('type')
+            element_name = element_dict.get('name')
+            visibility_mode_str = element_dict.get('visibility_mode')
+            points_list_of_dicts = element_dict.get('data', [])
+
+            # --- Validation of basic element structure ---
+            if element_id is None or not isinstance(element_id, int) or element_id <= 0:
+                warnings.append(f"Skipping element due to missing or invalid ID: {element_dict.get('name', 'Unknown')}")
+                logger.warning(f"Skipping element due to missing/invalid ID: {element_id}. Element dict: {element_dict}")
+                continue
+            if not element_type_str or not isinstance(element_type_str, str):
+                warnings.append(f"Skipping element ID {element_id} ({element_name}) due to missing or invalid type string.")
+                logger.warning(f"Skipping element ID {element_id} ({element_name}) due to missing or invalid type string: {element_type_str}")
+                continue
+
+            # --- Convert type string to ElementType enum ---
+            try:
+                element_type_enum = ElementType[element_type_str.upper()]
+            except KeyError:
+                warnings.append(f"Skipping element ID {element_id} ({element_name}) due to unrecognized type: '{element_type_str}'.")
+                logger.warning(f"Unrecognized element type '{element_type_str}' for element ID {element_id}.")
+                continue
+
+            # --- Convert visibility mode string to Enum ---
+            visibility_mode_enum = ElementVisibilityMode.INCREMENTAL # Default
+            if visibility_mode_str and isinstance(visibility_mode_str, str):
+                try:
+                    visibility_mode_enum = ElementVisibilityMode[visibility_mode_str.upper()]
+                except KeyError:
+                    warnings.append(f"Element ID {element_id} ({element_name}) has unrecognized visibility mode '{visibility_mode_str}'. Using default INCREMENTAL.")
+                    logger.warning(f"Unrecognized visibility mode '{visibility_mode_str}' for element ID {element_id}. Defaulting to INCREMENTAL.")
+            
+            internal_points_data: ElementData = []
+            current_element_skipped_points = 0
+            for point_dict in points_list_of_dicts:
+                frame_idx = point_dict.get('frame_index')
+                time_ms = point_dict.get('time_ms')
+                x_tl_px = point_dict.get('x')
+                y_tl_px = point_dict.get('y')
+
+                point_description = f"Point in Element ID {element_id} (F{frame_idx})"
+                is_valid_point = True
+
+                if not all(isinstance(val, (int, float)) for val in [frame_idx, time_ms, x_tl_px, y_tl_px]):
+                    warnings.append(f"{point_description}: Contains invalid or missing coordinate/frame/time data. Skipped.")
+                    is_valid_point = False
+                else: # Basic types are okay, now check values
+                    frame_idx = int(frame_idx) # Ensure int
+                    if not (0 <= frame_idx < video_frame_count):
+                        warnings.append(f"{point_description}: Frame index ({frame_idx}) out of video range [0, {video_frame_count-1}]. Skipped.")
+                        is_valid_point = False
+                    if is_valid_point and not (0 <= x_tl_px < video_width): # Assuming TL origin, so coords >= 0
+                        warnings.append(f"{point_description}: X-coordinate ({x_tl_px:.2f}) out of video width [0, {video_width-1}]. Skipped.")
+                        is_valid_point = False
+                    if is_valid_point and not (0 <= y_tl_px < video_height): # Assuming TL origin
+                        warnings.append(f"{point_description}: Y-coordinate ({y_tl_px:.2f}) out of video height [0, {video_height-1}]. Skipped.")
+                        is_valid_point = False
+                    if is_valid_point and video_fps > 0: # Optional time consistency check
+                        expected_time_ms = (frame_idx / video_fps) * 1000.0
+                        if abs(time_ms - expected_time_ms) > time_tolerance_ms:
+                            warnings.append(f"{point_description}: Time ({time_ms:.1f}ms) seems inconsistent with frame index and FPS (expected ~{expected_time_ms:.1f}ms). Using file time.")
+                
+                if is_valid_point:
+                    internal_points_data.append((frame_idx, time_ms, x_tl_px, y_tl_px))
+                else:
+                    current_element_skipped_points += 1
+                    logger.warning(warnings[-1]) # Log the last warning added
+
+            if not internal_points_data and element_type_enum == ElementType.MEASUREMENT_LINE and len(points_list_of_dicts) != 2:
+                # If it was supposed to be a line but its points were invalid, or it didn't have 2 points to begin with.
+                warnings.append(f"Element ID {element_id} ({element_name}) of type {element_type_enum.name} loaded with no valid points. It will be empty.")
+            elif not internal_points_data and element_type_enum == ElementType.TRACK and points_list_of_dicts:
+                # If it was a track with points, but all were invalid
+                 warnings.append(f"Element ID {element_id} ({element_name}) of type {element_type_enum.name} had all its points skipped due to validation errors. It will be empty.")
+
+
+            # Sort points by frame index for internal consistency
+            internal_points_data.sort(key=lambda p: p[0])
+
+            # Specific validation for Measurement Lines (must have exactly 2 points on the same frame)
+            if element_type_enum == ElementType.MEASUREMENT_LINE:
+                if len(internal_points_data) != 2:
+                    warnings.append(f"Element ID {element_id} ({element_name}): Measurement Line must have exactly 2 valid points. Found {len(internal_points_data)}. Skipping element.")
+                    logger.warning(f"Measurement Line ID {element_id} skipped. Expected 2 valid points, found {len(internal_points_data)}.")
+                    total_skipped_points += current_element_skipped_points
+                    continue # Skip this element
+                elif internal_points_data[0][0] != internal_points_data[1][0]: # Check if points are on the same frame
+                    warnings.append(f"Element ID {element_id} ({element_name}): Measurement Line points must be on the same frame. Found frames {internal_points_data[0][0]} and {internal_points_data[1][0]}. Skipping element.")
+                    logger.warning(f"Measurement Line ID {element_id} skipped. Points on different frames.")
+                    total_skipped_points += current_element_skipped_points
+                    continue # Skip this element
+
+            new_internal_element = {
+                'id': element_id,
+                'type': element_type_enum,
+                'name': element_name if element_name else f"{element_type_enum.name.title().replace('_',' ')} {element_id}",
+                'data': internal_points_data,
+                'visibility_mode': visibility_mode_enum
+            }
+            self.elements.append(new_internal_element)
+            loaded_elements_count += 1
+            total_valid_points_loaded += len(internal_points_data)
+            total_skipped_points += current_element_skipped_points
+            if element_id > max_loaded_id:
+                max_loaded_id = element_id
+
+        self._next_element_id = max_loaded_id + 1
+        self.active_element_index = -1 # Deselect any active element
+        
+        logger.info(f"Load from project data: {loaded_elements_count} element(s) loaded. "
+                    f"Total valid points: {total_valid_points_loaded}. Total skipped points: {total_skipped_points}.")
+        
+        self.elementListChanged.emit()
+        self.activeElementDataChanged.emit()
+        self.visualsNeedUpdate.emit()
+        self._clear_last_action() # Loading new data clears undo history
+        
         return True, warnings

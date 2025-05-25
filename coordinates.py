@@ -181,6 +181,16 @@ class CoordinateTransformer:
             "video_height": self._video_height # Preserves context for Y-inversion
         }
 
+    def reset(self) -> None:
+        """Resets the transformer to its default initial state."""
+        logger.info(f"Resetting CoordinateTransformer (Old Mode: {self._mode}, Old Origin TL: ({self._origin_x_tl:.3f}, {self._origin_y_tl:.3f}), Old Height: {self._video_height})")
+        self._mode = CoordinateSystem.TOP_LEFT
+        self._origin_x_tl = 0.0
+        self._origin_y_tl = 0.0
+        self._video_height = 0 # Reset video height as well
+        logger.info(f"CoordinateTransformer reset (New Mode: {self._mode}, New Origin TL: ({self._origin_x_tl:.3f}, {self._origin_y_tl:.3f}), New Height: {self._video_height})")
+        # Consider emitting a signal here if other components directly listen to CoordinateTransformer resets.
+
     # --- Properties for easier access to state ---
     @property
     def mode(self) -> CoordinateSystem:
