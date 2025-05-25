@@ -8,6 +8,7 @@ import os
 import logging
 import math
 import json
+import io # Import the io module for StringIO
 from typing import List, Tuple, Dict, Any, TYPE_CHECKING, Optional
 
 from PySide6 import QtWidgets, QtCore
@@ -17,14 +18,12 @@ from coordinates import CoordinateSystem, CoordinateTransformer
 from element_manager import ElementType
 
 if TYPE_CHECKING:
-    # from main_window import MainWindow # Not needed in this file directly now
-    # from element_manager import ElementManager # Already imported ElementType
     from scale_manager import ScaleManager
 
 logger = logging.getLogger(__name__)
 
 # --- JSON Project File Handling ---
-
+# ... (keep existing write_project_json_file and read_project_json_file functions as they are) ...
 def write_project_json_file(filepath: str, project_data_dict: Dict[str, Any]) -> None:
     """
     Writes the project data dictionary to a JSON file.
@@ -86,6 +85,7 @@ def read_project_json_file(filepath: str) -> Dict[str, Any]:
         raise
 
 # --- Unit Selection Dialog (Phase F.2, Step 2) ---
+# ... (keep existing UnitSelectionDialog class as it is) ...
 class UnitSelectionDialog(QtWidgets.QDialog):
     """
     A dialog for choosing export units (pixels or real-world units).
@@ -146,118 +146,110 @@ class UnitSelectionDialog(QtWidgets.QDialog):
             return "pixels"
         return None
 
-
-# --- Data-Only CSV Export Function (Phase F.4) ---
-# --- Data-Only CSV Export Function (Phase F.4) ---
-def export_elements_to_simple_csv(filepath: str,
-                                  elements_data: List[Dict[str, Any]], # This is List[ElementDictFromManager]
-                                  element_type_exported: ElementType,
-                                  desired_units: str,
-                                  scale_manager: 'ScaleManager',
-                                  coord_transformer: CoordinateTransformer) -> bool:
+# --- Helper for CSV Data Preparation ---
+def _prepare_csv_data_for_elements(elements_data: List[Dict[str, Any]],
+                                   element_type_exported: ElementType,
+                                   desired_units: str,
+                                   scale_manager: 'ScaleManager',
+                                   coord_transformer: CoordinateTransformer) -> Tuple[List[str], List[List[Any]]]:
     """
-    Exports track or line element data to a simple CSV file.
-
-    Args:
-        filepath: The path to save the CSV file.
-        elements_data: List of element dictionaries (tracks or lines) from ElementManager.
-                       The 'data' key in these dictionaries contains a list of PointData tuples.
-        element_type_exported: The type of elements being exported (TRACK or MEASUREMENT_LINE).
-        desired_units: "pixels" or "meters".
-        scale_manager: Instance of ScaleManager for unit conversion.
-        coord_transformer: Instance of CoordinateTransformer for coordinate system transformation.
-
-    Returns:
-        True if export was successful, False otherwise.
+    Prepares header and row data for CSV export, common logic for file and string output.
     """
-    logger.info(f"Exporting {element_type_exported.name} data to CSV: {filepath} in units: {desired_units}")
     unit_suffix = "_m" if desired_units == "meters" else "_px"
     header: List[str] = []
     rows_to_write: List[List[Any]] = []
 
+    if element_type_exported == ElementType.TRACK:
+        header = ["track_id", "frame_index", "time_ms", f"x{unit_suffix}", f"y{unit_suffix}"]
+        for el_dict in elements_data:
+            element_id = el_dict.get('id', 'N/A')
+            for point_tuple in el_dict.get('data', []):
+                frame_idx, time_ms, x_tl_px, y_tl_px = point_tuple
+                x_cs_px, y_cs_px = coord_transformer.transform_point_for_display(x_tl_px, y_tl_px)
+
+                x_out, y_out = x_cs_px, y_cs_px
+                if desired_units == "meters":
+                    scale_m_px = scale_manager.get_scale_m_per_px()
+                    if scale_m_px:
+                        x_out = x_cs_px * scale_m_px
+                        y_out = y_cs_px * scale_m_px
+                    else: # Fallback, should be prevented by UI ideally
+                        logger.warning(f"CSV Export: Track {element_id}, Frame {frame_idx} - Meters requested but no scale. Exporting pixels.")
+                        # Unit suffix in header remains "_m" if meters was desired, but data is px.
+                        # Or, change unit_suffix here based on actual output, but header is already set.
+                        # For simplicity, data will be px, header might say meters if scale was missing.
+
+                rows_to_write.append([
+                    element_id, frame_idx, f"{time_ms:.4f}",
+                    f"{x_out:.4f}", f"{y_out:.4f}"
+                ])
+    elif element_type_exported == ElementType.MEASUREMENT_LINE:
+        header = ["line_id", "definition_frame_index",
+                  f"p1_x{unit_suffix}", f"p1_y{unit_suffix}",
+                  f"p2_x{unit_suffix}", f"p2_y{unit_suffix}",
+                  f"length{unit_suffix}", "angle_deg"]
+        for el_dict in elements_data:
+            element_id = el_dict.get('id', 'N/A')
+            point_list_tuples = el_dict.get('data', [])
+            if len(point_list_tuples) == 2:
+                p1_tuple, p2_tuple = point_list_tuples[0], point_list_tuples[1]
+                def_frame_idx, _, p1_x_tl_px, p1_y_tl_px = p1_tuple
+                _, _, p2_x_tl_px, p2_y_tl_px = p2_tuple
+
+                p1_x_cs_px, p1_y_cs_px = coord_transformer.transform_point_for_display(p1_x_tl_px, p1_y_tl_px)
+                p2_x_cs_px, p2_y_cs_px = coord_transformer.transform_point_for_display(p2_x_tl_px, p2_y_tl_px)
+
+                p1_x_out, p1_y_out = p1_x_cs_px, p1_y_cs_px
+                p2_x_out, p2_y_out = p2_x_cs_px, p2_y_cs_px
+                
+                dx_cs_px, dy_cs_px = p2_x_cs_px - p1_x_cs_px, p2_y_cs_px - p1_y_cs_px
+                pixel_length_cs = math.sqrt(dx_cs_px**2 + dy_cs_px**2)
+                length_out = pixel_length_cs
+
+                if desired_units == "meters":
+                    scale_m_px = scale_manager.get_scale_m_per_px()
+                    if scale_m_px:
+                        p1_x_out = p1_x_cs_px * scale_m_px
+                        p1_y_out = p1_y_cs_px * scale_m_px
+                        p2_x_out = p2_x_cs_px * scale_m_px
+                        p2_y_out = p2_y_cs_px * scale_m_px
+                        length_out = pixel_length_cs * scale_m_px
+                    else:
+                        logger.warning(f"CSV Export: Line {element_id} - Meters requested but no scale. Exporting pixel values for coords/length.")
+                
+                angle_rad = math.atan2(-dy_cs_px, dx_cs_px)
+                angle_deg = math.degrees(angle_rad)
+                if angle_deg < 0: angle_deg += 360.0
+
+                rows_to_write.append([
+                    element_id, def_frame_idx,
+                    f"{p1_x_out:.4f}", f"{p1_y_out:.4f}",
+                    f"{p2_x_out:.4f}", f"{p2_y_out:.4f}",
+                    f"{length_out:.4f}", f"{angle_deg:.2f}"
+                ])
+            else:
+                logger.warning(f"Measurement line {element_id} does not have 2 points. Skipping for CSV export.")
+    else:
+        logger.error(f"Unsupported element type for CSV data preparation: {element_type_exported}")
+
+    return header, rows_to_write
+
+# --- Data-Only CSV Export Functions (Phase F.4 & Quick Save/Copy extension) ---
+def export_elements_to_simple_csv(filepath: str,
+                                  elements_data: List[Dict[str, Any]],
+                                  element_type_exported: ElementType,
+                                  desired_units: str,
+                                  scale_manager: 'ScaleManager',
+                                  coord_transformer: CoordinateTransformer) -> bool:
+    logger.info(f"Exporting {element_type_exported.name} data to CSV file: {filepath} in units: {desired_units}")
     try:
-        if element_type_exported == ElementType.TRACK:
-            header = ["track_id", "frame_index", "time_ms", f"x{unit_suffix}", f"y{unit_suffix}"]
-            for el_dict in elements_data:
-                element_id = el_dict.get('id', 'N/A')
-                # el_dict['data'] is List[PointData], where PointData is Tuple[int, float, float, float]
-                # PointData = (frame_idx, time_ms, x_tl_px, y_tl_px)
-                for point_tuple in el_dict.get('data', []): # point_tuple is a PointData tuple
-                    frame_idx, time_ms, x_tl_px, y_tl_px = point_tuple # Unpack the tuple
-                    
-                    x_cs_px, y_cs_px = coord_transformer.transform_point_for_display(x_tl_px, y_tl_px)
+        header, rows_to_write = _prepare_csv_data_for_elements(
+            elements_data, element_type_exported, desired_units,
+            scale_manager, coord_transformer
+        )
 
-                    x_out, y_out = x_cs_px, y_cs_px
-                    if desired_units == "meters":
-                        scale_m_px = scale_manager.get_scale_m_per_px()
-                        if scale_m_px:
-                            x_out = x_cs_px * scale_m_px
-                            y_out = y_cs_px * scale_m_px
-                        else:
-                            logger.warning("Attempting to export tracks in meters but no scale is set. Using pixels.")
-                            x_out, y_out = x_cs_px, y_cs_px 
-
-                    rows_to_write.append([
-                        element_id,
-                        frame_idx, # Already an int
-                        f"{time_ms:.4f}",
-                        f"{x_out:.4f}",
-                        f"{y_out:.4f}"
-                    ])
-        elif element_type_exported == ElementType.MEASUREMENT_LINE:
-            header = ["line_id", "definition_frame_index",
-                      f"p1_x{unit_suffix}", f"p1_y{unit_suffix}",
-                      f"p2_x{unit_suffix}", f"p2_y{unit_suffix}",
-                      f"length{unit_suffix}", "angle_deg"]
-            for el_dict in elements_data:
-                element_id = el_dict.get('id', 'N/A')
-                # el_dict['data'] is List[PointData]
-                point_list_tuples = el_dict.get('data', []) 
-                if len(point_list_tuples) == 2:
-                    p1_tuple, p2_tuple = point_list_tuples[0], point_list_tuples[1]
-                    
-                    # Unpack PointData tuples
-                    def_frame_idx, _, p1_x_tl_px, p1_y_tl_px = p1_tuple
-                    _,         _, p2_x_tl_px, p2_y_tl_px = p2_tuple
-                    # Note: Assuming time_ms from points isn't needed for line definition export,
-                    # definition_frame_index is taken from the first point.
-
-                    p1_x_cs_px, p1_y_cs_px = coord_transformer.transform_point_for_display(p1_x_tl_px, p1_y_tl_px)
-                    p2_x_cs_px, p2_y_cs_px = coord_transformer.transform_point_for_display(p2_x_tl_px, p2_y_tl_px)
-
-                    p1_x_out, p1_y_out = p1_x_cs_px, p1_y_cs_px
-                    p2_x_out, p2_y_out = p2_x_cs_px, p2_y_cs_px
-                    
-                    dx_cs_px, dy_cs_px = p2_x_cs_px - p1_x_cs_px, p2_y_cs_px - p1_y_cs_px
-                    pixel_length_cs = math.sqrt(dx_cs_px**2 + dy_cs_px**2)
-                    length_out = pixel_length_cs
-
-                    if desired_units == "meters":
-                        scale_m_px = scale_manager.get_scale_m_per_px()
-                        if scale_m_px:
-                            p1_x_out = p1_x_cs_px * scale_m_px
-                            p1_y_out = p1_y_cs_px * scale_m_px
-                            p2_x_out = p2_x_cs_px * scale_m_px
-                            p2_y_out = p2_y_cs_px * scale_m_px
-                            length_out = pixel_length_cs * scale_m_px
-                        else:
-                            logger.warning(f"Attempting to export line {element_id} in meters but no scale is set. Using pixels.")
-
-                    angle_rad = math.atan2(-dy_cs_px, dx_cs_px) 
-                    angle_deg = math.degrees(angle_rad)
-                    if angle_deg < 0: angle_deg += 360.0
-
-                    rows_to_write.append([
-                        element_id,
-                        def_frame_idx,
-                        f"{p1_x_out:.4f}", f"{p1_y_out:.4f}",
-                        f"{p2_x_out:.4f}", f"{p2_y_out:.4f}",
-                        f"{length_out:.4f}", f"{angle_deg:.2f}"
-                    ])
-                else:
-                    logger.warning(f"Measurement line {element_id} does not have 2 points. Skipping for CSV export.")
-        else:
-            logger.error(f"Unsupported element type for CSV export: {element_type_exported}")
+        if not header and not rows_to_write and element_type_exported not in [ElementType.TRACK, ElementType.MEASUREMENT_LINE]:
+            # This case means _prepare_csv_data_for_elements logged an error for unsupported type
             return False
 
         with open(filepath, 'w', newline='', encoding='utf-8') as csvfile:
@@ -275,3 +267,36 @@ def export_elements_to_simple_csv(filepath: str,
     except Exception as e:
         logger.error(f"Unexpected error during CSV export to '{filepath}': {e}", exc_info=True)
         return False
+
+def generate_csv_string_for_elements(elements_data: List[Dict[str, Any]],
+                                     element_type_exported: ElementType,
+                                     desired_units: str,
+                                     scale_manager: 'ScaleManager',
+                                     coord_transformer: CoordinateTransformer) -> str:
+    """
+    Generates CSV formatted data as a string for the given elements.
+    """
+    logger.info(f"Generating CSV string for {element_type_exported.name} data in units: {desired_units}")
+    try:
+        header, rows_to_write = _prepare_csv_data_for_elements(
+            elements_data, element_type_exported, desired_units,
+            scale_manager, coord_transformer
+        )
+
+        if not header and not rows_to_write and element_type_exported not in [ElementType.TRACK, ElementType.MEASUREMENT_LINE]:
+            return "" # Error already logged by helper
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        if header:
+            writer.writerow(header)
+        writer.writerows(rows_to_write)
+        
+        csv_string = output.getvalue()
+        output.close()
+        logger.info(f"Successfully generated CSV string with {len(rows_to_write)} data rows.")
+        return csv_string
+
+    except Exception as e:
+        logger.error(f"Unexpected error during CSV string generation: {e}", exc_info=True)
+        return ""

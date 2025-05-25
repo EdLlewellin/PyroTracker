@@ -117,10 +117,30 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     track_controls_layout.setContentsMargins(0, 0, 0, 0)
     track_controls_layout.setSpacing(6)
 
-    main_window.newTrackButton = QtWidgets.QPushButton("New Track")
+    # Save Tracks Table Button
+    main_window.saveTracksTableButton = QtWidgets.QPushButton()
+    main_window.saveTracksTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton))
+    main_window.saveTracksTableButton.setToolTip("Save tracks data to CSV (uses current display units)")
+    main_window.saveTracksTableButton.setFlat(True)
+    main_window.saveTracksTableButton.setEnabled(False)
+    track_controls_layout.addWidget(main_window.saveTracksTableButton)
+
+    # Copy Tracks Table Button
+    main_window.copyTracksTableButton = QtWidgets.QPushButton()
+    main_window.copyTracksTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogContentsView)) # Using this as a placeholder for "copy"
+    main_window.copyTracksTableButton.setToolTip("Copy tracks data to clipboard (uses current display units)")
+    main_window.copyTracksTableButton.setFlat(True)
+    main_window.copyTracksTableButton.setEnabled(False)
+    track_controls_layout.addWidget(main_window.copyTracksTableButton)
+    
+    track_controls_layout.addSpacing(10) # Spacer
+
+    main_window.newTrackButton = QtWidgets.QPushButton("New")
+    # main_window.newTrackButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton)) # Using this as a '+' icon
     main_window.newTrackButton.setObjectName("newTrackButton")
     main_window.newTrackButton.setToolTip("Create a new track for marking points (Ctrl+N)")
     main_window.newTrackButton.setEnabled(False)
+    main_window.newTrackButton.setFlat(True) # Make it look more like a toolbar button
     track_controls_layout.addWidget(main_window.newTrackButton)
 
     track_controls_layout.addSpacing(10)
@@ -139,7 +159,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     track_controls_layout.addStretch(1)
 
     tracksTabLayout.addLayout(track_controls_layout)
-    logger.debug("Tracks tab: New Track button and Auto-Advance controls configured in a horizontal layout.")
+    logger.debug("Tracks tab: Control buttons (Save, Copy, New Track, Auto-Advance) configured.")
 
 
     main_window.tracksTableWidget = QtWidgets.QTableWidget()
@@ -191,11 +211,39 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     linesTabLayout = QtWidgets.QVBoxLayout(linesTab)
     linesTabLayout.setContentsMargins(2, 2, 2, 2)
 
-    main_window.newLineButton = QtWidgets.QPushButton("New Measurement Line")
+    # New horizontal layout for Lines tab controls
+    line_controls_layout = QtWidgets.QHBoxLayout()
+    line_controls_layout.setContentsMargins(0,0,0,0)
+    line_controls_layout.setSpacing(6)
+
+    # Save Lines Table Button
+    main_window.saveLinesTableButton = QtWidgets.QPushButton()
+    main_window.saveLinesTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton))
+    main_window.saveLinesTableButton.setToolTip("Save lines data to CSV (uses current display units)")
+    main_window.saveLinesTableButton.setFlat(True)
+    main_window.saveLinesTableButton.setEnabled(False)
+    line_controls_layout.addWidget(main_window.saveLinesTableButton)
+
+    # Copy Lines Table Button
+    main_window.copyLinesTableButton = QtWidgets.QPushButton()
+    main_window.copyLinesTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogContentsView)) # Placeholder for "copy"
+    main_window.copyLinesTableButton.setToolTip("Copy lines data to clipboard (uses current display units)")
+    main_window.copyLinesTableButton.setFlat(True)
+    main_window.copyLinesTableButton.setEnabled(False)
+    line_controls_layout.addWidget(main_window.copyLinesTableButton)
+    
+    line_controls_layout.addSpacing(10) # Spacer
+
+    main_window.newLineButton = QtWidgets.QPushButton("New")
+    # main_window.newLineButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton)) # Using this as a '+' icon
     main_window.newLineButton.setObjectName("newLineButton")
     main_window.newLineButton.setToolTip("Create a new measurement line")
     main_window.newLineButton.setEnabled(False)
-    linesTabLayout.addWidget(main_window.newLineButton)
+    main_window.newLineButton.setFlat(True) # Make it look more like a toolbar button
+    line_controls_layout.addWidget(main_window.newLineButton)
+    
+    line_controls_layout.addStretch(1) # Push buttons to the left
+    linesTabLayout.addLayout(line_controls_layout) # Add this control layout to the tab
 
     main_window.linesTableWidget = QtWidgets.QTableWidget()
     main_window.linesTableWidget.setObjectName("linesTableWidget")
@@ -249,7 +297,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     linesTabLayout.addWidget(main_window.linesTableWidget)
     main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines")
-    logger.debug("Measurement Lines tab configured with table and New Line button at the top.")
+    logger.debug("Measurement Lines tab configured with table and control buttons at the top.")
 
     # --- Points Tab ---
     pointsTab = QtWidgets.QWidget(); pointsTabLayout = QtWidgets.QVBoxLayout(pointsTab); pointsTabLayout.setContentsMargins(2, 2, 2, 2); pointsTabLayout.setSpacing(4)

@@ -128,6 +128,12 @@ class MainWindow(QtWidgets.QMainWindow):
     exportTracksCsvAction: Optional[QtGui.QAction] = None
     exportLinesCsvAction: Optional[QtGui.QAction] = None
 
+    # New attributes for table action buttons (Quick Save/Copy)
+    saveTracksTableButton: Optional[QtWidgets.QPushButton] = None
+    copyTracksTableButton: Optional[QtWidgets.QPushButton] = None
+    saveLinesTableButton: Optional[QtWidgets.QPushButton] = None
+    copyLinesTableButton: Optional[QtWidgets.QPushButton] = None
+
     pen_origin_marker: QtGui.QPen
     pen_marker_active_current: QtGui.QPen
     pen_marker_active_other: QtGui.QPen
@@ -500,6 +506,31 @@ class MainWindow(QtWidgets.QMainWindow):
             self._export_handler.exportProgress.connect(self._on_export_progress)
             self._export_handler.exportFinished.connect(self._on_export_finished)
 
+        # Connect new table action buttons (Quick Save/Copy)
+        if hasattr(self, 'saveTracksTableButton') and self.saveTracksTableButton:
+            self.saveTracksTableButton.clicked.connect(self._trigger_save_tracks_table_data)
+            logger.debug("Connected saveTracksTableButton clicked signal.")
+        else:
+            logger.warning("saveTracksTableButton not found after UI setup.")
+
+        if hasattr(self, 'copyTracksTableButton') and self.copyTracksTableButton:
+            self.copyTracksTableButton.clicked.connect(self._trigger_copy_tracks_table_data)
+            logger.debug("Connected copyTracksTableButton clicked signal.")
+        else:
+            logger.warning("copyTracksTableButton not found after UI setup.")
+
+        if hasattr(self, 'saveLinesTableButton') and self.saveLinesTableButton:
+            self.saveLinesTableButton.clicked.connect(self._trigger_save_lines_table_data)
+            logger.debug("Connected saveLinesTableButton clicked signal.")
+        else:
+            logger.warning("saveLinesTableButton not found after UI setup.")
+
+        if hasattr(self, 'copyLinesTableButton') and self.copyLinesTableButton:
+            self.copyLinesTableButton.clicked.connect(self._trigger_copy_lines_table_data)
+            logger.debug("Connected copyLinesTableButton clicked signal.")
+        else:
+            logger.warning("copyLinesTableButton not found after UI setup.")
+
         # Initial UI state update
         self._update_ui_state()
         if self.table_data_controller:
@@ -803,6 +834,16 @@ class MainWindow(QtWidgets.QMainWindow):
             has_lines = any(el.get('type') == ElementType.MEASUREMENT_LINE for el in self.element_manager.elements) if self.element_manager else False
             self.exportLinesCsvAction.setEnabled(is_video_loaded and has_lines)
 
+        # Update enabled state for new table action buttons
+        if hasattr(self, 'saveTracksTableButton') and self.saveTracksTableButton:
+            self.saveTracksTableButton.setEnabled(is_video_loaded and has_tracks)
+        if hasattr(self, 'copyTracksTableButton') and self.copyTracksTableButton:
+            self.copyTracksTableButton.setEnabled(is_video_loaded and has_tracks)
+        
+        if hasattr(self, 'saveLinesTableButton') and self.saveLinesTableButton:
+            self.saveLinesTableButton.setEnabled(is_video_loaded and has_lines)
+        if hasattr(self, 'copyLinesTableButton') and self.copyLinesTableButton:
+            self.copyLinesTableButton.setEnabled(is_video_loaded and has_lines)
 
         if hasattr(self, 'exportViewAction') and self.exportViewAction:
             self.exportViewAction.setEnabled(is_video_loaded)
@@ -1573,6 +1614,111 @@ class MainWindow(QtWidgets.QMainWindow):
                     elif self.imageView._scale_bar_widget.isVisible(): self.imageView._update_overlay_widget_positions()
             else: self.imageView.set_scale_bar_visibility(False)
         elif self.imageView : self.imageView.set_scale_bar_visibility(False)
+
+    # --- Slots for Quick Table Save/Copy ---
+    @QtCore.Slot()
+    def _trigger_save_tracks_table_data(self) -> None:
+        logger.info("Save Tracks Table Data button clicked.")
+        self._export_or_copy_table_data(ElementType.TRACK, to_clipboard=False)
+
+    @QtCore.Slot()
+    def _trigger_copy_tracks_table_data(self) -> None:
+        logger.info("Copy Tracks Table Data button clicked.")
+        self._export_or_copy_table_data(ElementType.TRACK, to_clipboard=True)
+
+    @QtCore.Slot()
+    def _trigger_save_lines_table_data(self) -> None:
+        logger.info("Save Lines Table Data button clicked.")
+        self._export_or_copy_table_data(ElementType.MEASUREMENT_LINE, to_clipboard=False)
+
+    @QtCore.Slot()
+    def _trigger_copy_lines_table_data(self) -> None:
+        logger.info("Copy Lines Table Data button clicked.")
+        self._export_or_copy_table_data(ElementType.MEASUREMENT_LINE, to_clipboard=True)
+
+    def _export_or_copy_table_data(self, element_type: ElementType, to_clipboard: bool) -> None:
+        """
+        Handles the logic for exporting element data to a CSV file or copying it to the clipboard,
+        using the current display units.
+        """
+        action_verb = "copy" if to_clipboard else "export"
+        action_ing = "Copying" if to_clipboard else "Exporting"
+        type_name_plural = f"{element_type.name.lower().replace('_', ' ')}s"
+
+        if not self.video_loaded:
+            QtWidgets.QMessageBox.warning(self, f"{action_ing} Data Error", f"A video must be loaded to {action_verb} {type_name_plural} data.")
+            return
+        if not all([self.element_manager, self.scale_manager, self.coord_transformer]):
+            logger.error(f"Cannot {action_verb} {type_name_plural} data: Core manager(s) missing.")
+            QtWidgets.QMessageBox.critical(self, f"{action_ing} Data Error", "Internal error: Required components missing.")
+            return
+
+        elements_to_process = self.element_manager.get_elements_by_type(element_type)
+
+        if not elements_to_process:
+            QtWidgets.QMessageBox.information(self, f"{action_ing} Data", f"No {type_name_plural} available to {action_verb}.")
+            return
+
+        # Determine desired units based on current display settings
+        desired_units = "pixels"
+        if self.scale_manager.display_in_meters() and self.scale_manager.get_scale_m_per_px() is not None:
+            desired_units = "meters"
+        
+        logger.info(f"Processing {action_verb} for {type_name_plural} in {desired_units}.")
+
+        if to_clipboard:
+            try:
+                # This function will be created in file_io.py in the next phase
+                csv_string = file_io.generate_csv_string_for_elements(
+                    elements_to_process, element_type, desired_units,
+                    self.scale_manager, self.coord_transformer
+                )
+                if csv_string:
+                    QtWidgets.QApplication.clipboard().setText(csv_string)
+                    if self.statusBar(): self.statusBar().showMessage(f"{type_name_plural.title()} data copied to clipboard (units: {desired_units}).", 3000)
+                else:
+                    if self.statusBar(): self.statusBar().showMessage(f"Failed to generate {type_name_plural} data for copying.", 3000)
+                    QtWidgets.QMessageBox.warning(self, "Copy Error", f"Could not generate {type_name_plural} data for clipboard.")
+            except Exception as e:
+                logger.exception(f"Error during {type_name_plural} data copy process.")
+                QtWidgets.QMessageBox.critical(self, "Copy Error", f"An unexpected error occurred during copy: {e}")
+                if self.statusBar(): self.statusBar().showMessage(f"Critical error copying {type_name_plural}. See log.", 5000)
+        else: # Save to file
+            base_filename_part = os.path.splitext(os.path.basename(self.video_filepath))[0] if self.video_filepath else "untitled"
+            suggested_filename = f"{base_filename_part}_{type_name_plural}_data_{desired_units}.csv"
+            start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
+
+            save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, f"Save {type_name_plural.title()} Data to CSV",
+                os.path.join(start_dir, suggested_filename),
+                "CSV Files (*.csv);;All Files (*)"
+            )
+
+            if not save_path:
+                if self.statusBar(): self.statusBar().showMessage(f"{type_name_plural.title()} data save cancelled.", 3000)
+                return
+
+            if not save_path.lower().endswith(".csv"):
+                save_path += ".csv"
+
+            if self.statusBar(): self.statusBar().showMessage(f"Saving {type_name_plural} to {os.path.basename(save_path)}...", 0)
+            QtWidgets.QApplication.processEvents()
+
+            try:
+                success = file_io.export_elements_to_simple_csv(
+                    save_path, elements_to_process, element_type,
+                    desired_units, self.scale_manager, self.coord_transformer
+                )
+                if success:
+                    if self.statusBar(): self.statusBar().showMessage(f"{type_name_plural.title()} data saved to {os.path.basename(save_path)} (units: {desired_units}).", 5000)
+                else:
+                    if self.statusBar(): self.statusBar().showMessage(f"Error saving {type_name_plural} data. See log.", 5000)
+                    QtWidgets.QMessageBox.warning(self, "Save Error", f"Could not save {type_name_plural} data to CSV.")
+            except Exception as e:
+                logger.exception(f"Error during {type_name_plural} data save process.")
+                QtWidgets.QMessageBox.critical(self, "Save Error", f"An unexpected error occurred during save: {e}")
+                if self.statusBar(): self.statusBar().showMessage(f"Critical error saving {type_name_plural}. See log.", 5000)
+
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         # ... (keep existing method)
