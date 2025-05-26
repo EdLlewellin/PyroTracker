@@ -14,6 +14,7 @@ import numpy as np
 
 import config
 import settings_manager # For accessing visual settings
+import graphics_utils
 
 # Conditional imports for type checking to avoid circular dependencies
 if TYPE_CHECKING:
@@ -217,21 +218,14 @@ class ExportHandler(QtCore.QObject):
                 if not pen_to_use:
                     logger.warning(f"ExportHandler: No pen for marker style '{style_key}'. Skipping.")
                     continue
-                current_pen = QtGui.QPen(pen_to_use)
-                current_pen.setCosmetic(True)
-                painter.setPen(current_pen)
-                x, y = el['pos']; r = marker_sz / 2.0
-                painter.drawLine(QtCore.QPointF(x - r, y), QtCore.QPointF(x + r, y))
-                painter.drawLine(QtCore.QPointF(x, y - r), QtCore.QPointF(x, y + r))
+                x, y = el['pos']
+                graphics_utils.draw_marker_on_painter(painter, QtCore.QPointF(x,y), marker_sz, pen_to_use)
             elif el_type == 'line' and el.get('p1') and el.get('p2'):
                 if not pen_to_use:
                     logger.warning(f"ExportHandler: No pen for line style '{style_key}'. Skipping.")
                     continue
-                current_pen = QtGui.QPen(pen_to_use)
-                current_pen.setCosmetic(True)
-                painter.setPen(current_pen)
-                p1, p2 = el['p1'], el['p2']
-                painter.drawLine(QtCore.QPointF(p1[0], p1[1]), QtCore.QPointF(p2[0], p2[1]))
+                p1_coords, p2_coords = el['p1'], el['p2']
+                graphics_utils.draw_line_on_painter(painter, QtCore.QPointF(p1_coords[0], p1_coords[1]), QtCore.QPointF(p2_coords[0], p2_coords[1]), pen_to_use)
             elif el_type == 'text' and el.get('label_type') == 'measurement_line_length':
                 text_string = el.get('text')
                 line_p1_coords_tuple = el.get('line_p1')
@@ -244,8 +238,6 @@ class ExportHandler(QtCore.QObject):
                     logger.warning(f"ExportHandler: Incomplete data for measurement line text label ID {el.get('element_id')}. Skipping.")
                     continue
 
-                from interactive_image_view import InteractiveImageView # Local import for static method access
-
                 p1_scene = QtCore.QPointF(line_p1_coords_tuple[0], line_p1_coords_tuple[1])
                 p2_scene = QtCore.QPointF(line_p2_coords_tuple[0], line_p2_coords_tuple[1])
 
@@ -254,8 +246,7 @@ class ExportHandler(QtCore.QObject):
                 font_metrics = QtGui.QFontMetrics(current_export_font)
                 text_bounding_rect_local = font_metrics.boundingRect(text_string)
                 
-                # Use the visible_scene_rect as the context for text placement
-                text_pos_scene, text_rot_deg = InteractiveImageView._calculate_text_label_transform(
+                text_pos_scene, text_rot_deg = graphics_utils.calculate_line_label_transform(
                     p1_scene,
                     p2_scene,
                     text_bounding_rect_local,
@@ -280,8 +271,11 @@ class ExportHandler(QtCore.QObject):
         if self._main_window.coord_panel_controller and self._main_window.coord_panel_controller.get_show_origin_marker_status():
             origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
             ox, oy = self._coord_transformer.get_current_origin_tl()
+            # For drawing the origin marker, we can directly use the QPainter if it's simple enough,
+            # or eventually move this to graphics_utils.draw_origin_on_painter if it becomes complex.
+            # For now, keeping it here is fine as it's specific.
             r_orig = origin_sz / 2.0
-            origin_pen = QtGui.QPen(self._main_window.pen_origin_marker)
+            origin_pen = QtGui.QPen(self._main_window.pen_origin_marker) # Get the pen from MainWindow
             origin_pen.setCosmetic(True)
             painter.setPen(origin_pen)
             painter.setBrush(self._main_window.pen_origin_marker.color())
@@ -296,22 +290,17 @@ class ExportHandler(QtCore.QObject):
                 text_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
                 font_sz_sl = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
                 pen_w_sl = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
-                p1x_l, p1y_l, p2x_l, p2y_l = line_data
-                dx_l = p2x_l - p1x_l; dy_l = p2y_l - p1y_l
-                pix_len_l = math.sqrt(dx_l*dx_l + dy_l*dy_l)
-                meter_len_l = pix_len_l * scale_m_per_px
-                len_text_l = self.format_length_value_for_line(meter_len_l)
-                
-                scene_rect_for_text_placement = QtCore.QRectF(0,0, self._video_handler.frame_width, self._video_handler.frame_height) \
-                                                if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else visible_scene_rect
-
-                self._draw_specific_scale_line_on_painter(painter, line_data, len_text_l,
-                                                 line_clr_sl, text_clr_sl,
-                                                 font_sz_sl, pen_w_sl,
-                                                 scene_rect_for_text_placement)
+                # This specific drawing logic might also be refactored into graphics_utils later
+                self._draw_specific_scale_line_on_painter(
+                    painter, line_data,
+                    self.format_length_value_for_line(math.sqrt((line_data[2]-line_data[0])**2 + (line_data[3]-line_data[1])**2) * scale_m_per_px),
+                    line_clr_sl, text_clr_sl, font_sz_sl, pen_w_sl,
+                    visible_scene_rect if export_mode == ExportResolutionMode.VIEWPORT else QtCore.QRectF(0,0, float(self._video_handler.frame_width), float(self._video_handler.frame_height))
+                )
         
         painter.restore() 
 
+        # --- Draw Viewport-Fixed Overlays ---
         painter.save()
         painter.setWindow(export_qimage_rect.toRect())
         painter.setViewport(export_qimage_rect.toRect())
@@ -320,7 +309,7 @@ class ExportHandler(QtCore.QObject):
            self._scale_manager and self._scale_manager.get_scale_m_per_px() is not None and \
            hasattr(self._image_view, '_scale_bar_widget') and self._image_view._scale_bar_widget:
             
-            sb_widget: 'ScaleBarWidget' = self._image_view._scale_bar_widget # type: ignore
+            sb_widget: 'ScaleBarWidget' = self._image_view._scale_bar_widget
             parent_width_for_sb_calc: int
             effective_view_scale_for_sb_calc: float
 
@@ -343,31 +332,34 @@ class ExportHandler(QtCore.QObject):
             )
 
             if sb_widget.isVisible() and sb_widget.get_current_bar_pixel_length() > 0:
+                # This detailed drawing of the scale bar could also be moved to a graphics_utils function
+                # e.g., graphics_utils.draw_scale_bar_on_painter(painter, sb_widget, export_qimage_rect)
+                # For now, keeping existing logic.
                 sb_bar_len_px = sb_widget.get_current_bar_pixel_length()
                 sb_text = sb_widget.get_current_bar_text_label()
                 sb_bar_color = sb_widget.get_current_bar_color()
-                sb_text_color = sb_widget.get_current_text_color() 
+                sb_text_color = sb_widget.get_current_text_color()
                 sb_border_color = sb_widget.get_current_border_color()
-                sb_font = sb_widget.get_current_font() 
-                painter_sb_font_metrics = QtGui.QFontMetrics(sb_font) 
+                sb_font = sb_widget.get_current_font()
+                painter_sb_font_metrics = QtGui.QFontMetrics(sb_font)
                 
                 sb_rect_h_px = sb_widget.get_current_bar_rect_height()
                 sb_text_margin_bottom = sb_widget.get_text_margin_bottom()
                 sb_border_thickness_px = sb_widget.get_border_thickness()
-                sb_text_w_px, sb_text_h_px_overall = sb_widget.get_text_dimensions() 
+                sb_text_w_px, sb_text_h_px_overall = sb_widget.get_text_dimensions()
 
-                margin = 10 
+                margin = 10
                 overall_sb_width = int(max(sb_bar_len_px + 2 * sb_border_thickness_px, sb_text_w_px))
                 overall_sb_height = sb_text_h_px_overall + sb_text_margin_bottom + sb_rect_h_px + 2 * sb_border_thickness_px
                 sb_x_offset = export_qimage_rect.width() - overall_sb_width - margin
                 sb_y_offset = export_qimage_rect.height() - overall_sb_height - margin
                 
                 painter.save()
-                painter.translate(sb_x_offset, sb_y_offset) 
+                painter.translate(sb_x_offset, sb_y_offset)
                 painter.setFont(sb_font)
                 painter.setPen(sb_text_color)
                 text_x_local = (overall_sb_width - sb_text_w_px) / 2.0
-                text_baseline_y_local = float(painter_sb_font_metrics.ascent()) 
+                text_baseline_y_local = float(painter_sb_font_metrics.ascent())
                 painter.drawText(QtCore.QPointF(text_x_local, text_baseline_y_local), sb_text)
                 
                 bar_start_x_local = (overall_sb_width - sb_bar_len_px) / 2.0
@@ -381,7 +373,10 @@ class ExportHandler(QtCore.QObject):
                 painter.drawRect(bar_rect_local)
                 painter.restore()
 
-        margin = 5 
+        # Draw Info Overlays (Filename, Time, Frame Number)
+        # This could also eventually use a function in graphics_utils if it becomes complex,
+        # or directly use info_overlay_widget.render_to_painter() if we enhance that widget.
+        margin = 5
         if settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME):
             filename_text = self._video_handler.get_video_info().get("filename", "N/A")
             if filename_text != "N/A":
@@ -420,7 +415,6 @@ class ExportHandler(QtCore.QObject):
             painter.drawText(QtCore.QPointF(export_qimage_rect.left() + margin, y_pos_frame), time_display_text)
         
         painter.restore()
-
 
     @QtCore.Slot(str, str, str, ExportResolutionMode, int, int) # Added start_frame_idx, end_frame_idx
     def export_video_with_overlays(self, 

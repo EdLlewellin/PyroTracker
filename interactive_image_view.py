@@ -10,6 +10,7 @@ import config
 from scale_bar_widget import ScaleBarWidget
 from info_overlay_widget import InfoOverlayWidget
 import settings_manager
+import graphics_utils
 
 # Get a logger for this module
 logger = logging.getLogger(__name__)
@@ -128,93 +129,6 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         logger.debug("InfoOverlayWidget created and initially hidden.")
 
         logger.info("InteractiveImageView initialization complete.")
-
-    @staticmethod
-    def _calculate_text_label_transform(
-        p1: QtCore.QPointF,
-        p2: QtCore.QPointF,
-        text_rect: QtCore.QRectF,
-        scene_bounding_rect: QtCore.QRectF,
-        desired_gap_pixels: float = 3.0
-    ) -> Tuple[QtCore.QPointF, float]:
-        """
-        Calculates the position and rotation for a text label associated with a line.
-
-        Args:
-            p1: Starting point of the line (scene coordinates).
-            p2: Ending point of the line (scene coordinates).
-            text_rect: The bounding rectangle of the text to be placed.
-                       Its width and height are used for calculations.
-            scene_bounding_rect: The bounding rectangle of the overall scene/image,
-                                 used to determine the center for perpendicular shifting.
-            desired_gap_pixels: The desired gap between the line and the text label.
-
-        Returns:
-            A tuple containing:
-                - QPointF: The calculated top-left position for the text_rect.
-                - float: The calculated rotation angle in degrees for the text.
-        """
-        text_width = text_rect.width()
-        text_height = text_rect.height()
-
-        line_mid_x = (p1.x() + p2.x()) / 2.0
-        line_mid_y = (p1.y() + p2.y()) / 2.0
-
-        dx = p2.x() - p1.x()
-        dy = p2.y() - p1.y()
-        line_length = math.sqrt(dx * dx + dy * dy)
-
-        if line_length < 1e-6:  # Handle zero-length or very short lines
-            # Position text slightly offset from p1, no rotation
-            return QtCore.QPointF(p1.x() + 2, p1.y() - text_height - 2), 0.0
-
-        line_angle_rad = math.atan2(dy, dx)
-        line_angle_deg = math.degrees(line_angle_rad)
-
-        # Initial position: text centered with line midpoint, before rotation and shift
-        initial_pos_x = line_mid_x - (text_width / 2.0)
-        initial_pos_y = line_mid_y - (text_height / 2.0)
-
-        # Rotation for the text to align with the line
-        text_rotation_deg = line_angle_deg
-        if text_rotation_deg > 90:
-            text_rotation_deg -= 180
-        elif text_rotation_deg < -90:
-            text_rotation_deg += 180
-
-        # Calculate perpendicular shift
-        # Shift text away from the line, towards the center of the scene_bounding_rect
-        shift_magnitude = (text_height / 2.0) + desired_gap_pixels
-        
-        # Normalized perpendicular vector to the line
-        perp_dx = -dy / line_length
-        perp_dy = dx / line_length
-
-        img_center_x = scene_bounding_rect.center().x()
-        img_center_y = scene_bounding_rect.center().y()
-
-        # Test positions on both sides of the line
-        test_pos1_x = line_mid_x + perp_dx * shift_magnitude
-        test_pos1_y = line_mid_y + perp_dy * shift_magnitude
-        dist_sq1 = (test_pos1_x - img_center_x)**2 + (test_pos1_y - img_center_y)**2
-        
-        test_pos2_x = line_mid_x - perp_dx * shift_magnitude
-        test_pos2_y = line_mid_y - perp_dy * shift_magnitude
-        dist_sq2 = (test_pos2_x - img_center_x)**2 + (test_pos2_y - img_center_y)**2
-
-        final_shift_dx = perp_dx
-        final_shift_dy = perp_dy
-        if dist_sq2 < dist_sq1: # Shift in the other direction if it's closer to image center
-            final_shift_dx = -perp_dx
-            final_shift_dy = -perp_dy
-            
-        total_offset_x = final_shift_dx * shift_magnitude
-        total_offset_y = final_shift_dy * shift_magnitude
-        
-        # The final position is the initial centered position plus the shift
-        final_pos = QtCore.QPointF(initial_pos_x + total_offset_x, initial_pos_y + total_offset_y)
-
-        return final_pos, text_rotation_deg
 
     def _calculate_zoom_limits(self) -> None:
         if not self._pixmap_item or not self.sceneRect().isValid() or self.viewport().width() <= 0:
@@ -562,8 +476,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         text_item.setFont(font)
         text_item.setZValue(z_value) # Text on top
 
-        # --- Use the new static method for position and rotation ---
-        text_pos, text_rot_deg = InteractiveImageView._calculate_text_label_transform(
+        text_pos, text_rot_deg = graphics_utils.calculate_line_label_transform( # Changed here
             QtCore.QPointF(p1x, p1y),
             QtCore.QPointF(p2x, p2y),
             text_item.boundingRect(), # Pass the text's own bounding rect
