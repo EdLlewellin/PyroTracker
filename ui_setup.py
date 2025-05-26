@@ -421,11 +421,12 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     file_menu.addAction(main_window.loadProjectAction)
 
     save_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton)
-    main_window.saveProjectAction = QtGui.QAction(save_icon, "&Save Project As...", main_window)
-    main_window.saveProjectAction.setStatusTip("Save current project data to a JSON file")
-    main_window.saveProjectAction.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
-    main_window.saveProjectAction.setEnabled(False) # Connection in MainWindow.__init__
-    file_menu.addAction(main_window.saveProjectAction)
+    # MODIFIED: Renamed to saveProjectAsAction for clarity
+    main_window.saveProjectAsAction = QtGui.QAction(save_icon, "&Save Project As...", main_window)
+    main_window.saveProjectAsAction.setStatusTip("Save current project data to a new JSON file") # Updated tip
+    main_window.saveProjectAsAction.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
+    main_window.saveProjectAsAction.setEnabled(False) # Connection in MainWindow.__init__
+    file_menu.addAction(main_window.saveProjectAsAction)
 
     file_menu.addSeparator() # Separator before export actions
 

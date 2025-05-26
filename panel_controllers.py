@@ -18,12 +18,16 @@ if TYPE_CHECKING:
     from main_window import MainWindow # For status bar and disabling frame nav
     from scale_manager import ScaleManager
     from interactive_image_view import InteractiveImageView
+    # --- NEW: Import ProjectManager for type hinting ---
+    from project_manager import ProjectManager
+    # --- END NEW ---
 
 logger = logging.getLogger(__name__)
 
 
 # --- NEW DIALOG CLASS FOR GETTING KNOWN DISTANCE ---
 class GetDistanceDialog(QtWidgets.QDialog):
+# ... (GetDistanceDialog class remains unchanged)
     """
     A simple dialog to get the known real-world distance from the user.
     """
@@ -72,6 +76,7 @@ class GetDistanceDialog(QtWidgets.QDialog):
 
 
 class ScalePanelController(QtCore.QObject):
+# ... (ScalePanelController class remains unchanged from your uploaded version)
     """
     Manages the UI logic for the Scale Configuration panel, including setting scale manually
     and by defining a line of known length on the image.
@@ -528,50 +533,86 @@ class CoordinatePanelController(QtCore.QObject):
                  cursor_pos_labels_m: Dict[str, QtWidgets.QLabel],
                  parent: Optional[QtCore.QObject] = None):
         super().__init__(parent)
-        self._main_window_ref = main_window_ref # Store MainWindow reference
-        self._coord_transformer = coord_transformer; self._image_view = image_view; self._scale_manager = scale_manager
-        self._coord_system_group = coord_system_group; self._coord_top_left_radio = coord_top_left_radio; self._coord_bottom_left_radio = coord_bottom_left_radio
-        self._coord_custom_radio = coord_custom_radio; self._coord_top_left_origin_label = coord_top_left_origin_label; self._coord_bottom_left_origin_label = coord_bottom_left_origin_label
-        self._coord_custom_origin_label = coord_custom_origin_label; self._set_origin_button = set_origin_button; self._show_origin_checkbox = show_origin_checkbox
-        self._cursor_pos_labels_px = cursor_pos_labels_px; self._cursor_pos_labels_m = cursor_pos_labels_m
-        self._is_setting_origin: bool = False; self._show_origin_marker: bool = True; self._last_scene_mouse_x: float = -1.0; self._last_scene_mouse_y: float = -1.0; self._video_loaded: bool = False
+        self._main_window_ref = main_window_ref 
+        self._coord_transformer = coord_transformer
+        self._image_view = image_view
+        self._scale_manager = scale_manager
+        self._coord_system_group = coord_system_group
+        self._coord_top_left_radio = coord_top_left_radio
+        self._coord_bottom_left_radio = coord_bottom_left_radio
+        self._coord_custom_radio = coord_custom_radio
+        self._coord_top_left_origin_label = coord_top_left_origin_label
+        self._coord_bottom_left_origin_label = coord_bottom_left_origin_label
+        self._coord_custom_origin_label = coord_custom_origin_label
+        self._set_origin_button = set_origin_button
+        self._show_origin_checkbox = show_origin_checkbox
+        self._cursor_pos_labels_px = cursor_pos_labels_px
+        self._cursor_pos_labels_m = cursor_pos_labels_m
+        
+        self._is_setting_origin: bool = False
+        self._show_origin_marker: bool = True # Default to showing
+        self._last_scene_mouse_x: float = -1.0 # Store last mouse position for label updates
+        self._last_scene_mouse_y: float = -1.0
+        self._video_loaded: bool = False
+
+        # Connect signals
         self._coord_system_group.buttonToggled.connect(self._on_coordinate_mode_changed)
         self._set_origin_button.clicked.connect(self._on_enter_set_origin_mode)
         self._show_origin_checkbox.stateChanged.connect(self._on_toggle_show_origin)
+        
+        # Initialize UI based on current transformer state
         self.update_ui_display()
+
 
     def set_video_loaded_status(self, is_loaded: bool) -> None:
         if self._video_loaded != is_loaded:
             self._video_loaded = is_loaded
             if not is_loaded:
+                # Reset state if video is unloaded
                 self._is_setting_origin = False
                 if self._image_view:
                     self._image_view.set_interaction_mode(InteractionMode.NORMAL)
-                self._show_origin_marker = True
+                self._show_origin_marker = True # Reset to default
             self.update_ui_display()
 
+
     def set_video_height(self, height: int) -> None:
+        """Updates the video height in the CoordinateTransformer and refreshes UI."""
         self._coord_transformer.set_video_height(height)
-        self.update_ui_display()
+        self.update_ui_display() # Update origin labels, etc.
 
     @QtCore.Slot(QtWidgets.QAbstractButton, bool)
     def _on_coordinate_mode_changed(self, button: QtWidgets.QAbstractButton, checked: bool) -> None:
-        if not checked: return
+        if not checked: # Only act on the button that was checked
+            return
 
-        new_mode = CoordinateSystem.TOP_LEFT
-        if button == self._coord_bottom_left_radio: new_mode = CoordinateSystem.BOTTOM_LEFT
-        elif button == self._coord_custom_radio: new_mode = CoordinateSystem.CUSTOM
-
+        new_mode = CoordinateSystem.TOP_LEFT # Default
+        if button == self._coord_bottom_left_radio:
+            new_mode = CoordinateSystem.BOTTOM_LEFT
+        elif button == self._coord_custom_radio:
+            # If custom is selected but no origin has been picked yet via 'Pick Custom',
+            # it might still be (0,0) TL. The set_mode will handle this.
+            # If an origin was previously picked, set_mode(CUSTOM) re-enables it.
+            new_mode = CoordinateSystem.CUSTOM
+        
+        # --- MODIFICATION: Set project dirty if mode actually changes ---
         if self._coord_transformer.mode != new_mode:
             self._coord_transformer.set_mode(new_mode)
             logger.info(f"Coordinate system mode changed to: {new_mode.name}")
-            self.update_ui_display()
-            self.pointsTableNeedsUpdate.emit()
-            if self._show_origin_marker: self.needsRedraw.emit()
+            # --- Directly notify ProjectManager about the change ---
+            if self._main_window_ref and hasattr(self._main_window_ref, 'project_manager') and self._main_window_ref.project_manager:
+                self._main_window_ref.project_manager.set_project_dirty(True)
+            # --- END MODIFICATION ---
+            self.update_ui_display() # Updates labels, etc.
+            self.pointsTableNeedsUpdate.emit() # To update X, Y in points table
+            if self._show_origin_marker:
+                self.needsRedraw.emit() # To redraw origin marker if visible
 
     @QtCore.Slot()
     def _on_enter_set_origin_mode(self) -> None:
-        if not self._video_loaded: self.statusBarMessage.emit("Load a video first to set origin.", 3000); return
+        if not self._video_loaded:
+            self.statusBarMessage.emit("Load a video first to set origin.", 3000)
+            return
         # --- MODIFICATION: Cancel other definition modes ---
         if hasattr(self._main_window_ref, '_is_defining_measurement_line') and self._main_window_ref._is_defining_measurement_line:
             logger.debug("Cancelling active measurement line definition before 'Set Origin'.")
@@ -580,42 +621,63 @@ class CoordinatePanelController(QtCore.QObject):
             logger.debug("Cancelling active 'Set Scale by Line' before 'Set Origin'.")
             self._main_window_ref.scale_panel_controller.cancel_set_scale_by_line()
         # --- END MODIFICATION ---
-        self._is_setting_origin = True; self._image_view.set_interaction_mode(InteractionMode.SET_ORIGIN)
-        self.statusBarMessage.emit("Click on the image to set the custom origin.", 0)
+        self._is_setting_origin = True
+        self._image_view.set_interaction_mode(InteractionMode.SET_ORIGIN)
+        self.statusBarMessage.emit("Click on the image to set the custom origin.", 0) # Persistent message
 
     @QtCore.Slot(float, float)
     def _on_set_custom_origin(self, scene_x: float, scene_y: float) -> None:
-        self._is_setting_origin = False
+        """
+        Called when the user clicks on the image view after pressing 'Pick Custom'.
+        The coordinates are raw scene (Top-Left pixel) coordinates.
+        """
+        self._is_setting_origin = False # Exit picking mode
         self._image_view.set_interaction_mode(InteractionMode.NORMAL)
+        
+        # Set the custom origin in the transformer. This will also set its mode to CUSTOM.
         self._coord_transformer.set_custom_origin(scene_x, scene_y)
-        self.update_ui_display()
-        self.pointsTableNeedsUpdate.emit()
-        self.needsRedraw.emit()
+        
+        # --- MODIFICATION: Set project dirty after custom origin is set ---
+        if self._main_window_ref and hasattr(self._main_window_ref, 'project_manager') and self._main_window_ref.project_manager:
+            self._main_window_ref.project_manager.set_project_dirty(True)
+        # --- END MODIFICATION ---
+
+        self.update_ui_display() # Update labels to show new custom origin and select radio
+        self.pointsTableNeedsUpdate.emit() # Points table needs to update X, Y
+        self.needsRedraw.emit() # Redraw origin marker
+
+        # Get the actual stored origin from transformer to display (it might be rounded)
         origin_meta = self._coord_transformer.get_metadata()
         cust_x = origin_meta.get('origin_x_tl', 0.0)
         cust_y = origin_meta.get('origin_y_tl', 0.0)
         self.statusBarMessage.emit(f"Custom origin set at (TL): ({cust_x:.1f}, {cust_y:.1f})", 5000)
         logger.info(f"Custom origin set via click at scene coordinates ({scene_x:.1f}, {scene_y:.1f})")
 
+
     @QtCore.Slot(int)
-    def _on_toggle_show_origin(self, state: int) -> None:
+    def _on_toggle_show_origin(self, state: int) -> None: # state is QtCore.Qt.CheckState enum value
         self._show_origin_marker = (state == QtCore.Qt.CheckState.Checked.value)
         logger.info(f"Origin marker visibility set to: {self._show_origin_marker}")
-        self.needsRedraw.emit()
+        self.needsRedraw.emit() # Trigger redraw of the scene overlay
+
 
     def get_show_origin_marker_status(self) -> bool:
+        """Returns whether the origin marker should be shown."""
         return self._show_origin_marker
         
     def is_setting_origin_mode(self) -> bool:
+        """Returns true if currently in 'set origin by click' mode."""
         return self._is_setting_origin
 
     @QtCore.Slot()
     def update_ui_display(self) -> None:
+        """Updates the coordinate panel UI based on the CoordinateTransformer's state."""
         logger.debug("CoordinatePanelController: Updating UI display.")
         current_mode = self._coord_transformer.mode
-        origin_meta = self._coord_transformer.get_metadata()
+        origin_meta = self._coord_transformer.get_metadata() # Gets TL origin for CUSTOM too
         video_h = self._coord_transformer.video_height
 
+        # Update origin display labels
         self._coord_top_left_origin_label.setText("(0.0, 0.0)")
         bl_origin_y_str = f"{video_h:.1f}" if video_h > 0 else "-"
         self._coord_bottom_left_origin_label.setText(f"(0.0, {bl_origin_y_str})")
@@ -623,72 +685,104 @@ class CoordinatePanelController(QtCore.QObject):
         cust_y = origin_meta.get('origin_y_tl', 0.0)
         self._coord_custom_origin_label.setText(f"({cust_x:.1f}, {cust_y:.1f})")
 
-        self._coord_system_group.blockSignals(True)
-        if current_mode == CoordinateSystem.TOP_LEFT: self._coord_top_left_radio.setChecked(True)
-        elif current_mode == CoordinateSystem.BOTTOM_LEFT: self._coord_bottom_left_radio.setChecked(True)
-        elif current_mode == CoordinateSystem.CUSTOM: self._coord_custom_radio.setChecked(True)
+        # Update radio button selection
+        self._coord_system_group.blockSignals(True) # Prevent signal emission during programmatic change
+        if current_mode == CoordinateSystem.TOP_LEFT:
+            self._coord_top_left_radio.setChecked(True)
+        elif current_mode == CoordinateSystem.BOTTOM_LEFT:
+            self._coord_bottom_left_radio.setChecked(True)
+        elif current_mode == CoordinateSystem.CUSTOM:
+            self._coord_custom_radio.setChecked(True)
         self._coord_system_group.blockSignals(False)
 
+        # Update "Show Origin" checkbox
         self._show_origin_checkbox.blockSignals(True)
         self._show_origin_checkbox.setChecked(self._show_origin_marker)
         self._show_origin_checkbox.blockSignals(False)
 
-        is_enabled = self._video_loaded
+        # Update enabled states of UI elements
+        is_enabled = self._video_loaded # Most controls depend on video being loaded
         self._coord_top_left_radio.setEnabled(is_enabled)
         self._coord_bottom_left_radio.setEnabled(is_enabled)
-        self._coord_custom_radio.setEnabled(is_enabled)
+        self._coord_custom_radio.setEnabled(is_enabled) # Enable custom even if no origin picked yet
         self._set_origin_button.setEnabled(is_enabled)
         self._show_origin_checkbox.setEnabled(is_enabled)
         
+        # Refresh cursor position labels
         self._on_handle_mouse_moved(self._last_scene_mouse_x, self._last_scene_mouse_y)
+        # This signal can also be used by MainWindow to know when to update points table
+        # due to a coordinate system change.
         logger.debug("CoordinatePanelController.update_ui_display emitting pointsTableNeedsUpdate.")
         self.pointsTableNeedsUpdate.emit()
 
+
     @QtCore.Slot(float, float)
     def _on_handle_mouse_moved(self, scene_x_px: float, scene_y_px: float) -> None:
-        self._last_scene_mouse_x = scene_x_px
+        """Updates the live cursor position labels based on scene mouse coordinates."""
+        self._last_scene_mouse_x = scene_x_px # Store for refreshing
         self._last_scene_mouse_y = scene_y_px
         placeholder = "(--, --)"
         scale_is_set = self._scale_manager.get_scale_m_per_px() is not None
 
-        if not self._video_loaded or scene_x_px == -1.0:
+        if not self._video_loaded or scene_x_px == -1.0: # -1.0 indicates mouse is off-image
             for label_group in [self._cursor_pos_labels_px, self._cursor_pos_labels_m]:
-                for label in label_group.values(): label.setText(placeholder)
+                for label in label_group.values():
+                    label.setText(placeholder)
             return
 
-        coords_px = {
-            "TL": self._coord_transformer.transform_point_for_display(scene_x_px, scene_y_px)
-                  if self._coord_transformer.mode == CoordinateSystem.TOP_LEFT else
-                  CoordinateTransformer().transform_point_for_display(scene_x_px, scene_y_px),
-            "BL": CoordinateTransformer().transform_point_for_display(scene_x_px, scene_y_px)
-        }
-        bl_origin_x_tl_temp, bl_origin_y_tl_temp = (0.0, float(self._coord_transformer.video_height)) if self._coord_transformer.video_height > 0 else (0.0,0.0)
-        coords_px["BL"] = (coords_px["BL"][0] - bl_origin_x_tl_temp, -(coords_px["BL"][1] - bl_origin_y_tl_temp))
-
-        if self._coord_transformer.mode == CoordinateSystem.CUSTOM:
-            custom_origin_x_tl, custom_origin_y_tl = self._coord_transformer.get_current_origin_tl()
-        else:
-            meta = self._coord_transformer.get_metadata()
-            custom_origin_x_tl = meta.get("origin_x_tl", 0.0)
-            custom_origin_y_tl = meta.get("origin_y_tl", 0.0)
+        # Calculate coordinates in all three systems for display purposes
+        # This requires temporary CoordinateTransformer instances or careful use of the main one.
+        # For simplicity, let's use temporary ones for non-active modes.
         
-        tl_for_custom_display = CoordinateTransformer().transform_point_for_display(scene_x_px, scene_y_px)
-        coords_px["Custom"] = (tl_for_custom_display[0] - custom_origin_x_tl, -(tl_for_custom_display[1] - custom_origin_y_tl))
+        # 1. Top-Left (Internal Standard)
+        x_tl_px, y_tl_px = scene_x_px, scene_y_px # Raw scene coords are TL
+
+        # 2. Bottom-Left
+        # Simulate BL transformation: origin is (0, video_height) TL, Y is inverted relative to this.
+        # We need the current video height for this.
+        video_h = self._coord_transformer.video_height
+        if video_h > 0:
+            x_bl_px = scene_x_px 
+            y_bl_px = -(scene_y_px - video_h) # y_tl - video_h, then invert sign
+        else:
+            x_bl_px, y_bl_px = -1.0, -1.0 # Indicate invalid if no height
+
+        # 3. Custom
+        # Simulate Custom transformation: origin is user-defined (TL), Y is inverted relative to this.
+        custom_origin_x_tl_stored, custom_origin_y_tl_stored = self._coord_transformer.get_metadata()['origin_x_tl'], self._coord_transformer.get_metadata()['origin_y_tl']
+        x_cust_px = scene_x_px - custom_origin_x_tl_stored
+        y_cust_px = -(scene_y_px - custom_origin_y_tl_stored)
+
+        coords_px_map = {
+            "TL": (x_tl_px, y_tl_px),
+            "BL": (x_bl_px, y_bl_px) if video_h > 0 else (float('nan'), float('nan')), # Use NaN for invalid
+            "Custom": (x_cust_px, y_cust_px)
+        }
 
         for key, label in self._cursor_pos_labels_px.items():
-            if key in coords_px: label.setText(f"({coords_px[key][0]:.1f}, {coords_px[key][1]:.1f})")
-            else: label.setText(placeholder)
+            if key in coords_px_map and not (math.isnan(coords_px_map[key][0]) or math.isnan(coords_px_map[key][1])):
+                label.setText(f"({coords_px_map[key][0]:.1f}, {coords_px_map[key][1]:.1f})")
+            else:
+                label.setText(placeholder)
 
+        # Update meter labels if scale is set
         if scale_is_set:
             m_per_px = self._scale_manager.get_scale_m_per_px()
+            if m_per_px is None: # Should not happen if scale_is_set is true, but defensive
+                 for label in self._cursor_pos_labels_m.values(): label.setText(placeholder)
+                 return
+
             for key, label in self._cursor_pos_labels_m.items():
-                if key in coords_px and m_per_px is not None:
-                    coords_m = (coords_px[key][0] * m_per_px, coords_px[key][1] * m_per_px)
-                    label.setText(f"({coords_m[0]:.2f}, {coords_m[1]:.2f})")
-                else: label.setText(placeholder)
+                if key in coords_px_map and not (math.isnan(coords_px_map[key][0]) or math.isnan(coords_px_map[key][1])):
+                    coords_m = (coords_px_map[key][0] * m_per_px, coords_px_map[key][1] * m_per_px)
+                    label.setText(f"({coords_m[0]:.2f}, {coords_m[1]:.2f})") # Example: 2 decimal places for meters
+                else:
+                    label.setText(placeholder)
         else:
-            for label in self._cursor_pos_labels_m.values(): label.setText(placeholder)
+            for label in self._cursor_pos_labels_m.values():
+                label.setText(placeholder)
     
     @QtCore.Slot()
     def _trigger_cursor_label_update_slot(self) -> None:
+        """Slot to explicitly trigger an update of cursor labels."""
         self._on_handle_mouse_moved(self._last_scene_mouse_x, self._last_scene_mouse_y)

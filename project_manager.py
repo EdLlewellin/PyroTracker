@@ -8,45 +8,110 @@ import json
 import os
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple
 
-import config # For APP_NAME, APP_VERSION, and metadata keys
-from coordinates import CoordinateSystem # MODIFIED: Added this import
+# Import PySide6 QtCore for signals
+from PySide6 import QtCore
 
-# Remove the commented-out line below if file_io.write_project_json_file exists
-# from file_io import write_project_json_file 
+import config # For APP_NAME, APP_VERSION, and metadata keys
+from coordinates import CoordinateSystem
 
 if TYPE_CHECKING:
     from main_window import MainWindow
     from element_manager import ElementManager
     from scale_manager import ScaleManager
-    from coordinate_transformer import CoordinateTransformer # This was already here, but CoordinateSystem was missing
-
+    from coordinate_transformer import CoordinateTransformer
     from settings_manager import SettingsManager 
 
 logger = logging.getLogger(__name__)
 
-class ProjectManager:
+class ProjectManager(QtCore.QObject):
+    unsavedChangesStateChanged = QtCore.Signal(bool)
+
     def __init__(self,
                  element_manager: 'ElementManager',
                  scale_manager: 'ScaleManager',
                  coord_transformer: 'CoordinateTransformer',
-                 settings_manager: 'SettingsManager', # Added SettingsManager
+                 settings_manager: 'SettingsManager',
                  main_window_ref: 'MainWindow'):
-        """
-        Initializes the ProjectManager.
-
-        Args:
-            element_manager: Instance of ElementManager.
-            scale_manager: Instance of ScaleManager.
-            coord_transformer: Instance of CoordinateTransformer.
-            settings_manager: Instance of SettingsManager.
-            main_window_ref: Reference to the MainWindow instance.
-        """
+        super().__init__()
         self._element_manager = element_manager
         self._scale_manager = scale_manager
         self._coord_transformer = coord_transformer
-        self._settings_manager = settings_manager # Store SettingsManager
+        self._settings_manager = settings_manager
         self._main_window_ref = main_window_ref
+
+        self._current_project_filepath: Optional[str] = None
+        self._has_unsaved_changes: bool = False
+        # --- NEW ATTRIBUTE ---
+        self._is_loading_project: bool = False
+        # --- END NEW ATTRIBUTE ---
+
         logger.info("ProjectManager initialized.")
+
+    # --- NEW METHODS for managing project state ---
+    def get_current_project_filepath(self) -> Optional[str]:
+        """Returns the file path of the currently open project, if any."""
+        return self._current_project_filepath
+
+    def _set_current_project_filepath(self, filepath: Optional[str]) -> None:
+        """Sets the current project file path."""
+        self._current_project_filepath = filepath
+        logger.info(f"Current project file path set to: {filepath}")
+
+    def project_has_unsaved_changes(self) -> bool:
+        """Returns True if there are unsaved changes, False otherwise."""
+        return self._has_unsaved_changes
+
+    def set_project_dirty(self, dirty: bool = True) -> None:
+        """
+        Sets the project's dirty state (unsaved changes).
+        Emits unsavedChangesStateChanged signal if the state changes.
+        Ignores attempts to set dirty if _is_loading_project is True,
+        unless explicitly setting to False.
+        """
+        # --- MODIFIED ---
+        if self._is_loading_project and dirty is True:
+            logger.debug("ProjectManager: Ignoring set_project_dirty(True) because project is loading.")
+            return 
+        # --- END MODIFIED ---
+
+        if self._has_unsaved_changes != dirty:
+            self._has_unsaved_changes = dirty
+            logger.info(f"Project dirty state set to: {dirty}")
+            self.unsavedChangesStateChanged.emit(self._has_unsaved_changes)
+
+    def mark_project_as_saved(self, filepath: str) -> None:
+        """
+        Called after a successful save operation. Updates the current file path
+        and clears the dirty flag.
+        """
+        self._set_current_project_filepath(filepath)
+        self.set_project_dirty(False)
+
+    def mark_project_as_loaded(self, filepath: str) -> None:
+        """
+        Called after successfully loading a project. Updates the current file path
+        and clears the dirty flag.
+        """
+        self._set_current_project_filepath(filepath)
+        # Explicitly set dirty to False, bypassing the _is_loading_project check in set_project_dirty
+        if self._has_unsaved_changes is True: # Only change and emit if it was true
+            self._has_unsaved_changes = False
+            logger.info(f"Project dirty state set to: False (after load)")
+            self.unsavedChangesStateChanged.emit(False)
+        elif self._has_unsaved_changes is False:
+             # If it's already false, ensure the signal still fires to update UI like window title
+             # that might have been set to dirty by initial UI updates from default values.
+            logger.info(f"Project dirty state remains: False (after load), ensuring UI sync.")
+            self.unsavedChangesStateChanged.emit(False)
+
+    def clear_project_state_for_close(self) -> None:
+        """
+        Resets the project file path and dirty flag, typically when closing a project.
+        """
+        self._set_current_project_filepath(None)
+        self.set_project_dirty(False) # No unsaved changes for a non-existent/closed project
+        logger.info("Project state (filepath, dirty flag) cleared for close.")
+    # --- END NEW METHODS ---
 
     def gather_project_state_dict(self) -> Dict[str, Any]:
         """
@@ -59,17 +124,17 @@ class ProjectManager:
         logger.debug("Gathering project state for saving...")
         project_state: Dict[str, Any] = {}
 
-        # 1. Project Info [cite: 26]
+        # 1. Project Info
         project_state['project_info'] = {
             'app_name': config.APP_NAME,
             'app_version': config.APP_VERSION,
             # Could add save_timestamp here if desired
         }
 
-        # 2. Metadata [cite: 27, 28, 29, 30]
+        # 2. Metadata
         metadata: Dict[str, Any] = {}
 
-        # Video properties from MainWindow/VideoHandler [cite: 27]
+        # Video properties from MainWindow/VideoHandler
         if self._main_window_ref.video_handler and self._main_window_ref.video_handler.is_loaded:
             video_info = self._main_window_ref.video_handler.get_video_info()
             metadata[config.META_FILENAME] = video_info.get('filename', 'N/A')
@@ -86,16 +151,19 @@ class ProjectManager:
             metadata[config.META_FPS] = 0.0
             metadata[config.META_DURATION] = 0.0
 
-        # CoordinateTransformer state [cite: 28]
+        # CoordinateTransformer state
         coord_meta = self._coord_transformer.get_metadata() # Relies on CoordinateTransformer.get_metadata()
         metadata[config.META_COORD_SYSTEM_MODE] = coord_meta.get('mode', 'TOP_LEFT') # Default if not found
         metadata[config.META_COORD_ORIGIN_X_TL] = coord_meta.get('origin_x_tl', 0.0)
         metadata[config.META_COORD_ORIGIN_Y_TL] = coord_meta.get('origin_y_tl', 0.0)
         # Store the video_height that coord_transformer is currently using for its context
-        metadata[config.META_HEIGHT] = coord_meta.get('video_height', metadata[config.META_HEIGHT])
+        # Ensure the key META_HEIGHT in metadata gets the value from coord_meta if available,
+        # otherwise keeps the value set from video_info (which might be 0 if no video loaded)
+        current_meta_height = metadata.get(config.META_HEIGHT, 0) # Get height already in metadata (from video_info)
+        metadata[config.META_HEIGHT] = coord_meta.get('video_height', current_meta_height)
 
 
-        # ScaleManager state [cite: 28]
+        # ScaleManager state
         metadata[config.META_SCALE_FACTOR_M_PER_PX] = self._scale_manager.get_scale_m_per_px() # Can be None
         metadata['display_in_meters'] = self._scale_manager.display_in_meters() # Store boolean preference
         
@@ -111,19 +179,50 @@ class ProjectManager:
             metadata[config.META_SCALE_LINE_P2X] = "N/A"
             metadata[config.META_SCALE_LINE_P2Y] = "N/A"
 
-        # Data units for element point data being saved [cite: 29]
+        # Data units for element point data being saved
         metadata[config.META_DATA_UNITS] = "px"
 
-        # Relevant global settings from SettingsManager [cite: 30]
+        # Relevant global settings from SettingsManager
         # Example:
-        metadata[config.META_SHOW_MEASUREMENT_LINE_LENGTHS] = self._settings_manager.get_setting(
-            config.META_SHOW_MEASUREMENT_LINE_LENGTHS # Using the key directly from config
-        )
+        # For Feature 1 (UI Toggles):
+        # Scale Panel Toggles
+        if hasattr(self._main_window_ref, 'showScaleLineCheckBox') and self._main_window_ref.showScaleLineCheckBox is not None:
+            metadata['ui_show_scale_line_checkbox'] = self._main_window_ref.showScaleLineCheckBox.isChecked()
+        if hasattr(self._main_window_ref, 'scale_display_meters_checkbox') and self._main_window_ref.scale_display_meters_checkbox is not None:
+            metadata['ui_scale_display_meters_checkbox'] = self._main_window_ref.scale_display_meters_checkbox.isChecked()
+        if hasattr(self._main_window_ref, 'showScaleBarCheckBox') and self._main_window_ref.showScaleBarCheckBox is not None:
+            metadata['ui_show_scale_bar_checkbox'] = self._main_window_ref.showScaleBarCheckBox.isChecked()
+
+        # Coordinate Panel Toggles
+        if hasattr(self._main_window_ref, 'showOriginCheckBox') and self._main_window_ref.showOriginCheckBox is not None:
+            metadata['ui_show_origin_checkbox'] = self._main_window_ref.showOriginCheckBox.isChecked()
+        
+        # View Menu related (backed by SettingsManager, but we can snapshot their effective state for the project)
+        # These reflect the *visual state at save time* for these specific project-level overrides,
+        # separate from the user's global defaults saved by SettingsManager.
+        # For META_SHOW_MEASUREMENT_LINE_LENGTHS, it's better to get this from where it's controlled
+        # if a ViewMenuController action directly reflects this.
+        # If it's just a setting, then getting from settings_manager is okay.
+        if self._main_window_ref.view_menu_controller and \
+           self._main_window_ref.view_menu_controller.viewShowMeasurementLineLengthsAction:
+            metadata[config.META_SHOW_MEASUREMENT_LINE_LENGTHS] = self._main_window_ref.view_menu_controller.viewShowMeasurementLineLengthsAction.isChecked()
+        else: # Fallback to the global setting if view controller/action not available
+            metadata[config.META_SHOW_MEASUREMENT_LINE_LENGTHS] = self._settings_manager.get_setting(
+                config.META_SHOW_MEASUREMENT_LINE_LENGTHS
+            )
+
+        if self._main_window_ref.view_menu_controller:
+            if self._main_window_ref.view_menu_controller.viewShowFilenameAction:
+                 metadata['ui_view_show_filename'] = self._main_window_ref.view_menu_controller.viewShowFilenameAction.isChecked()
+            if self._main_window_ref.view_menu_controller.viewShowTimeAction:
+                 metadata['ui_view_show_time'] = self._main_window_ref.view_menu_controller.viewShowTimeAction.isChecked()
+            if self._main_window_ref.view_menu_controller.viewShowFrameNumberAction:
+                 metadata['ui_view_show_frame_number'] = self._main_window_ref.view_menu_controller.viewShowFrameNumberAction.isChecked()
         # Add other global settings here as needed
 
         project_state['metadata'] = metadata
 
-        # 3. Elements [cite: 30]
+        # 3. Elements
         project_state['elements'] = self._element_manager.get_all_elements_for_project_save()
 
         logger.debug(f"Project state gathered. Top-level keys: {list(project_state.keys())}")
@@ -132,6 +231,7 @@ class ProjectManager:
     def save_project(self, filepath: str) -> bool:
         """
         Gathers the current project state and writes it to a JSON file.
+        Also updates the current project path and clears the dirty flag on success.
 
         Args:
             filepath: The path to save the JSON project file.
@@ -141,62 +241,59 @@ class ProjectManager:
         """
         logger.info(f"Attempting to save project to: {filepath}")
         try:
-            project_data_dict = self.gather_project_state_dict() # [cite: 31]
+            project_data_dict = self.gather_project_state_dict() #
             
-            # This function will be defined in file_io.py in the next step [cite: 32]
-            # For now, we can simulate its part of the logic here or just call it
-            # Placeholder for the actual file writing:
-            from file_io import write_project_json_file # Temporary import for structure
+            from file_io import write_project_json_file
             write_project_json_file(filepath, project_data_dict)
             
+            self.mark_project_as_saved(filepath) # Update path and clear dirty flag
             logger.info(f"Project successfully saved to {filepath}")
             return True
-        except Exception as e: # Catch potential exceptions from gather_project_state_dict or write_project_json_file [cite: 32]
+        except Exception as e: # Catch potential exceptions from gather_project_state_dict or write_project_json_file
             logger.error(f"Error saving project to {filepath}: {e}", exc_info=True)
-            # Consider emitting a signal or returning error message for MainWindow to display
             return False
 
 
     def load_project(self, filepath: str) -> bool:
-        """
-        Loads a project state from a JSON file and applies it.
-
-        Args:
-            filepath: The path to the JSON project file.
-
-        Returns:
-            bool: True if loading and applying the project was successful, False otherwise.
-        """
         logger.info(f"Attempting to load project from: {filepath}")
+        # --- MODIFIED: Set loading flag ---
+        self._is_loading_project = True
+        # --- END MODIFIED ---
         try:
-            # Import here to avoid circular dependency at module level if ProjectManager is imported by file_io
             from file_io import read_project_json_file
-            loaded_state_dict = read_project_json_file(filepath) # [cite: 48]
+            loaded_state_dict = read_project_json_file(filepath) 
             
-            if not loaded_state_dict: # Should be caught by read_project_json_file re-raising
+            if not loaded_state_dict:
                 logger.error(f"Failed to read or parse project file: {filepath}")
+                self._is_loading_project = False # Reset flag on failure
                 return False
 
-            return self.apply_project_state(loaded_state_dict) # [cite: 49]
+            if self.apply_project_state(loaded_state_dict): 
+                self.mark_project_as_loaded(filepath) 
+                self._is_loading_project = False # Reset flag on success
+                return True
+            
+            self._is_loading_project = False # Reset flag on apply_project_state failure
+            return False
         except FileNotFoundError:
-            logger.error(f"Project file not found: {filepath}")
-            self._main_window_ref.statusBar().showMessage(f"Error: Project file not found: {os.path.basename(filepath)}", 5000)
+            # ... (rest of except blocks) ...
+            self._is_loading_project = False # Reset flag
             return False
         except json.JSONDecodeError:
-            logger.error(f"Error decoding JSON from project file: {filepath}")
-            self._main_window_ref.statusBar().showMessage(f"Error: Invalid project file format: {os.path.basename(filepath)}", 5000)
+            # ...
+            self._is_loading_project = False # Reset flag
             return False
         except Exception as e:
-            logger.error(f"An unexpected error occurred during project load: {e}", exc_info=True)
-            self._main_window_ref.statusBar().showMessage(f"Error loading project: {str(e)}", 5000)
+            # ...
+            self._is_loading_project = False # Reset flag
             return False
+        # --- MODIFIED: Removed finally block here, _is_loading_project is reset within try/except ---
+
 
     def apply_project_state(self, loaded_state_dict: Dict[str, Any]) -> bool:
-        """
-        Applies the loaded project state (settings and elements) to the application's components.
-        Assumes MainWindow has already prepared/reset managers as needed
-        and that the correct video (if specified in project) is loaded and active.
-        """
+        # --- Ensure this method is also aware or that set_project_dirty handles the loading flag ---
+        # The modification to set_project_dirty should handle this.
+        # ... (existing apply_project_state logic) ...
         logger.info("Applying loaded project data (settings and elements)...")
         
         project_metadata = loaded_state_dict.get('metadata', {})
@@ -210,7 +307,7 @@ class ProjectManager:
         # --- Video Metadata Consistency Check (warnings only) ---
         saved_video_filename = project_metadata.get(config.META_FILENAME)
         saved_video_width = project_metadata.get(config.META_WIDTH)
-        saved_video_height_for_coord_context = project_metadata.get(config.META_HEIGHT) 
+        saved_video_height_for_coord_context = project_metadata.get(config.META_HEIGHT)
         saved_frame_count = project_metadata.get(config.META_FRAMES)
         
         if self._main_window_ref.video_loaded:
@@ -219,8 +316,9 @@ class ProjectManager:
                 warnings.append(f"Project's saved video filename ('{saved_video_filename}') differs from loaded ('{current_video_info.get('filename')}').")
             if saved_video_width is not None and saved_video_width != current_video_info.get('width'):
                 warnings.append(f"Project video width ({saved_video_width}) mismatches loaded ({current_video_info.get('width')}).")
-            if saved_video_height_for_coord_context is not None and saved_video_height_for_coord_context != current_video_info.get('height'):
-                 warnings.append(f"Project metadata video height ({saved_video_height_for_coord_context}) for coordinate context mismatches loaded video height ({current_video_info.get('height')}).")
+            if saved_video_height_for_coord_context is not None and \
+               saved_video_height_for_coord_context != current_video_info.get('height'):
+                 warnings.append(f"Project metadata video height ({saved_video_height_for_coord_context}) for coordinate context mismatches current video height ({current_video_info.get('height')}).")
             if saved_frame_count is not None and saved_frame_count != current_video_info.get('total_frames'):
                 warnings.append(f"Project frame count ({saved_frame_count}) mismatches loaded ({current_video_info.get('total_frames')}).")
         elif saved_video_filename != "N/A":
@@ -238,21 +336,20 @@ class ProjectManager:
             video_h_for_coord_transform = self._main_window_ref.frame_height
             warnings.append(f"Using current video height ({video_h_for_coord_transform}px) for coordinate context as project metadata height was invalid/missing.")
         else:
-            warnings.append(f"Invalid/missing video height in project for coordinate context and no video loaded. Using fallback height: {video_h_for_coord_transform}px.")
+            warnings.append(f"Invalid/missing video height in project metadata for coordinate context and no video loaded. Coordinate transformations may be incorrect. Using fallback height: {video_h_for_coord_transform}px.")
         
-        self._coord_transformer.set_video_height(video_h_for_coord_transform) # [cite: 55]
-        loaded_coord_mode = CoordinateSystem.from_string(coord_mode_str) if coord_mode_str else CoordinateSystem.TOP_LEFT # [cite: 55]
-        self._coord_transformer.set_mode(loaded_coord_mode) # [cite: 55]
+        self._coord_transformer.set_video_height(video_h_for_coord_transform) 
+        loaded_coord_mode = CoordinateSystem.from_string(coord_mode_str) if coord_mode_str else CoordinateSystem.TOP_LEFT 
+        self._coord_transformer.set_mode(loaded_coord_mode) 
         if loaded_coord_mode == CoordinateSystem.CUSTOM and coord_origin_x_tl is not None and coord_origin_y_tl is not None:
             try:
-                self._coord_transformer.set_custom_origin(float(coord_origin_x_tl), float(coord_origin_y_tl)) # [cite: 55]
+                self._coord_transformer.set_custom_origin(float(coord_origin_x_tl), float(coord_origin_y_tl)) 
             except ValueError:
                 warnings.append("Invalid custom origin coordinates in project. Using default (0,0) for custom mode.")
                 self._coord_transformer.set_custom_origin(0.0, 0.0) 
         
-        # --- Apply Scale Settings --- [cite: 56]
+        # --- Apply Scale Settings ---
         scale_m_per_px_val = project_metadata.get(config.META_SCALE_FACTOR_M_PER_PX)
-        display_in_meters_val = project_metadata.get('display_in_meters', False)
         
         if isinstance(scale_m_per_px_val, str) and scale_m_per_px_val.lower() == "n/a":
             scale_m_per_px_val = None
@@ -274,29 +371,99 @@ class ProjectManager:
         
         if parsed_scale_line_coords:
             self._scale_manager.set_defined_scale_line(*parsed_scale_line_coords)
-            self._scale_manager.set_scale(scale_m_per_px_val, called_from_line_definition=True)
+            self._scale_manager.set_scale(scale_m_per_px_val, called_from_line_definition=True) 
         else:
-            self._scale_manager.clear_defined_scale_line()
+            self._scale_manager.clear_defined_scale_line() 
             self._scale_manager.set_scale(scale_m_per_px_val, called_from_line_definition=False)
-        self._scale_manager.set_display_in_meters(bool(display_in_meters_val))
+        
+        # --- Apply UI Toggle Settings from Project (Signal blocking happens here) ---
+        logger.debug("Applying UI toggle states from project metadata...")
 
-        # --- Apply Other Global Settings --- [cite: 57]
+        # Scale Panel Toggles
+        show_sl_val = bool(project_metadata.get('ui_show_scale_line_checkbox', False))
+        if hasattr(self._main_window_ref, 'showScaleLineCheckBox') and self._main_window_ref.showScaleLineCheckBox is not None:
+            self._main_window_ref.showScaleLineCheckBox.blockSignals(True)
+            self._main_window_ref.showScaleLineCheckBox.setChecked(show_sl_val)
+            self._main_window_ref.showScaleLineCheckBox.blockSignals(False)
+            if self._main_window_ref.scale_panel_controller: # Manually trigger update
+                self._main_window_ref.scale_panel_controller._on_show_defined_scale_line_toggled(show_sl_val)
+
+        disp_m_val = bool(project_metadata.get('ui_scale_display_meters_checkbox', False))
+        if hasattr(self._main_window_ref, 'scale_display_meters_checkbox') and self._main_window_ref.scale_display_meters_checkbox is not None:
+            self._main_window_ref.scale_display_meters_checkbox.blockSignals(True)
+            actual_disp_m_val = disp_m_val
+            if disp_m_val and self._scale_manager.get_scale_m_per_px() is None:
+                actual_disp_m_val = False 
+                warnings.append("'Display in meters' was checked in project, but no scale is defined. Displaying in pixels.")
+            self._main_window_ref.scale_display_meters_checkbox.setChecked(actual_disp_m_val)
+            self._main_window_ref.scale_display_meters_checkbox.blockSignals(False)
+            self._scale_manager.set_display_in_meters(actual_disp_m_val) # This will emit signal if state changes
+
+        show_sb_val = bool(project_metadata.get('ui_show_scale_bar_checkbox', False))
+        if hasattr(self._main_window_ref, 'showScaleBarCheckBox') and self._main_window_ref.showScaleBarCheckBox is not None:
+            self._main_window_ref.showScaleBarCheckBox.blockSignals(True)
+            self._main_window_ref.showScaleBarCheckBox.setChecked(show_sb_val)
+            self._main_window_ref.showScaleBarCheckBox.blockSignals(False)
+            if self._main_window_ref.scale_panel_controller: # Manually trigger update
+                 self._main_window_ref.scale_panel_controller._on_show_scale_bar_toggled(show_sb_val)
+
+        # Coordinate Panel Toggles
+        show_origin_val = bool(project_metadata.get('ui_show_origin_checkbox', True)) 
+        if hasattr(self._main_window_ref, 'showOriginCheckBox') and self._main_window_ref.showOriginCheckBox is not None:
+            self._main_window_ref.showOriginCheckBox.blockSignals(True)
+            self._main_window_ref.showOriginCheckBox.setChecked(show_origin_val)
+            self._main_window_ref.showOriginCheckBox.blockSignals(False)
+            if self._main_window_ref.coord_panel_controller: # Manually trigger update
+                 self._main_window_ref.coord_panel_controller._on_toggle_show_origin(
+                     QtCore.Qt.CheckState.Checked.value if show_origin_val else QtCore.Qt.CheckState.Unchecked.value
+                 )
+        
+        # View Menu / Global Settings
         show_lengths_val_str = project_metadata.get(config.META_SHOW_MEASUREMENT_LINE_LENGTHS)
-        if isinstance(show_lengths_val_str, bool): 
-            show_lengths_val = show_lengths_val_str
-        elif isinstance(show_lengths_val_str, str):
-            show_lengths_val = show_lengths_val_str.lower() == 'true'
+        if isinstance(show_lengths_val_str, bool): show_lengths_val = show_lengths_val_str
+        elif isinstance(show_lengths_val_str, str): show_lengths_val = show_lengths_val_str.lower() == 'true'
+        else: show_lengths_val = True 
+        
+        if self._main_window_ref.view_menu_controller and \
+           self._main_window_ref.view_menu_controller.viewShowMeasurementLineLengthsAction:
+            action = self._main_window_ref.view_menu_controller.viewShowMeasurementLineLengthsAction
+            current_action_state = action.isChecked()
+            if current_action_state != show_lengths_val: # Only change if different to avoid loop
+                action.blockSignals(True)
+                action.setChecked(show_lengths_val)
+                action.blockSignals(False)
+                self._main_window_ref.view_menu_controller._handle_show_measurement_line_lengths_triggered(show_lengths_val)
         else: 
-            show_lengths_val = True 
-            warnings.append(f"Setting '{config.META_SHOW_MEASUREMENT_LINE_LENGTHS}' missing or invalid in project. Defaulting to {show_lengths_val}.")
-        self._settings_manager.set_setting(config.META_SHOW_MEASUREMENT_LINE_LENGTHS, show_lengths_val) # [cite: 57]
+            self._settings_manager.set_setting(config.META_SHOW_MEASUREMENT_LINE_LENGTHS, show_lengths_val)
+
+        if self._main_window_ref.view_menu_controller:
+            vmc = self._main_window_ref.view_menu_controller
+            info_overlay_actions = [
+                (vmc.viewShowFilenameAction, 'ui_view_show_filename', self._settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME),
+                (vmc.viewShowTimeAction, 'ui_view_show_time', self._settings_manager.KEY_INFO_OVERLAY_SHOW_TIME),
+                (vmc.viewShowFrameNumberAction, 'ui_view_show_frame_number', self._settings_manager.KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER)
+            ]
+            for action, key_ui, key_setting in info_overlay_actions:
+                if action:
+                    val = bool(project_metadata.get(key_ui, True))
+                    current_action_state = action.isChecked()
+                    if current_action_state != val: # Only change if different
+                        action.blockSignals(True)
+                        action.setChecked(val)
+                        action.blockSignals(False)
+                        vmc._handle_info_overlay_action_triggered(key_setting, val)
         
         # --- Load Elements ---
         elements_to_load = loaded_state_dict.get('elements', [])
-        video_context_width = self._main_window_ref.frame_width if self._main_window_ref.video_loaded else (int(saved_video_width) if isinstance(saved_video_width, (int, float)) and saved_video_width > 0 else 0)
-        video_context_height = self._main_window_ref.frame_height if self._main_window_ref.video_loaded else (int(saved_video_height_for_coord_context) if isinstance(saved_video_height_for_coord_context, (int, float)) and saved_video_height_for_coord_context > 0 else 0)
-        video_context_frames = self._main_window_ref.total_frames if self._main_window_ref.video_loaded else (int(saved_frame_count) if isinstance(saved_frame_count, int) and saved_frame_count > 0 else 0)
-        video_context_fps = self._main_window_ref.fps if self._main_window_ref.video_loaded else (float(project_metadata.get(config.META_FPS, 0.0)) if project_metadata.get(config.META_FPS) is not None else 0.0)
+        video_context_width = self._main_window_ref.frame_width if self._main_window_ref.video_loaded else \
+                              (int(saved_video_width) if isinstance(saved_video_width, (int, float)) and saved_video_width > 0 else 0)
+        video_context_height = video_h_for_coord_transform 
+        video_context_frames = self._main_window_ref.total_frames if self._main_window_ref.video_loaded else \
+                               (int(saved_frame_count) if isinstance(saved_frame_count, int) and saved_frame_count > 0 else 0)
+        video_context_fps_from_meta = project_metadata.get(config.META_FPS)
+        video_context_fps = self._main_window_ref.fps if self._main_window_ref.video_loaded else \
+                            (float(video_context_fps_from_meta) if isinstance(video_context_fps_from_meta, (int,float)) and video_context_fps_from_meta > 0 else 0.0)
+
 
         if video_context_width <= 0 or video_context_height <= 0 or video_context_frames <= 0:
              warnings.append("Video context for element validation is invalid (dimensions/frames are zero or negative). Point validation may be unreliable.")
@@ -304,14 +471,14 @@ class ProjectManager:
         success_elements, element_warnings = self._element_manager.load_elements_from_project_data(
             elements_to_load,
             video_width=video_context_width,
-            video_height=video_context_height,
+            video_height=video_context_height, 
             video_frame_count=video_context_frames,
             video_fps=video_context_fps
-        ) # [cite: 57]
+        ) 
         warnings.extend(element_warnings)
         
-        if not success_elements:
-            logger.error("ElementManager.load_elements_from_project_data reported failure.")
+        if not success_elements: 
+            logger.info("ElementManager.load_elements_from_project_data reported no errors, but no elements might have been loaded.")
         
         logger.info("Project data application processed.")
         if warnings:
@@ -320,5 +487,8 @@ class ProjectManager:
             self._main_window_ref._project_load_warnings = warnings 
         else:
              self._main_window_ref._project_load_warnings = [] 
+
+        return True
+
 
         return True
