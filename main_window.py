@@ -1317,122 +1317,190 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar: status_bar.showMessage("Load Project Error: ProjectManager not initialized.", 3000)
             logger.error("Cannot load project: ProjectManager not initialized.")
             return
-
+    
         try:
-            # Step 1: Prepare for loading, which includes handling unsaved changes.
-            # This will raise InterruptedError if the user cancels the "save changes" dialog.
-            self._prepare_for_project_load()
+            self._prepare_for_project_load() # Handles unsaved changes prompt and basic reset
         except InterruptedError as e:
             logger.info(f"Project loading process interrupted during preparation: {e}")
             if status_bar: status_bar.showMessage("Project loading cancelled.", 3000)
-            # UI state should have been handled by the cancellation within _trigger_close_project
-            # or _reset_ui_after_video_close. We call _update_ui_state here to be sure.
-            self._update_ui_state()
+            self._update_ui_state() # Ensure UI is consistent
             if self.view_menu_controller:
                 self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
-            return # IMPORTANT: Exit the method if preparation was interrupted
-
-        # If we reach here, _prepare_for_project_load() completed successfully (no interruption)
-
+            return
+    
         start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
         load_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Open Project File", start_dir, "PyroTracker Project Files (*.json);;All Files (*)"
         )
-
+    
         if not load_path:
             if status_bar: status_bar.showMessage("Load project cancelled.", 3000)
             logger.info("Project loading cancelled by user (file dialog).")
-            self._update_ui_state() 
-            if self.view_menu_controller:
-                self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
-            return
-
-        # If we reach here, a file was selected by the user.
-        if status_bar: status_bar.showMessage(f"Loading project from {os.path.basename(load_path)}...", 0)
-        QtWidgets.QApplication.processEvents()
-
-        self._project_load_warnings: List[str] = []
-
-        try:
-            # Note: _prepare_for_project_load was already called and succeeded.
-            loaded_state_dict = file_io.read_project_json_file(load_path)
-            if not loaded_state_dict:
-                raise ValueError("Failed to read or parse project file.")
-
-            project_metadata = loaded_state_dict.get('metadata', {})
-            saved_video_filename_from_project = project_metadata.get(config.META_FILENAME)
-            
-            video_loaded_from_project = False
-            if saved_video_filename_from_project and saved_video_filename_from_project != "N/A":
-                project_dir = os.path.dirname(load_path)
-                potential_video_path = os.path.join(project_dir, saved_video_filename_from_project)
-                                
-                logger.info(f"Project specifies video: '{saved_video_filename_from_project}'. Attempting to open from: '{potential_video_path}'.")
-                if os.path.exists(potential_video_path):
-                    self.video_handler.open_video(potential_video_path) 
-                    video_loaded_from_project = self.video_loaded
-                else:
-                    msg = f"Video '{saved_video_filename_from_project}' from project not found at '{potential_video_path}'. Project data will be loaded without video context."
-                    logger.warning(msg)
-                    self._project_load_warnings.append(msg)
-                    QtWidgets.QMessageBox.warning(self, "Video Not Found", msg)
-            else:
-                logger.info("Project file does not specify a video, or video is 'N/A'. No video loaded automatically.")
-
-            apply_success = self.project_manager.apply_project_state(loaded_state_dict)
-            
-            if apply_success:
-                self.project_manager.mark_project_as_loaded(load_path)
-
-                if self.video_loaded:
-                    self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {os.path.basename(self.video_filepath)}")
-                elif saved_video_filename_from_project and saved_video_filename_from_project != "N/A":
-                    self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {saved_video_filename_from_project} (Project Loaded, Video Missing)")
-                else:
-                    self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {os.path.basename(load_path)}")
-                
-                if self.table_data_controller:
-                    self.table_data_controller.update_tracks_table_ui()
-                    if self.table_data_controller._lines_table:
-                        self.table_data_controller.update_lines_table_ui()
-                    self.table_data_controller.update_points_table_ui()
-                
-                if self.coord_panel_controller:
-                    self.coord_panel_controller.update_ui_display()
-                
-                if self.scale_panel_controller:
-                    self.scale_panel_controller.update_ui_from_manager()
-                
-                if not video_loaded_from_project: 
-                    if len(self.element_manager.elements) > 0 :
-                        self._redraw_scene_overlay()
-                    else: 
-                        self.imageView.clearOverlay()
-                        self.imageView.setPixmap(QtGui.QPixmap())
-
-                final_status_message = f"Project loaded from {os.path.basename(load_path)}"
-                if self._project_load_warnings:
-                    final_status_message += f" with {len(self._project_load_warnings)} warning(s)."
-                    logger.warning(f"Warnings during project load of '{load_path}':\n" + "\n".join(self._project_load_warnings))
-                if status_bar: status_bar.showMessage(final_status_message, 7000)
-                logger.info(final_status_message)
-            else:
-                if status_bar: status_bar.showMessage("Error applying project state. See log.", 5000)
-        
-        except (FileNotFoundError, PermissionError) as e:
-            if status_bar: status_bar.showMessage(f"Error: {e}", 5000)
-            logger.error(f"File error loading project: {e}", exc_info=True)
-        except (json.JSONDecodeError, ValueError) as e:
-            if status_bar: status_bar.showMessage(f"Error: Invalid project file format. {e}", 5000)
-            logger.error(f"Format error loading project: {e}", exc_info=True)
-        except Exception as e: 
-            if status_bar: status_bar.showMessage(f"Unexpected error loading project: {str(e)}", 5000)
-            logger.error(f"An unexpected error occurred during project load: {e}", exc_info=True)
-        finally:
             self._update_ui_state()
             if self.view_menu_controller:
                 self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
-
+            return
+    
+        if status_bar: status_bar.showMessage(f"Loading project from {os.path.basename(load_path)}...", 0)
+        QtWidgets.QApplication.processEvents()
+    
+        self._project_load_warnings = [] # Clear previous warnings for this load attempt
+        loaded_state_dict: Optional[Dict[str, Any]] = None
+        project_applied_successfully = False
+        video_loaded_for_this_project = False # Tracks if video specified by project was loaded
+    
+        # --- Main Loading Sequence ---
+        try:
+            self.project_manager._is_loading_project = True # Manage flag in MainWindow for the entire operation
+            logger.debug("MainWindow: Set ProjectManager._is_loading_project to True.")
+    
+            # Step 1: Read project file data
+            loaded_state_dict = self.project_manager.load_project_file_data(load_path) # Uses new PM method
+    
+            if loaded_state_dict:
+                project_metadata = loaded_state_dict.get('metadata', {})
+                saved_video_filename_from_project = project_metadata.get(config.META_FILENAME)
+    
+                # Variables to hold the video context for apply_project_state
+                video_width_for_apply = 0
+                video_height_for_apply = 0
+                total_frames_for_apply = 0
+                fps_for_apply = 0.0
+    
+                # Step 2: Attempt to load the video specified in the project
+                if saved_video_filename_from_project and saved_video_filename_from_project != "N/A":
+                    project_dir = os.path.dirname(load_path)
+                    potential_video_path = os.path.join(project_dir, saved_video_filename_from_project)
+                    logger.info(f"Project specifies video: '{saved_video_filename_from_project}'. Attempting to open from: '{potential_video_path}'.")
+                    
+                    # open_video will emit signals, _handle_video_loaded will set self.video_loaded,
+                    # self.frame_width etc., and trigger initial frame display + overlay.
+                    # This happens while _is_loading_project is True.
+                    self.video_handler.open_video(potential_video_path) 
+                    video_loaded_for_this_project = self.video_handler.is_loaded 
+    
+                    if video_loaded_for_this_project:
+                        logger.info(f"Video '{saved_video_filename_from_project}' loaded successfully for the project.")
+                        video_width_for_apply = self.frame_width
+                        video_height_for_apply = self.frame_height
+                        total_frames_for_apply = self.total_frames
+                        fps_for_apply = self.fps
+                    else:
+                        msg = f"Video '{saved_video_filename_from_project}' from project not found or failed to load from '{potential_video_path}'. Project data will be applied using metadata for context if available."
+                        logger.warning(msg)
+                        self._project_load_warnings.append(msg)
+                        QtWidgets.QMessageBox.warning(self, "Video Not Found", msg)
+                        # Fallback to project metadata for context if video load failed
+                        video_width_for_apply = int(project_metadata.get(config.META_WIDTH, 0))
+                        video_height_for_apply = int(project_metadata.get(config.META_HEIGHT, 0))
+                        total_frames_for_apply = int(project_metadata.get(config.META_FRAMES, 0))
+                        fps_for_apply = float(project_metadata.get(config.META_FPS, 0.0))
+                else:
+                    logger.info("Project file does not specify a video. No video loaded automatically.")
+                    if self.video_loaded: # If a video was open from before (e.g. user opened video then project)
+                        self._release_video() # This resets self.video_loaded, frame_width etc.
+                    # Get context from project metadata if available, otherwise defaults to 0
+                    video_width_for_apply = int(project_metadata.get(config.META_WIDTH, 0))
+                    video_height_for_apply = int(project_metadata.get(config.META_HEIGHT, 0))
+                    total_frames_for_apply = int(project_metadata.get(config.META_FRAMES, 0))
+                    fps_for_apply = float(project_metadata.get(config.META_FPS, 0.0))
+    
+                # Step 3: Apply the rest of the project state using the determined video context
+                # _is_loading_project is still True.
+                project_applied_successfully = self.project_manager.apply_project_state(
+                    loaded_state_dict,
+                    video_loaded_for_this_project, # Pass the actual status of video loading this session
+                    video_width_for_apply,
+                    video_height_for_apply,
+                    total_frames_for_apply,
+                    fps_for_apply
+                )
+    
+                if project_applied_successfully:
+                    self.project_manager.mark_project_as_loaded(load_path) # Sets dirty = False
+    
+                    # Update window title (will be further refined by _handle_unsaved_changes_state_changed)
+                    title_base = f"{config.APP_NAME} v{config.APP_VERSION}"
+                    project_file_basename = os.path.basename(load_path)
+                    if video_loaded_for_this_project:
+                        # Prefer video name if different and validly loaded for this project
+                        self.setWindowTitle(f"{title_base} - {os.path.basename(self.video_filepath)}")
+                    elif saved_video_filename_from_project and saved_video_filename_from_project != "N/A":
+                        self.setWindowTitle(f"{title_base} - {saved_video_filename_from_project} (Project: {project_file_basename}, Video Missing)")
+                    else:
+                        self.setWindowTitle(f"{title_base} - {project_file_basename}")
+                    
+                    final_status_message = f"Project loaded from {project_file_basename}"
+                    # _project_load_warnings would have been populated by PM.apply_project_state
+                    if self._project_load_warnings:
+                        final_status_message += f" with {len(self._project_load_warnings)} warning(s)."
+                    if status_bar: status_bar.showMessage(final_status_message, 7000)
+                else:
+                    if status_bar: status_bar.showMessage("Error applying project settings/elements. See log.", 5000)
+            
+            else: # loaded_state_dict was None (file read itself failed)
+                if status_bar: status_bar.showMessage("Failed to read project file. See log.", 5000)
+                project_applied_successfully = False # Ensure this path knows it failed
+    
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError) as e:
+            if status_bar: status_bar.showMessage(f"Error reading project file: {e}", 5000)
+            logger.error(f"Error reading project file: {e}", exc_info=True)
+            project_applied_successfully = False
+        except Exception as e:
+            if status_bar: status_bar.showMessage(f"Critical error during project load: {str(e)}", 5000)
+            logger.error(f"A critical error occurred during project loading sequence: {e}", exc_info=True)
+            project_applied_successfully = False
+        finally:
+            logger.debug("MainWindow._trigger_load_project: Entering finally block for UI updates and flag reset.")
+            
+            # Ensure all UI components reflect the final state after loading attempt.
+            # This includes table updates, panel controller UIs, etc.
+            # _update_ui_state() refreshes enabled/disabled states.
+            # Controller update_ui methods refresh their specific content.
+            if self.table_data_controller: # Update tables with loaded element data
+                self.table_data_controller.update_tracks_table_ui()
+                if self.table_data_controller._lines_table:
+                    self.table_data_controller.update_lines_table_ui()
+                self.table_data_controller.update_points_table_ui()
+            if self.coord_panel_controller: # Update coordinate panel display
+                self.coord_panel_controller.update_ui_display()
+            if self.scale_panel_controller: # Update scale panel display
+                self.scale_panel_controller.update_ui_from_manager()
+            
+            self._update_ui_state() # General UI state (buttons, etc.)
+            
+            if self.view_menu_controller: # Sync view menu items
+                self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
+            
+            # If video didn't load, but project might have data, ensure view is clean.
+            # _handle_video_loaded or _handle_frame_changed should have dealt with pixmap.
+            # If video_loaded_for_this_project is False, self.video_loaded is also False,
+            # so _redraw_scene_overlay will clear the overlay.
+            if not video_loaded_for_this_project:
+                 if self.imageView:
+                    self.imageView.clearOverlay()
+                    self.imageView.setPixmap(QtGui.QPixmap()) # Ensure blank canvas
+    
+            if self.project_manager:
+                self.project_manager._is_loading_project = False # CRITICAL: Set flag false AFTER all UI updates
+                logger.debug("MainWindow: ProjectManager._is_loading_project set to False.")
+    
+                if project_applied_successfully:
+                    # PM.mark_project_as_loaded set dirty=false. Re-emit to ensure title is clean.
+                    self.project_manager.unsavedChangesStateChanged.emit(self.project_manager.project_has_unsaved_changes())
+                else:
+                    # If load failed at any stage after trying to read file
+                    if loaded_state_dict is not None or load_path: # If we attempted a file
+                         # If _prepare_for_project_load released a video, this ensures state is consistent with "no project"
+                         if not self.video_loaded: # If no video is now loaded (either wasn't before or released)
+                            self.project_manager.clear_project_state_for_close() 
+                         # If a video *is* still loaded (e.g. user opened video, then project load failed),
+                         # do not clear_project_state_for_close, but mark as dirty.
+                         self.project_manager.set_project_dirty(True) # A failed load attempt should be considered dirty
+                         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} (Load Failed)")
+    
+    
+            logger.info("Project loading attempt finished in MainWindow.")
 
     @QtCore.Slot()
     def _show_preferences_dialog(self) -> None:
