@@ -2,7 +2,7 @@
 
 ## Description
 
-PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), optionally define a pixel-to-meter scale manually or by drawing a line on a feature of known length, mark the changing position of specific pyroclasts over time to generate tracks, and create measurement lines. **Project data, including element coordinates (always stored as raw Top-Left pixels [cite: 22]), video metadata, coordinate system settings, and scale information, is saved to and loaded from JSON-based project files[cite: 1].**
+PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), optionally define a pixel-to-meter scale manually or by drawing a line on a feature of known length, mark the changing position of specific pyroclasts over time to generate tracks, and create measurement lines. **Project data, including element coordinates (always stored as raw Top-Left pixels), video metadata, coordinate system settings, and scale information, is saved to and loaded from JSON-based project files.**
 
 The tool features interactive zoom and pan capabilities; frame-by-frame navigation; optional auto-advancing; multi-element management (tracks and measurement lines) with visibility controls; element selection via table or image view clicks; visual feedback for marked elements; on-screen information overlays (filename, time, frame number); an optional on-screen scale bar and scale definition line; persistent visual preferences (colors, sizes); a video metadata viewer; export capabilities for both the full video with overlays and individual frames as PNG images; and undo functionality for point marking operations. A **View Menu** provides centralized control for toggling the visibility of various on-screen overlays, including measurement line lengths.
 
@@ -35,11 +35,12 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Play/Pause video playback at its native frame rate (toggle button or `Spacebar`).
     * Display current frame number and total frames.
     * Display current time and total video duration (MM:SS.mmm).
+    * Input current frame or time directly to seek.
     * Display the video FPS and filename (tooltip shows the full path).
     * Click on frame numbers in the "Tracks" or "Measurement Lines" table (Start/End Frame or Frame columns respectively) or "Points" table (Frame column) to jump directly to that frame.
     * `Shift+Click` on a visible track marker in the image view to select that track *and* jump directly to the frame containing that specific marker.
 * **Interactive View & Overlays:**
-    * Zoom in/out using `Ctrl + Mouse Wheel` or overlay buttons (+/-).
+    * Zoom in/out using `Ctrl + Mouse Wheel` or overlay buttons (+/-). Zoom level displayed and editable.
     * Pan the view using left-click-and-drag.
     * Zoom/pan state persists across frame changes (after the initial frame).
     * Minimum and maximum zoom levels enforced.
@@ -51,11 +52,11 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
         * On-screen Scale Bar.
         * Defined Scale Line.
         * Coordinate System Origin Marker.
-        * **Measurement Line Lengths[cite: 63].**
+        * **Measurement Line Lengths.**
         These menu actions synchronize with corresponding checkboxes in the side panels where applicable.
 * **Multi-Element Data Collection:**
     * **Tracks:**
-        * Create new tracks using the "+" button in the "Tracks" tab (or `Ctrl+N` shortcut via `Edit -> New Track`).
+        * Create new tracks using the "New" button in the "Tracks" tab or `Edit -> New Track` (`Ctrl+N`).
         * **Select Active Track:** `Ctrl+Click` on a visible track marker in the image view or on a blank area to deselect. Click on a track row in the "Tracks" table.
         * **Add/Update Points:** Left-click on the video frame to mark a pyroclast's position for the *active* track on the current frame. Clicking again *updates* the existing point's coordinates. Only one point per track per frame is allowed.
         * **Delete Point:** Delete the point for the *active* track on the *current* frame by pressing the `Delete` or `Backspace` key.
@@ -64,20 +65,20 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
         * **Track Visibility Control:** Control track display mode individually (Hidden, Home Frame, Incremental, Always Visible) using radio buttons in the "Tracks" table. Set all tracks to a specific mode by clicking the corresponding header icon.
         * **Delete Tracks:** Delete entire tracks using the trash can icon button (🗑️) in the "Tracks" table (confirmation required).
     * **Measurement Lines:**
-        * Create new measurement lines using the "+" button in the "Measurement Lines" tab[cite: 2].
-        * Define a line by clicking two points on the *same* video frame[cite: 2].
-        * Lines are displayed with their length (in current display units if scale is set, otherwise pixels) and angle.
-        * Length label visibility can be toggled via the `View` menu and preferences[cite: 63, 30].
-        * Visuals (color, width for normal and active states) are customizable via `Edit -> Preferences...`[cite: 60].
+        * Create new measurement lines using the "New" button in the "Measurement Lines" tab.
+        * Define a line by clicking two points on the *same* video frame. Line definition can be snapped to angles (e.g., 0°, 45°, 90°) by holding `Shift` while defining the second point.
+        * Lines are displayed with their length (in current display units if scale is set, otherwise pixels) and angle (0-360°, 0° to the right).
+        * Length label visibility can be toggled via the `View` menu and preferences.
+        * Visuals (color, width for normal and active states) are customizable via `Edit -> Preferences...`.
         * Visibility control (Hidden, Home Frame, Incremental, Always Visible) similar to tracks.
         * Delete lines using the trash can icon.
 * **Auto-Advance:** Optionally enable automatic frame advance after adding/updating a track point via the "Tracks" tab controls.
 * **Scale Configuration:**
     * Set a pixel-to-meter scale using input boxes for "m/px" or "px/m" in the "Scale Configuration" panel.
-    * **Set Scale by Feature:** Define scale by clicking the 'Set' button, clicking two points on a feature of known length in the image view, and entering the real-world distance in meters.
+    * **Set Scale by Feature:** Define scale by clicking the 'Set' button, clicking two points on a feature of known length in the image view, and entering the real-world distance in meters. Line definition can be snapped to angles by holding `Shift`.
     * A 'Show scale line' checkbox toggles the visibility of this defined line. Appearance customizable via Preferences.
     * Reset the scale using the reset button.
-    * A "Display in meters" checkbox toggles the units for displayed data (Points table, Measurement Line lengths).
+    * A "Display in meters" checkbox toggles the units for displayed data (Points table, Measurement Line lengths, cursor coordinates).
     * A "Show Scale Bar" checkbox toggles the visibility of the on-screen scale bar. Appearance customizable via Preferences.
 * **Coordinate System Management:**
     * Select coordinate system mode (Top-Left, Bottom-Left, Custom) using radio buttons.
@@ -92,12 +93,14 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * "Points" tab: Displays points (Frame, Time (s), X, Y) for the active track or the two endpoints of an active measurement line. Column headers (X, Y) indicate current display units.
     * Collapsible side panels for "Scale Configuration" and "Coordinate System".
 * **Project Save/Load (JSON Format):**
-    * **Save Project:** `File -> Save Project As...` saves the entire project state (all element data[cite: 30], video path[cite: 27], scale settings[cite: 28], coordinate system settings[cite: 28], relevant preferences [cite: 30]) to a `.json` file. Element coordinates are always saved as raw Top-Left pixel values[cite: 22, 43].
-    * **Load Project:** `File -> Open Project...` loads a project from a `.json` file[cite: 59, 60], restoring elements, settings, and attempting to reload the associated video[cite: 61]. Issues warnings if saved video metadata mismatches the currently loaded video[cite: 53].
-* **Data Export (Simplified CSV)[cite: 3]:**
-    * `File -> Export Data -> Export Tracks (as CSV)...`: Exports all track data to a simple CSV file[cite: 114].
-    * `File -> Export Data -> Export Lines (as CSV)...`: Exports all measurement line data (endpoints, length, angle) to a simple CSV[cite: 114].
-    * **Unit Choice:** For both export types, a dialog prompts the user to choose between "Pixel Coordinates (current display system)" or "Real-World Units (meters, if scale is set)"[cite: 117].
+    * **Save Project:** `File -> Save Project` (`Ctrl+S`) saves the current project to its existing file path. If the project is new, it behaves like "Save Project As...".
+    * **Save Project As...:** `File -> Save Project As...` saves the entire project state (all element data, video path, scale settings, coordinate system settings, relevant UI toggle states) to a new or chosen `.json` file. Element coordinates are always saved as raw Top-Left pixel values.
+    * **Load Project:** `File -> Open Project...` loads a project from a `.json` file, restoring elements, settings, and attempting to reload the associated video. Issues warnings if saved video metadata mismatches the currently loaded video.
+    * **Close Project:** `File -> Close Project` closes the current video and project, prompting to save unsaved changes.
+* **Data Export (Simplified CSV):**
+    * `File -> Export Data -> Export Tracks (as CSV)...`: Exports all track data to a simple CSV file.
+    * `File -> Export Data -> Export Lines (as CSV)...`: Exports all measurement line data (endpoints, length, angle) to a simple CSV.
+    * **Unit Choice:** For both export types, a dialog prompts the user to choose between "Pixel Coordinates (current display system)" or "Real-World Units (meters, if scale is set)".
     * **Quick Save/Copy Buttons:** Save (💾) and Copy (📋) icon buttons are available above the Tracks and Lines tables for quick CSV export/copy using the *current display units* without an explicit prompt.
 * **Visual Exporting:**
     * **Export Video with Overlays:** `File -> Export Video with Overlays...` allows exporting a video sequence (full or custom range) with all visible overlays rendered. Options for format (MP4/AVI) and resolution (viewport/original).
@@ -151,15 +154,15 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * **(Optional) Set Scale:** Use "Scale Configuration" panel (manual input or "Set" from feature).
     * Select "Coordinate System" and optionally "Pick Custom" origin. Observe live cursor coordinates.
     * **Toggle Overlays:** Use `View` menu or panel checkboxes.
-    * Create elements: "+" button in "Tracks" tab (or `Ctrl+N`) for tracks; "+" button in "Measurement Lines" tab for lines.
+    * Create elements: "New" button in "Tracks" tab (or `Ctrl+N`) for tracks; "New" button in "Measurement Lines" tab for lines.
     * **Select Active Element:** Click its row in the respective table, or `Ctrl+Click` a track marker.
     * **Add/Update Track Points:** For an active track, left-click on the video.
-    * **Define Line Endpoints:** For an active (new) line, click two points on the same frame.
+    * **Define Line Endpoints:** For an active (new) line, click two points on the same frame. Hold `Shift` for angle snapping.
     * **Delete Point (Tracks):** `Delete`/`Backspace` for active track's point on current frame.
     * **Undo Point Operation (Tracks):** `Edit -> Undo Point Action` or `Ctrl+Z`.
     * **Delete Element:** Click trash icon (🗑️) in "Tracks" or "Measurement Lines" table.
-    * **Save/Load Project:** Use `File -> Save Project As...` and `File -> Open Project...` for JSON project files[cite: 35, 58].
-    * **Export Data:** Use `File -> Export Data` submenu for CSVs[cite: 113, 114], or quick Save/Copy icons on element tabs.
+    * **Save/Load Project:** Use `File -> Save Project` (`Ctrl+S`), `File -> Save Project As...`, and `File -> Open Project...` for JSON project files. Use `File -> Close Project` to close the current work.
+    * **Export Data:** Use `File -> Export Data` submenu for CSVs, or quick Save/Copy icons on element tabs.
     * **Export Visuals:** Use `File -> Export Video with Overlays...` or `File -> Export Current Frame to PNG...`.
     * **Customize:** `Edit -> Preferences...`.
     * **View Info:** `File -> Video Information...`.
@@ -176,14 +179,14 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * `settings_manager.py`: Manages persistent application settings (visuals) using QSettings.
 * `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus for the `MainWindow`.
 * `main_window.py`: `MainWindow` class; orchestrates core components, main application signals/slots, menu actions, and drawing of scene overlays.
-* `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display, mouse interaction, and hosting overlay widgets.
+* `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display, mouse interaction (including angle snapping for scale/measurement lines), and hosting overlay widgets.
 * `video_handler.py`: `VideoHandler` class; manages video loading (OpenCV), playback (QTimer), navigation, frame extraction.
-* `element_manager.py`: `ElementManager` class; stores and manages multi-element (tracks, lines) point data, visibility settings, and point operation undo logic[cite: 6].
-* `project_manager.py`: `ProjectManager` class; orchestrates saving/loading of JSON project files[cite: 23, 24].
-* `file_io.py`: Functions for JSON project file reading/writing [cite: 33, 45] and data-only CSV export. Includes `UnitSelectionDialog`.
+* `element_manager.py`: `ElementManager` class; stores and manages multi-element (tracks, lines) point data, visibility settings, and point operation undo logic.
+* `project_manager.py`: `ProjectManager` class; orchestrates saving/loading of JSON project files, and tracks unsaved changes.
+* `file_io.py`: Functions for JSON project file reading/writing and data-only CSV export. Includes `UnitSelectionDialog`.
 * `export_handler.py`: `ExportHandler` class; manages logic for exporting video frames with overlays as new video files or individual images.
 * `export_options_dialog.py`: `ExportOptionsDialog` class for selecting video export range and resolution.
-* `panel_controllers.py`: Contains controller classes (`ScalePanelController`, `CoordinatePanelController`) that manage UI logic for specific QGroupBox panels.
+* `panel_controllers.py`: Contains controller classes (`ScalePanelController`, `CoordinatePanelController`, `GetDistanceDialog`) that manage UI logic for specific QGroupBox panels.
 * `table_controllers.py`: Contains `TrackDataViewController` class that manages UI logic for the Tracks, Lines, and Points data tables.
 * `view_menu_controller.py`: `ViewMenuController` class; manages the View menu and actions related to overlay visibility.
 * `preferences_dialog.py`: `PreferencesDialog` class for editing visual settings.
@@ -197,12 +200,12 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 
 ## Future Improvements / Todo
 
-* **Adjusting Line Endpoints:** Allow users to graphically select and modify the endpoints of existing measurement lines[cite: 3, 69]. (Phase D)
-* **Undo/Redo for Line Operations:** Integrate line creation, deletion, and endpoint modification into the undo system[cite: 95]. (Phase E)
+* **Adjusting Line Endpoints:** Allow users to graphically select and modify the endpoints of existing measurement lines. (Phase D)
+* **Undo/Redo for Line Operations:** Integrate line creation, deletion, and endpoint modification into the undo system. (Phase E)
 * Add basic data analysis capabilities (e.g., velocity calculation, track plotting).
 * Enhance logging configuration (e.g., allow user to set level, log to file).
 * Replace standard text/pixmap overlay buttons with custom SVG icons for a cleaner look.
 * Consider adding unit tests for core logic.
-* Improve error handling for invalid video files or corrupted project files[cite: 144].
+* Improve error handling for invalid video files or corrupted project files.
 * Add more video export format options with clear indication of codec dependencies.
 * Consider Redo functionality for point/element operations.
