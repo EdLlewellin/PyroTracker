@@ -196,9 +196,11 @@ class ScaleManager(QtCore.QObject):
 
         # Apply rounding based on actual unit of display_x, display_y
         if unit_str == "m":
-            return round(display_x, 3), round(display_y, 3), unit_str # Adjusted precision for example
+            # For meters, 4 decimal places (e.g., 0.0001 m = 0.1 mm)
+            return round(display_x, 4), round(display_y, 4), unit_str
         else:
-            return round(display_x, 1), round(display_y, 1), unit_str # Adjusted precision for example
+            # For pixels, 2 decimal places
+            return round(display_x, 2), round(display_y, 2), unit_str
 
     def get_display_unit_short(self) -> str:
         """Returns 'm' or 'px' based on current display setting."""

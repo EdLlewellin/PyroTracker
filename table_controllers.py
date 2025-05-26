@@ -632,46 +632,77 @@ class TrackDataViewController(QtCore.QObject):
 
     @QtCore.Slot()
     def update_points_table_ui(self) -> None:
-        # ... (existing method, no changes needed here for this phase) ...
         logger.debug("TrackDataViewController: Updating points table UI (now element-aware)...")
         active_element_id = self._element_manager.get_active_element_id()
         active_element_type = self._element_manager.get_active_element_type()
-        if active_element_type == ElementType.TRACK and active_element_id != -1:
-            self._points_tab_label.setText(f"Points for Track: {active_element_id}")
-            active_points = self._element_manager.get_active_element_points_if_track()
-        elif active_element_type == ElementType.MEASUREMENT_LINE and active_element_id != -1:
-            self._points_tab_label.setText(f"Endpoints for Line: {active_element_id}")
-            if self._element_manager.active_element_index != -1 and \
-               0 <= self._element_manager.active_element_index < len(self._element_manager.elements) and \
-               isinstance(self._element_manager.elements[self._element_manager.active_element_index].get('data'), list):
-                 active_points = self._element_manager.elements[self._element_manager.active_element_index]['data']
-            else: active_points = []
-        else: self._points_tab_label.setText("Points: - (No compatible element selected)"); active_points = []
+
+        active_points: ElementData = [] # Use ElementData type alias
+        current_tab_label_text = "Points: - (No compatible element selected)"
+
+        if active_element_id != -1:
+            if active_element_type == ElementType.TRACK:
+                current_tab_label_text = f"Points for Track: {active_element_id}"
+                active_points = self._element_manager.get_active_element_points_if_track()
+            elif active_element_type == ElementType.MEASUREMENT_LINE:
+                current_tab_label_text = f"Endpoints for Line: {active_element_id}"
+                if self._element_manager.active_element_index != -1 and \
+                   0 <= self._element_manager.active_element_index < len(self._element_manager.elements) and \
+                   isinstance(self._element_manager.elements[self._element_manager.active_element_index].get('data'), list):
+                     active_points = self._element_manager.elements[self._element_manager.active_element_index]['data']
+            # If more element types could have points, add elif blocks here
+        
+        self._points_tab_label.setText(current_tab_label_text)
         self._points_table.setRowCount(0) 
-        if not active_points: return
-        link_color = QtGui.QColor("blue"); link_tooltip = "Click to jump to this frame"
+        if not active_points:
+            return
+
+        link_color = QtGui.QColor("blue")
+        link_tooltip = "Click to jump to this frame"
+        
         display_unit_short = self._scale_manager.get_display_unit_short()
-        x_header_text = f"X [{display_unit_short}]"; y_header_text = f"Y [{display_unit_short}]"
+        x_header_text = f"X [{display_unit_short}]"
+        y_header_text = f"Y [{display_unit_short}]"
+        
         pointsHeader = self._points_table.horizontalHeader()
         pointsHeader.model().setHeaderData(config.COL_POINT_X, QtCore.Qt.Orientation.Horizontal, x_header_text)
         pointsHeader.model().setHeaderData(config.COL_POINT_Y, QtCore.Qt.Orientation.Horizontal, y_header_text)
+        
         self._points_table.setRowCount(len(active_points))
-        for row_idx, point_data in enumerate(active_points):
-            frame_idx, time_ms, x_internal_px, y_internal_px = point_data
+        for row_idx, point_data_tuple in enumerate(active_points): # Renamed for clarity
+            frame_idx, time_ms, x_internal_px, y_internal_px = point_data_tuple # Unpack tuple
+
             frame_item = QtWidgets.QTableWidgetItem(str(frame_idx + 1))
             frame_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            frame_item.setForeground(link_color); frame_item.setToolTip(link_tooltip)
+            frame_item.setForeground(link_color)
+            frame_item.setToolTip(link_tooltip)
             frame_item.setFlags(frame_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self._points_table.setItem(row_idx, config.COL_POINT_FRAME, frame_item)
+
             time_sec_str = f"{(time_ms / 1000.0):.3f}" if time_ms >= 0 else "--.---"
             time_item = QtWidgets.QTableWidgetItem(time_sec_str)
             time_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             time_item.setFlags(time_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
             self._points_table.setItem(row_idx, config.COL_POINT_TIME, time_item)
+
             x_coord_sys_px, y_coord_sys_px = self._coord_transformer.transform_point_for_display(x_internal_px, y_internal_px)
-            x_display, y_display, _ = self._scale_manager.get_transformed_coordinates_for_display(x_coord_sys_px, y_coord_sys_px)
-            for col, val_str in [(config.COL_POINT_X, f"{x_display:.1f}" if isinstance(x_display, float) else str(x_display)), (config.COL_POINT_Y, f"{y_display:.1f}" if isinstance(y_display, float) else str(y_display))]:
-                item = QtWidgets.QTableWidgetItem(val_str)
-                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-                item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-                self._points_table.setItem(row_idx, col, item)
+            
+            # get_transformed_coordinates_for_display now returns rounded values and the unit string
+            x_display, y_display, unit_str = self._scale_manager.get_transformed_coordinates_for_display(x_coord_sys_px, y_coord_sys_px)
+
+            # Determine formatting based on the unit
+            if unit_str == "m":
+                x_val_str = f"{x_display:.4f}" # Show 4 decimal places for meters
+                y_val_str = f"{y_display:.4f}" # Show 4 decimal places for meters
+            else: # pixels
+                x_val_str = f"{x_display:.2f}" # Show 2 decimal places for pixels
+                y_val_str = f"{y_display:.2f}" # Show 2 decimal places for pixels
+
+            x_item = QtWidgets.QTableWidgetItem(x_val_str)
+            x_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            x_item.setFlags(x_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self._points_table.setItem(row_idx, config.COL_POINT_X, x_item)
+
+            y_item = QtWidgets.QTableWidgetItem(y_val_str)
+            y_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            y_item.setFlags(y_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            self._points_table.setItem(row_idx, config.COL_POINT_Y, y_item)
