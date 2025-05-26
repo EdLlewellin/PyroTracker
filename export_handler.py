@@ -91,86 +91,6 @@ class ExportHandler(QtCore.QObject):
                 return f"{formatted_value} {unit_to_display}"
         return f"{length_meters:.3f} m"
 
-    def _draw_specific_scale_line_on_painter(self, painter: QtGui.QPainter,
-                                   line_data: Tuple[float, float, float, float],
-                                   length_text: str,
-                                   line_color_qcolor: QtGui.QColor,
-                                   text_color_qcolor: QtGui.QColor,
-                                   font_size_pt: int,
-                                   pen_width_px: float,
-                                   scene_rect_for_text_placement: QtCore.QRectF) -> None:
-        p1x, p1y, p2x, p2y = line_data
-        line_pen = QtGui.QPen(line_color_qcolor, pen_width_px)
-        line_pen.setCosmetic(True); line_pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
-        painter.setPen(line_pen)
-        painter.drawLine(QtCore.QPointF(p1x, p1y), QtCore.QPointF(p2x, p2y))
-
-        show_ticks = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_SHOW_TICKS)
-        tick_length_factor = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR)
-        tick_total_length = pen_width_px * tick_length_factor
-        half_tick_length = tick_total_length / 2.0
-        dx = p2x - p1x; dy = p2y - p1y
-        line_length_for_norm = math.sqrt(dx*dx + dy*dy)
-
-        if show_ticks and tick_total_length > 0:
-            if line_length_for_norm > 1e-6:
-                norm_perp_dx = -dy / line_length_for_norm; norm_perp_dy = dx / line_length_for_norm
-                for px_pt, py_pt in [(p1x, p1y), (p2x, p2y)]:
-                    tick1_p1x = px_pt + norm_perp_dx * half_tick_length; tick1_p1y = py_pt + norm_perp_dy * half_tick_length
-                    tick1_p2x = px_pt - norm_perp_dx * half_tick_length; tick1_p2y = py_pt - norm_perp_dy * half_tick_length
-                    painter.drawLine(QtCore.QPointF(tick1_p1x, tick1_p1y), QtCore.QPointF(tick1_p2x, tick1_p2y))
-        elif not show_ticks:
-            painter.setBrush(QtGui.QBrush(line_color_qcolor))
-            dot_pen = QtGui.QPen(line_color_qcolor, 0.5); dot_pen.setCosmetic(True); painter.setPen(dot_pen)
-            marker_radius = max(1.0, pen_width_px / 2.0)
-            for px_dot, py_dot in [(p1x, p1y), (p2x, p2y)]:
-                painter.drawEllipse(QtCore.QRectF(px_dot - marker_radius, py_dot - marker_radius, 2 * marker_radius, 2 * marker_radius))
-
-        current_font = painter.font()
-        if current_font.pointSize() != font_size_pt: current_font.setPointSize(font_size_pt)
-        painter.setFont(current_font); painter.setPen(text_color_qcolor)
-        font_metrics = QtGui.QFontMetrics(current_font)
-        local_text_rect = font_metrics.boundingRect(length_text)
-        text_width = local_text_rect.width(); text_height = local_text_rect.height()
-        line_mid_x = (p1x + p2x) / 2.0; line_mid_y = (p1y + p2y) / 2.0
-        line_length = line_length_for_norm
-        if line_length < 1e-6: painter.drawText(QtCore.QPointF(p1x + 2, p1y - text_height - 2), length_text); return
-        line_angle_rad = math.atan2(dy, dx); line_angle_deg = math.degrees(line_angle_rad)
-        painter.save()
-        painter.translate(line_mid_x, line_mid_y)
-        text_rotation_deg = line_angle_deg
-        if text_rotation_deg > 90: text_rotation_deg -= 180
-        elif text_rotation_deg < -90: text_rotation_deg += 180
-        painter.rotate(text_rotation_deg)
-        desired_gap_pixels = 3; shift_magnitude = (text_height / 2.0) + desired_gap_pixels
-        img_center = scene_rect_for_text_placement.center()
-        relative_img_center_x = img_center.x() - line_mid_x; relative_img_center_y = img_center.y() - line_mid_y
-        cos_neg_angle = math.cos(-line_angle_rad); sin_neg_angle = math.sin(-line_angle_rad)
-        unrotated_img_center_y = relative_img_center_x * sin_neg_angle + relative_img_center_y * cos_neg_angle
-        
-        painter.restore(); painter.save() 
-        
-        initial_text_top_left_x = line_mid_x - (text_width / 2.0)
-        initial_text_top_left_y = line_mid_y - (text_height / 2.0)
-
-        perp_dx_global_norm = -dy / line_length if line_length > 1e-6 else 0
-        perp_dy_global_norm = dx / line_length if line_length > 1e-6 else 0
-
-        shift_sign = 1.0
-        if unrotated_img_center_y >= 0: 
-            shift_sign = -1.0 
-
-        final_total_shift_x = perp_dx_global_norm * shift_magnitude * shift_sign
-        final_total_shift_y = perp_dy_global_norm * shift_magnitude * shift_sign
-
-        text_final_pos_x = initial_text_top_left_x + final_total_shift_x
-        text_final_pos_y = initial_text_top_left_y + final_total_shift_y
-
-        painter.translate(text_final_pos_x + text_width / 2.0, text_final_pos_y + text_height / 2.0)
-        painter.rotate(text_rotation_deg)
-        painter.drawText(QtCore.QPointF(-text_width / 2.0, -text_height / 2.0 + font_metrics.ascent()), length_text)
-        painter.restore()
-
 
     def _render_overlays_on_painter(self,
                                    painter: QtGui.QPainter,
@@ -237,7 +157,7 @@ class ExportHandler(QtCore.QObject):
                             isinstance(font_size_pt, int), isinstance(q_color, QtGui.QColor)]):
                     logger.warning(f"ExportHandler: Incomplete data for measurement line text label ID {el.get('element_id')}. Skipping.")
                     continue
-
+                
                 p1_scene = QtCore.QPointF(line_p1_coords_tuple[0], line_p1_coords_tuple[1])
                 p2_scene = QtCore.QPointF(line_p2_coords_tuple[0], line_p2_coords_tuple[1])
 
@@ -250,7 +170,7 @@ class ExportHandler(QtCore.QObject):
                     p1_scene,
                     p2_scene,
                     text_bounding_rect_local,
-                    visible_scene_rect
+                    visible_scene_rect 
                 )
 
                 painter.save()
@@ -271,36 +191,54 @@ class ExportHandler(QtCore.QObject):
         if self._main_window.coord_panel_controller and self._main_window.coord_panel_controller.get_show_origin_marker_status():
             origin_sz = float(settings_manager.get_setting(settings_manager.KEY_ORIGIN_MARKER_SIZE))
             ox, oy = self._coord_transformer.get_current_origin_tl()
-            # For drawing the origin marker, we can directly use the QPainter if it's simple enough,
-            # or eventually move this to graphics_utils.draw_origin_on_painter if it becomes complex.
-            # For now, keeping it here is fine as it's specific.
             r_orig = origin_sz / 2.0
-            origin_pen = QtGui.QPen(self._main_window.pen_origin_marker) # Get the pen from MainWindow
+            origin_pen = QtGui.QPen(self._main_window.pen_origin_marker) 
             origin_pen.setCosmetic(True)
             painter.setPen(origin_pen)
             painter.setBrush(self._main_window.pen_origin_marker.color())
             painter.drawEllipse(QtCore.QRectF(ox - r_orig, oy - r_orig, origin_sz, origin_sz))
 
+        # MODIFIED: Use graphics_utils for defined scale line
         if self._main_window.showScaleLineCheckBox and self._main_window.showScaleLineCheckBox.isChecked() and \
            self._scale_manager and self._scale_manager.has_defined_scale_line():
-            line_data = self._scale_manager.get_defined_scale_line_data()
+            line_data_tuple = self._scale_manager.get_defined_scale_line_data()
             scale_m_per_px = self._scale_manager.get_scale_m_per_px()
-            if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
-                line_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
-                text_clr_sl = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
-                font_sz_sl = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
-                pen_w_sl = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
-                # This specific drawing logic might also be refactored into graphics_utils later
-                self._draw_specific_scale_line_on_painter(
-                    painter, line_data,
-                    self.format_length_value_for_line(math.sqrt((line_data[2]-line_data[0])**2 + (line_data[3]-line_data[1])**2) * scale_m_per_px),
-                    line_clr_sl, text_clr_sl, font_sz_sl, pen_w_sl,
-                    visible_scene_rect if export_mode == ExportResolutionMode.VIEWPORT else QtCore.QRectF(0,0, float(self._video_handler.frame_width), float(self._video_handler.frame_height))
+            if line_data_tuple and scale_m_per_px is not None and scale_m_per_px > 0:
+                p1x, p1y, p2x, p2y = line_data_tuple
+                
+                line_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
+                text_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
+                font_sz = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
+                pen_w = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
+                show_ticks = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_SHOW_TICKS)
+                tick_factor = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR)
+
+                dx = p2x - p1x
+                dy = p2y - p1y
+                pix_len = math.sqrt(dx*dx + dy*dy)
+                meter_len = pix_len * scale_m_per_px
+                len_text = self.format_length_value_for_line(meter_len)
+                
+                defined_line_pen = QtGui.QPen(line_clr, pen_w)
+                # Cosmetic is handled within the graphics_utils drawing functions
+
+                context_rect_for_label = QtCore.QRectF(0,0, float(self._video_handler.frame_width), float(self._video_handler.frame_height)) \
+                                         if export_mode == ExportResolutionMode.ORIGINAL_VIDEO else visible_scene_rect
+
+                graphics_utils.draw_defined_scale_display_on_painter(
+                    painter=painter,
+                    p1x=p1x, p1y=p1y, p2x=p2x, p2y=p2y,
+                    length_text=len_text,
+                    line_pen=defined_line_pen, # Pass the configured QPen
+                    text_color=text_clr,
+                    font_size=font_sz,
+                    show_ticks=show_ticks,
+                    tick_length_factor=tick_factor,
+                    scene_context_rect=context_rect_for_label
                 )
         
         painter.restore() 
 
-        # --- Draw Viewport-Fixed Overlays ---
         painter.save()
         painter.setWindow(export_qimage_rect.toRect())
         painter.setViewport(export_qimage_rect.toRect())
@@ -332,9 +270,6 @@ class ExportHandler(QtCore.QObject):
             )
 
             if sb_widget.isVisible() and sb_widget.get_current_bar_pixel_length() > 0:
-                # This detailed drawing of the scale bar could also be moved to a graphics_utils function
-                # e.g., graphics_utils.draw_scale_bar_on_painter(painter, sb_widget, export_qimage_rect)
-                # For now, keeping existing logic.
                 sb_bar_len_px = sb_widget.get_current_bar_pixel_length()
                 sb_text = sb_widget.get_current_bar_text_label()
                 sb_bar_color = sb_widget.get_current_bar_color()
@@ -373,9 +308,6 @@ class ExportHandler(QtCore.QObject):
                 painter.drawRect(bar_rect_local)
                 painter.restore()
 
-        # Draw Info Overlays (Filename, Time, Frame Number)
-        # This could also eventually use a function in graphics_utils if it becomes complex,
-        # or directly use info_overlay_widget.render_to_painter() if we enhance that widget.
         margin = 5
         if settings_manager.get_setting(settings_manager.KEY_INFO_OVERLAY_SHOW_FILENAME):
             filename_text = self._video_handler.get_video_info().get("filename", "N/A")
@@ -415,6 +347,7 @@ class ExportHandler(QtCore.QObject):
             painter.drawText(QtCore.QPointF(export_qimage_rect.left() + margin, y_pos_frame), time_display_text)
         
         painter.restore()
+
 
     @QtCore.Slot(str, str, str, ExportResolutionMode, int, int) # Added start_frame_idx, end_frame_idx
     def export_video_with_overlays(self, 

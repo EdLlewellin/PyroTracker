@@ -4,7 +4,7 @@ Utility functions for graphical operations, including drawing primitives
 and calculating positions for rendering.
 """
 import math
-from typing import Tuple
+from typing import Tuple, List
 
 from PySide6 import QtCore, QtGui, QtWidgets # Assuming QPointF, QRectF are needed
 
@@ -236,3 +236,176 @@ def create_text_label_qgraphicsitem(text: str,
     
     return text_item
 
+def create_defined_scale_display_items(
+    p1x: float, p1y: float, p2x: float, p2y: float,
+    length_text: str,
+    line_pen: QtGui.QPen,  # Pen for the main line and ticks/dots
+    text_color: QtGui.QColor,
+    font_size: int,
+    show_ticks: bool,
+    tick_length_factor: float,  # As a multiple of pen_width for ticks
+    scene_context_rect: QtCore.QRectF,
+    z_value_line: float = 11.5, # Base Z for line, ticks slightly above/same
+    z_value_text: float = 12.0  # Text on top
+) -> List[QtWidgets.QGraphicsItem]:
+    """
+    Creates a list of QGraphicsItems representing the defined scale line,
+    its ticks (or dots), and its length label.
+    """
+    items: List[QtWidgets.QGraphicsItem] = []
+    p1 = QtCore.QPointF(p1x, p1y)
+    p2 = QtCore.QPointF(p2x, p2y)
+
+    # Main line item
+    main_line_item = create_line_qgraphicsitem(p1, p2, line_pen, z_value=z_value_line)
+    items.append(main_line_item)
+
+    # Ticks or Dots
+    # Pen width for tick length calculation (use a copy to ensure it's cosmetic for actual drawing)
+    cosmetic_line_pen = QtGui.QPen(line_pen)
+    cosmetic_line_pen.setCosmetic(True)
+    actual_pen_width = cosmetic_line_pen.widthF()
+    if actual_pen_width <= 0: # Ensure a minimum visible width for calculations if pen width is 0
+        actual_pen_width = 1.0
+
+    tick_total_length = actual_pen_width * tick_length_factor
+    half_tick_length = tick_total_length / 2.0
+
+    dx = p2x - p1x
+    dy = p2y - p1y
+    line_length_for_norm = math.sqrt(dx*dx + dy*dy)
+
+    if show_ticks and tick_total_length > 0:
+        if line_length_for_norm > 1e-6:
+            norm_perp_dx = -dy / line_length_for_norm
+            norm_perp_dy = dx / line_length_for_norm
+
+            for pt in [p1, p2]:
+                tick_p1 = QtCore.QPointF(pt.x() + norm_perp_dx * half_tick_length, 
+                                         pt.y() + norm_perp_dy * half_tick_length)
+                tick_p2 = QtCore.QPointF(pt.x() - norm_perp_dx * half_tick_length, 
+                                         pt.y() - norm_perp_dy * half_tick_length)
+                tick_item = create_line_qgraphicsitem(tick_p1, tick_p2, line_pen, z_value=z_value_line + 0.1)
+                items.append(tick_item)
+    elif not show_ticks:  # Draw dots if ticks are disabled
+        marker_radius = max(1.0, actual_pen_width / 2.0)
+        dot_pen = QtGui.QPen(line_pen.color(), 0.5) # Thin border for dot
+        dot_pen.setCosmetic(True)
+        dot_brush = QtGui.QBrush(line_pen.color())
+
+        for pt in [p1, p2]:
+            dot_marker = QtWidgets.QGraphicsEllipseItem(pt.x() - marker_radius, pt.y() - marker_radius,
+                                                        2 * marker_radius, 2 * marker_radius)
+            dot_marker.setPen(dot_pen)
+            dot_marker.setBrush(dot_brush)
+            dot_marker.setZValue(z_value_line + 0.1)
+            items.append(dot_marker)
+
+    # Text label item
+    text_item = create_text_label_qgraphicsitem(
+        text=length_text,
+        line_p1=p1,
+        line_p2=p2,
+        font_size=font_size,
+        color=text_color,
+        scene_context_rect=scene_context_rect,
+        z_value=z_value_text
+    )
+    items.append(text_item)
+    
+    logger.debug(f"Created {len(items)} QGraphicsItems for defined scale display.")
+    return items
+
+
+def draw_defined_scale_display_on_painter(
+    painter: QtGui.QPainter,
+    p1x: float, p1y: float, p2x: float, p2y: float,
+    length_text: str,
+    line_pen: QtGui.QPen,  # Pen for the main line and ticks/dots
+    text_color: QtGui.QColor,
+    font_size: int,
+    show_ticks: bool,
+    tick_length_factor: float, # As a multiple of pen_width
+    scene_context_rect: QtCore.QRectF
+) -> None:
+    """
+    Draws the defined scale line, its ticks (or dots), and its length label
+    directly onto a QPainter.
+    """
+    p1 = QtCore.QPointF(p1x, p1y)
+    p2 = QtCore.QPointF(p2x, p2y)
+
+    # Draw Main line
+    draw_line_on_painter(painter, p1, p2, line_pen)
+
+    # Draw Ticks or Dots
+    cosmetic_line_pen = QtGui.QPen(line_pen)
+    cosmetic_line_pen.setCosmetic(True)
+    actual_pen_width = cosmetic_line_pen.widthF()
+    if actual_pen_width <= 0:
+        actual_pen_width = 1.0
+        
+    tick_total_length = actual_pen_width * tick_length_factor
+    half_tick_length = tick_total_length / 2.0
+
+    dx = p2x - p1x
+    dy = p2y - p1y
+    line_length_for_norm = math.sqrt(dx*dx + dy*dy)
+
+    if show_ticks and tick_total_length > 0:
+        if line_length_for_norm > 1e-6:
+            norm_perp_dx = -dy / line_length_for_norm
+            norm_perp_dy = dx / line_length_for_norm
+
+            for pt in [p1, p2]:
+                tick_p1 = QtCore.QPointF(pt.x() + norm_perp_dx * half_tick_length, 
+                                         pt.y() + norm_perp_dy * half_tick_length)
+                tick_p2 = QtCore.QPointF(pt.x() - norm_perp_dx * half_tick_length, 
+                                         pt.y() - norm_perp_dy * half_tick_length)
+                draw_line_on_painter(painter, tick_p1, tick_p2, line_pen)
+    elif not show_ticks:
+        painter.save()
+        painter.setBrush(QtGui.QBrush(line_pen.color()))
+        dot_pen = QtGui.QPen(line_pen.color(), 0.5)
+        dot_pen.setCosmetic(True)
+        painter.setPen(dot_pen)
+        marker_radius = max(1.0, actual_pen_width / 2.0)
+        for pt in [p1, p2]:
+            painter.drawEllipse(QtCore.QRectF(pt.x() - marker_radius, pt.y() - marker_radius,
+                                               2 * marker_radius, 2 * marker_radius))
+        painter.restore()
+
+    # Draw Text label
+    current_export_font = QtGui.QFont()
+    current_export_font.setPointSize(font_size)
+    
+    # Note: draw_text_label_for_line_on_painter is not defined yet in our sequence.
+    # We'll use the direct logic here for now, similar to what was in ExportHandler.
+    # This can be refactored later if draw_text_label_for_line_on_painter is created.
+    
+    font_metrics = QtGui.QFontMetrics(current_export_font)
+    text_bounding_rect_local = font_metrics.boundingRect(length_text)
+                
+    text_pos_scene, text_rot_deg = calculate_line_label_transform(
+        p1,
+        p2,
+        text_bounding_rect_local,
+        scene_context_rect 
+    )
+
+    painter.save()
+    try:
+        painter.translate(text_pos_scene.x() + text_bounding_rect_local.width() / 2.0,
+                          text_pos_scene.y() + text_bounding_rect_local.height() / 2.0)
+        painter.rotate(text_rot_deg)
+        
+        painter.setFont(current_export_font)
+        painter.setPen(text_color) # text_color is already a QColor
+        
+        painter.drawText(QtCore.QPointF(-text_bounding_rect_local.width() / 2.0,
+                                         -text_bounding_rect_local.height() / 2.0 + font_metrics.ascent()),
+                         length_text)
+    finally:
+        painter.restore()
+    
+    logger.debug("Drew defined scale display directly on painter.")

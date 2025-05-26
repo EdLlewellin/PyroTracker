@@ -1497,7 +1497,6 @@ class MainWindow(QtWidgets.QMainWindow):
                         logger.warning(f"Incomplete data for text visual element (ID: {el.get('element_id')}). Skipping label.")
                         continue
                     
-                    # MODIFIED: Use graphics_utils to create text label item
                     item = graphics_utils.create_text_label_qgraphicsitem(
                         text=text_string,
                         line_p1=QtCore.QPointF(line_p1_coords_tuple[0], line_p1_coords_tuple[1]),
@@ -1505,7 +1504,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         font_size=font_size_pt,
                         color=q_color,
                         scene_context_rect=self.imageView.sceneRect(),
-                        z_value=12 # Text labels on top
+                        z_value=12 
                     )
 
                 if item:
@@ -1528,35 +1527,53 @@ class MainWindow(QtWidgets.QMainWindow):
                 origin_item.setZValue(11)
                 scene.addItem(origin_item)
 
+            # --- MODIFIED: Draw Defined Scale Line using graphics_utils ---
             if self.showScaleLineCheckBox and self.showScaleLineCheckBox.isChecked() and \
                self.scale_manager and self.scale_manager.has_defined_scale_line():
-                line_data = self.scale_manager.get_defined_scale_line_data()
+                line_data_tuple = self.scale_manager.get_defined_scale_line_data()
                 scale_m_per_px = self.scale_manager.get_scale_m_per_px()
-                if line_data and scale_m_per_px is not None and scale_m_per_px > 0:
-                    p1x, p1y, p2x, p2y = line_data
+
+                if line_data_tuple and scale_m_per_px is not None and scale_m_per_px > 0:
+                    p1x, p1y, p2x, p2y = line_data_tuple
+                    
                     dx = p2x - p1x
                     dy = p2y - p1y
                     pixel_length = math.sqrt(dx*dx + dy*dy)
                     meter_length = pixel_length * scale_m_per_px
+                    
                     length_text = "Err"
                     if hasattr(self, '_export_handler') and self._export_handler:
                         length_text = self._export_handler.format_length_value_for_line(meter_length)
-                    else:
+                    else: 
+                        # Fallback formatting, ideally ExportHandler should always be available
+                        # or this formatting logic moved to ScaleManager or a shared utility
+                        logger.warning("_redraw_scene_overlay: _export_handler not available for formatting scale line length.")
                         length_text = f"{meter_length:.2f} m" 
                     
                     line_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_COLOR)
                     text_clr = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_COLOR)
                     font_sz = int(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TEXT_SIZE))
                     pen_w = float(settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_WIDTH))
-                    
-                    self.imageView.draw_persistent_scale_line(
-                        line_data=line_data,
+                    show_ticks = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_SHOW_TICKS)
+                    tick_factor = settings_manager.get_setting(settings_manager.KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR)
+
+                    defined_line_pen = QtGui.QPen(line_clr, pen_w)
+                    # Cosmetic will be handled by create_line_qgraphicsitem
+
+                    created_items = graphics_utils.create_defined_scale_display_items(
+                        p1x=p1x, p1y=p1y, p2x=p2x, p2y=p2y,
                         length_text=length_text,
-                        line_color=line_clr,
+                        line_pen=defined_line_pen,
                         text_color=text_clr,
                         font_size=font_sz,
-                        pen_width=pen_w
+                        show_ticks=show_ticks,
+                        tick_length_factor=tick_factor,
+                        scene_context_rect=self.imageView.sceneRect(),
+                        z_value_line=11.7, # Slightly above origin
+                        z_value_text=11.8  # Text for scale line above its line/ticks
                     )
+                    for item_to_add in created_items:
+                        scene.addItem(item_to_add)
         except Exception as e:
             logger.exception(f"Error during overlay drawing: {e}")
         finally:
