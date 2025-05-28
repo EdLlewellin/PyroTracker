@@ -118,4 +118,4 @@ MAX_ABS_SCALE = 50.0
 # --- Application Info ---
 APP_NAME = "PyroTracker"
 APP_ORGANIZATION = "Durham University"
-APP_VERSION = "2.4.0 Beta"
+APP_VERSION = "2.4.1 Beta"
