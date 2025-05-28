@@ -136,11 +136,10 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     track_controls_layout.addSpacing(10) # Spacer
 
     main_window.newTrackButton = QtWidgets.QPushButton("New")
-    # main_window.newTrackButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton)) # Using this as a '+' icon
     main_window.newTrackButton.setObjectName("newTrackButton")
     main_window.newTrackButton.setToolTip("Create a new track for marking points (Ctrl+N)")
     main_window.newTrackButton.setEnabled(False)
-    main_window.newTrackButton.setFlat(True) # Make it look more like a toolbar button
+    main_window.newTrackButton.setFlat(True) 
     track_controls_layout.addWidget(main_window.newTrackButton)
 
     track_controls_layout.addSpacing(10)
@@ -211,12 +210,10 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     linesTabLayout = QtWidgets.QVBoxLayout(linesTab)
     linesTabLayout.setContentsMargins(2, 2, 2, 2)
 
-    # New horizontal layout for Lines tab controls
     line_controls_layout = QtWidgets.QHBoxLayout()
     line_controls_layout.setContentsMargins(0,0,0,0)
     line_controls_layout.setSpacing(6)
 
-    # Save Lines Table Button
     main_window.saveLinesTableButton = QtWidgets.QPushButton()
     main_window.saveLinesTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton))
     main_window.saveLinesTableButton.setToolTip("Save lines data to CSV (uses current display units)")
@@ -224,26 +221,24 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     main_window.saveLinesTableButton.setEnabled(False)
     line_controls_layout.addWidget(main_window.saveLinesTableButton)
 
-    # Copy Lines Table Button
     main_window.copyLinesTableButton = QtWidgets.QPushButton()
-    main_window.copyLinesTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogContentsView)) # Placeholder for "copy"
+    main_window.copyLinesTableButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogContentsView)) 
     main_window.copyLinesTableButton.setToolTip("Copy lines data to clipboard (uses current display units)")
     main_window.copyLinesTableButton.setFlat(True)
     main_window.copyLinesTableButton.setEnabled(False)
     line_controls_layout.addWidget(main_window.copyLinesTableButton)
     
-    line_controls_layout.addSpacing(10) # Spacer
+    line_controls_layout.addSpacing(10) 
 
     main_window.newLineButton = QtWidgets.QPushButton("New")
-    # main_window.newLineButton.setIcon(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ToolBarHorizontalExtensionButton)) # Using this as a '+' icon
     main_window.newLineButton.setObjectName("newLineButton")
     main_window.newLineButton.setToolTip("Create a new measurement line")
     main_window.newLineButton.setEnabled(False)
-    main_window.newLineButton.setFlat(True) # Make it look more like a toolbar button
+    main_window.newLineButton.setFlat(True) 
     line_controls_layout.addWidget(main_window.newLineButton)
     
-    line_controls_layout.addStretch(1) # Push buttons to the left
-    linesTabLayout.addLayout(line_controls_layout) # Add this control layout to the tab
+    line_controls_layout.addStretch(1) 
+    linesTabLayout.addLayout(line_controls_layout) 
 
     main_window.linesTableWidget = QtWidgets.QTableWidget()
     main_window.linesTableWidget.setObjectName("linesTableWidget")
@@ -255,10 +250,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     header_labels_lines[config.COL_LINE_FRAME] = "Frame"
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_LENGTH: header_labels_lines[config.COL_LINE_LENGTH] = "Length"
     if config.TOTAL_LINE_COLUMNS > config.COL_LINE_ANGLE: header_labels_lines[config.COL_LINE_ANGLE] = "Angle"
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HIDDEN: header_labels_lines[config.COL_LINE_VIS_HIDDEN] = ""
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_HOME_FRAME: header_labels_lines[config.COL_LINE_VIS_HOME_FRAME] = ""
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_INCREMENTAL: header_labels_lines[config.COL_LINE_VIS_INCREMENTAL] = ""
-    if config.TOTAL_LINE_COLUMNS > config.COL_LINE_VIS_ALWAYS: header_labels_lines[config.COL_LINE_VIS_ALWAYS] = ""
+    # Visibility icon columns will have empty text headers
     main_window.linesTableWidget.setHorizontalHeaderLabels(header_labels_lines)
 
     main_window.linesTableWidget.setAlternatingRowColors(True)
@@ -297,7 +289,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
 
     linesTabLayout.addWidget(main_window.linesTableWidget)
     main_window.dataTabsWidget.addTab(linesTab, "Measurement Lines")
-    logger.debug("Measurement Lines tab configured with table and control buttons at the top.")
+    logger.debug("Measurement Lines tab configured.")
 
     # --- Points Tab ---
     pointsTab = QtWidgets.QWidget(); pointsTabLayout = QtWidgets.QVBoxLayout(pointsTab); pointsTabLayout.setContentsMargins(2, 2, 2, 2); pointsTabLayout.setSpacing(4)
@@ -311,7 +303,6 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     pointsTabLayout.addWidget(main_window.pointsTableWidget)
     main_window.dataTabsWidget.addTab(pointsTab, "Points")
     logger.debug("Points tab configured.")
-
 
     # --- Collapsible Group Boxes (Scale, Coords) ---
     main_window.scale_config_group = QtWidgets.QGroupBox("Scale Configuration")
@@ -421,24 +412,21 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     file_menu.addAction(main_window.loadProjectAction)
 
     save_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton)
-    # MODIFIED: Renamed to saveProjectAsAction for clarity
     main_window.saveProjectAsAction = QtGui.QAction(save_icon, "&Save Project As...", main_window)
-    main_window.saveProjectAsAction.setStatusTip("Save current project data to a new JSON file") # Updated tip
+    main_window.saveProjectAsAction.setStatusTip("Save current project data to a new JSON file") 
     main_window.saveProjectAsAction.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
-    main_window.saveProjectAsAction.setEnabled(False) # Connection in MainWindow.__init__
+    main_window.saveProjectAsAction.setEnabled(False) 
     file_menu.addAction(main_window.saveProjectAsAction)
 
-    file_menu.addSeparator() # Separator before export actions
+    file_menu.addSeparator() 
 
-    # Export Data Submenu (New for Phase F) will be added here by MainWindow after setup
-
-    export_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton)
+    export_icon: QtGui.QIcon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton) # Re-use save icon for now
     main_window.exportViewAction = QtGui.QAction(export_icon, "Export Video with Overlays...", main_window)
     main_window.exportViewAction.setStatusTip("Export the current view with overlays to a video file")
     main_window.exportViewAction.setEnabled(False)
     file_menu.addAction(main_window.exportViewAction)
 
-    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon)
+    export_frame_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DriveHDIcon) # Placeholder
     main_window.exportFrameAction = QtGui.QAction(export_frame_icon, "Export Current Frame to PNG...", main_window)
     main_window.exportFrameAction.setStatusTip("Export the current frame with overlays to a PNG image file")
     main_window.exportFrameAction.setEnabled(False)
@@ -472,16 +460,39 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     edit_menu.addSeparator()
 
     main_window.newTrackAction = QtGui.QAction("&New Track", main_window)
-    main_window.newTrackAction.setStatusTip("Create a new track for marking points")
+    main_window.newTrackAction.setStatusTip("Create a new track for marking points (Ctrl+N)") # Ctrl+N added to tip
     main_window.newTrackAction.setEnabled(False)
+    # main_window.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New) # Set in MainWindow now
     edit_menu.addAction(main_window.newTrackAction)
+    
+    # --- REMOVE Preferences from Edit Menu ---
+    # edit_menu.addSeparator() # Remove this separator if Preferences was the only item after
+    # prefs_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
+    # main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window)
+    # main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
+    # edit_menu.addAction(main_window.preferencesAction)
+    # --- END REMOVE ---
+    
+    # --- ADD "New Measurement Line" to Edit Menu ---
+    # Icon can be chosen later, for now, just text
+    # A simple "plus" or "line" icon could work.
+    # Example: add_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileIcon) # Placeholder icon
+    main_window.newMeasurementLineAction = QtGui.QAction("New Measurement &Line", main_window)
+    main_window.newMeasurementLineAction.setStatusTip("Create a new measurement line")
+    main_window.newMeasurementLineAction.setEnabled(False) # Initially disabled
+    edit_menu.addAction(main_window.newMeasurementLineAction)
+    # --- END ADD ---
 
-    edit_menu.addSeparator()
-
+    # Create Preferences action here so MainWindow can connect it, but don't add to Edit menu
     prefs_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_FileDialogDetailedView)
     main_window.preferencesAction = QtGui.QAction(prefs_icon, "&Preferences...", main_window)
     main_window.preferencesAction.setStatusTip("Edit application preferences (colors, sizes, etc.)")
-    edit_menu.addAction(main_window.preferencesAction)
+    # This action will be added to the View menu by ViewMenuController
+
+
+    # --- ADD "Analysis" Menu (empty for now) ---
+    menu_bar.addMenu("&Analysis")
+    # --- END ADD ---
 
     main_window.setStatusBar(QtWidgets.QStatusBar())
     logger.info("MainWindow UI setup complete.")
