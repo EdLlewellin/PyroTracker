@@ -226,13 +226,16 @@ class MainWindow(QtWidgets.QMainWindow):
                  logger.debug("Creating Help menu in MainWindow...")
                  help_menu: QtWidgets.QMenu = menu_bar_instance.addMenu("&Help")
                  
-                 # PyroTracker Manual action
-                 self.manualAction = QtGui.QAction("PyroTracker &Manual", self)
+                 # PyroTracker Manual action with icon
+                 manual_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogHelpButton) # Or SP_MessageBoxInformation
+                 self.manualAction = QtGui.QAction(manual_icon, "PyroTracker &Manual", self)
                  self.manualAction.setStatusTip("Open the PyroTracker user manual (PDF)")
                  self.manualAction.triggered.connect(self._trigger_show_manual)
                  help_menu.addAction(self.manualAction)
                  
-                 self.aboutAction = QtGui.QAction("&About PyroTracker", self) # Renamed
+                 # About action with application icon
+                 app_icon_for_menu = self.windowIcon() # Get the already set window icon
+                 self.aboutAction = QtGui.QAction(app_icon_for_menu, "&About PyroTracker", self)
                  self.aboutAction.setStatusTip("Show information about this application")
                  self.aboutAction.triggered.connect(self._show_about_dialog)
                  help_menu.addAction(self.aboutAction)
@@ -666,25 +669,37 @@ class MainWindow(QtWidgets.QMainWindow):
         # This logic is identical to the button press for creating a new line
         self._create_new_line_action()
 
-    # --- NEW Slot for "PyroTracker Manual" menu action ---
+    # --- Slot for "PyroTracker Manual" menu action ---
     @QtCore.Slot()
     def _trigger_show_manual(self) -> None:
         """Handles the 'PyroTracker Manual' menu action."""
         logger.info("'PyroTracker Manual' action triggered.")
-        # Placeholder: Assume manual.pdf is in the same directory as main.py
-        # For a real application, this path should be more robustly determined
-        # (e.g., from a resources directory or an installation path).
-        manual_path = os.path.join(basedir, "PyroTracker_Manual.pdf") # Example name
+        manual_filename = "PyroTracker_Manual.pdf" # Define the filename
+        manual_path = os.path.join(basedir, manual_filename) 
         
+        github_repo_url = "https://github.com/EdLlewellin/PyroTracker"
+        releases_page_url = f"{github_repo_url}/releases"
+
         if os.path.exists(manual_path):
             success = QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(manual_path))
             if not success:
                 QtWidgets.QMessageBox.warning(self, "Open Manual Error", 
-                                              f"Could not open the manual at:\n{manual_path}\n\nPlease ensure you have a PDF viewer installed.")
+                                              f"Could not open the manual at:\n{manual_path}\n\n"
+                                              "Please ensure you have a PDF viewer installed.")
                 logger.error(f"Failed to open manual PDF: {manual_path}")
         else:
-            QtWidgets.QMessageBox.information(self, "Manual Not Found",
-                                              f"The PyroTracker Manual (expected at {manual_path}) could not be found.")
+            msg_box = QtWidgets.QMessageBox(self)
+            msg_box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+            msg_box.setWindowTitle("Manual Not Found")
+            msg_box.setTextFormat(QtCore.Qt.TextFormat.RichText) # Enable rich text
+            msg_box.setText(
+                f"The PyroTracker Manual (<i>{manual_filename}</i>) could not be found in the application directory:<br>"
+                f"<i>{basedir}</i><br><br>"
+                f"You can download it from the latest release page on GitHub:"
+            )
+            msg_box.setInformativeText(f"<a href='{releases_page_url}'>{releases_page_url}</a>")
+            msg_box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+            msg_box.exec()
             logger.warning(f"Manual PDF not found at: {manual_path}")
 
 
@@ -2224,16 +2239,37 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _show_about_dialog(self) -> None:
-        # ... (existing method)
-        icon = self.windowIcon(); box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle(f"About {config.APP_NAME}"); box.setTextFormat(QtCore.Qt.TextFormat.RichText) # Ensure title is correct
-        box.setText(f"<b>{config.APP_NAME}</b><br>Version {config.APP_VERSION}<br><br>Tool for tracking.<br><br>Python {sys.version.split()[0]}, PySide6 {QtCore.__version__}")
+        # ... (keep existing method)
+        icon = self.windowIcon()
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle(f"About {config.APP_NAME}")
+        box.setTextFormat(QtCore.Qt.TextFormat.RichText) # Ensure RichText for wrapping and HTML
+        
+        # Constructing the text with HTML for better control over wrapping and formatting
+        about_text = (
+            f"<b>{config.APP_NAME}</b><br>"
+            f"Version {config.APP_VERSION}<br><br>"
+            "PyroTracker is a tool for tracking volcanic pyroclasts in eruption videos, "
+            "allowing users to mark element positions, manage coordinate systems, "
+            "set scales, and export data and visuals.<br><br>"
+            f"Developed at Durham University.<br>" # Example addition
+            f"Project Page: <a href='https://github.com/EdLlewellin/PyroTracker'>github.com/EdLlewellin/PyroTracker</a><br><br>" # Example addition
+            f"Python {sys.version.split()[0]}, PySide6 {QtCore.__version__}"
+        )
+        box.setText(about_text)
+        
         if not icon.isNull():
             pix = icon.pixmap(QtCore.QSize(64,64))
-            if not pix.isNull(): box.setIconPixmap(pix)
-            else: box.setIcon(QtWidgets.QMessageBox.Icon.Information)
-        else: box.setIcon(QtWidgets.QMessageBox.Icon.Information)
-        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok); box.exec()
+            if not pix.isNull(): 
+                box.setIconPixmap(pix)
+            else: 
+                # Fallback if pixmap creation failed for some reason, though unlikely if icon is valid
+                box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        else: 
+            box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+            
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+        box.exec()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         # ... (existing method)
