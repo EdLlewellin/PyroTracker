@@ -66,6 +66,7 @@ class MainWindow(QtWidgets.QMainWindow):
     _is_defining_measurement_line: bool = False
     _current_line_definition_frame_index: int = -1
     _project_load_warnings: List[str] = []
+    _export_action_busy: bool = False
 
 
     mainSplitter: QtWidgets.QSplitter
@@ -737,15 +738,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_export_tracks_data_csv(self) -> None:
-        # ... (existing method)
         logger.info("Export Tracks (CSV) action triggered.")
-        self._handle_data_export_request(ElementType.TRACK)
+        if self._export_action_busy:
+            logger.warning("Export Tracks (CSV) action re-triggered while busy. Ignoring.")
+            return
+        self._export_action_busy = True
+        try:
+            self._handle_data_export_request(ElementType.TRACK)
+        finally:
+            # Use QTimer.singleShot to reset the flag after the current event processing cycle
+            # This helps prevent issues if the dialog closing itself causes immediate re-triggering
+            QtCore.QTimer.singleShot(0, lambda: setattr(self, '_export_action_busy', False))
 
     @QtCore.Slot()
     def _trigger_export_lines_data_csv(self) -> None:
-        # ... (existing method)
         logger.info("Export Lines (CSV) action triggered.")
-        self._handle_data_export_request(ElementType.MEASUREMENT_LINE)
+        if self._export_action_busy:
+            logger.warning("Export Lines (CSV) action re-triggered while busy. Ignoring.")
+            return
+        self._export_action_busy = True
+        try:
+            self._handle_data_export_request(ElementType.MEASUREMENT_LINE)
+        finally:
+            QtCore.QTimer.singleShot(0, lambda: setattr(self, '_export_action_busy', False))
 
     def _handle_data_export_request(self, element_type_to_export: ElementType) -> None:
         # ... (existing method)
