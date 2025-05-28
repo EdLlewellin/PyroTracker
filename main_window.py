@@ -26,8 +26,13 @@ from view_menu_controller import ViewMenuController
 from project_manager import ProjectManager
 import settings_manager as sm_module
 import graphics_utils
-
 from file_io import UnitSelectionDialog
+from kymograph_handler import KymographHandler
+try:
+    from kymograph_dialog import KymographDisplayDialog
+except ImportError:
+    KymographDisplayDialog = None # Placeholder
+
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +49,8 @@ class MainWindow(QtWidgets.QMainWindow):
     scale_manager: ScaleManager
     project_manager: ProjectManager 
     settings_manager_instance: sm_module
+    generateKymographAction: Optional[QtGui.QAction] = None
+    _kymograph_handler: Optional[KymographHandler] = None
 
     scale_panel_controller: Optional[ScalePanelController]
     coord_panel_controller: Optional[CoordinatePanelController]
@@ -177,6 +184,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.project_manager.unsavedChangesStateChanged.connect(self._handle_unsaved_changes_state_changed)
 
+        self._kymograph_handler = KymographHandler()
+
         self._setup_pens()
 
         screen_geometry = QtGui.QGuiApplication.primaryScreen().availableGeometry()
@@ -244,6 +253,7 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error("ImageView not available for ViewMenuController or Help menu initialization.")
             self.view_menu_controller = None
 
+        self._setup_analysis_menu()
 
         if hasattr(self, 'currentFrameLineEdit') and isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit):
             self.currentFrameLineEdit.editingFinished.connect(self._handle_frame_input_finished)
@@ -389,6 +399,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.element_manager.activeElementDataChanged.connect(self.table_data_controller.update_points_table_ui)
             self.element_manager.activeElementDataChanged.connect(self.table_data_controller._sync_active_element_selection_in_tables)
         self.element_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
+
+        self.element_manager.activeElementDataChanged.connect(self._update_ui_state) # Ensures menu action state updates
 
         if self.scale_panel_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
@@ -614,6 +626,33 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction(self.exitAction)
         
         logger.debug("File menu setup complete.")
+
+    def _setup_analysis_menu(self) -> None:
+        """Sets up the Analysis menu and its actions."""
+        logger.debug("MainWindow: Setting up Analysis menu...")
+        menu_bar = self.menuBar()
+        analysis_menu = None
+        
+        # Find existing Analysis menu (should have been created by ui_setup.py)
+        for action in menu_bar.actions():
+            if action.menu() and action.text() == "&Analysis":
+                analysis_menu = action.menu()
+                break
+        
+        if not analysis_menu:
+            logger.error("Analysis menu not found from ui_setup. Cannot add kymograph action.")
+            return
+
+        # --- Generate Kymograph Action ---
+        # Icon can be a placeholder for now or a generic analysis icon
+        # kymograph_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSeekForward) # Example
+        self.generateKymographAction = QtGui.QAction("Generate Kymograph...", self)
+        self.generateKymographAction.setStatusTip("Generate a kymograph from the active measurement line")
+        self.generateKymographAction.setEnabled(False) # Initially disabled
+        self.generateKymographAction.triggered.connect(self._trigger_generate_kymograph)
+        analysis_menu.addAction(self.generateKymographAction)
+
+        logger.debug("Analysis menu setup complete with Kymograph action.")
 
     def _find_or_create_action(self, 
                                existing_actions: List[QtGui.QAction], 
@@ -1034,7 +1073,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.newTrackAction.setEnabled(can_create_new_element)
         if hasattr(self, 'newMeasurementLineAction') and self.newMeasurementLineAction:
             self.newMeasurementLineAction.setEnabled(can_create_new_element)
-        
+
+        if hasattr(self, 'generateKymographAction') and self.generateKymographAction:
+            can_generate_kymograph = (
+                is_video_loaded and
+                not is_defining_any_line and # Don't allow while defining other lines
+                self.element_manager.get_active_element_type() == ElementType.MEASUREMENT_LINE
+            )
+            self.generateKymographAction.setEnabled(can_generate_kymograph)
+
         if hasattr(self, 'newTrackButton') and self.newTrackButton:
             self.newTrackButton.setEnabled(can_create_new_element)
 
@@ -1964,6 +2011,106 @@ class MainWindow(QtWidgets.QMainWindow):
             if original_res_radio.isChecked(): return ExportResolutionMode.ORIGINAL_VIDEO
             return ExportResolutionMode.VIEWPORT
         return None
+
+    @QtCore.Slot()
+    def _trigger_generate_kymograph(self) -> None:
+        """Handles the 'Generate Kymograph' menu action."""
+        logger.info("Generate Kymograph action triggered.")
+        status_bar = self.statusBar()
+
+        if not self.video_loaded:
+            if status_bar: status_bar.showMessage("Cannot generate kymograph: No video loaded.", 3000)
+            QtWidgets.QMessageBox.warning(self, "Kymograph Error", "A video must be loaded to generate a kymograph.")
+            return
+
+        if not self._kymograph_handler:
+            logger.error("KymographHandler not initialized.")
+            if status_bar: status_bar.showMessage("Error: Kymograph functionality not available.", 3000)
+            QtWidgets.QMessageBox.critical(self, "Kymograph Error", "Internal error: Kymograph handler not initialized.")
+            return
+
+        active_element_idx = self.element_manager.active_element_index
+        if active_element_idx == -1 or \
+           self.element_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE:
+            if status_bar: status_bar.showMessage("Select a measurement line to generate a kymograph.", 3000)
+            QtWidgets.QMessageBox.information(self, "Generate Kymograph", "Please select a measurement line first.")
+            return
+
+        active_line_data = self.element_manager.elements[active_element_idx].get('data')
+        if not active_line_data or len(active_line_data) != 2:
+            logger.error(f"Active measurement line (ID: {self.element_manager.get_active_element_id()}) has invalid data for kymograph.")
+            if status_bar: status_bar.showMessage("Error: Selected line has invalid data.", 3000)
+            QtWidgets.QMessageBox.warning(self, "Kymograph Error", "The selected measurement line does not have valid endpoint data.")
+            return
+
+        if status_bar: status_bar.showMessage("Generating kymograph... please wait.", 0) # Persistent message
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        QtWidgets.QApplication.processEvents() # Ensure cursor and message update
+
+        kymo_data_np: Optional[np.ndarray] = None
+        try:
+            kymo_data_np = self._kymograph_handler.generate_kymograph_data(
+                line_points_data=active_line_data, # type: ignore
+                video_handler=self.video_handler
+            )
+        except Exception as e:
+            logger.exception("Exception during kymograph data generation.")
+            if status_bar: status_bar.showMessage(f"Error generating kymograph: {e}", 5000)
+            QtWidgets.QMessageBox.critical(self, "Kymograph Generation Error", f"An error occurred while generating kymograph data:\n{e}")
+            kymo_data_np = None # Ensure it's None on error
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            if status_bar and status_bar.currentMessage() == "Generating kymograph... please wait.":
+                status_bar.clearMessage()
+
+
+        if kymo_data_np is not None:
+            if status_bar: status_bar.showMessage("Kymograph generated. Opening display...", 2000)
+            logger.info(f"Kymograph data generated successfully (shape: {kymo_data_np.shape}).")
+            
+            if KymographDisplayDialog is not None: # Check if the class was imported
+                # Information for the dialog:
+                line_id = self.element_manager.get_active_element_id()
+                video_filename = os.path.basename(self.video_filepath) if self.video_filepath else "Untitled Video"
+                
+                # Calculate line length for Y-axis label
+                p1_tl_x, p1_tl_y = active_line_data[0][2], active_line_data[0][3]
+                p2_tl_x, p2_tl_y = active_line_data[1][2], active_line_data[1][3]
+                
+                # Transform points to current display CS (without scaling yet)
+                p1_cs_x, p1_cs_y = self.coord_transformer.transform_point_for_display(p1_tl_x, p1_tl_y)
+                p2_cs_x, p2_cs_y = self.coord_transformer.transform_point_for_display(p2_tl_x, p2_tl_y)
+                
+                line_pixel_length_cs = math.sqrt((p2_cs_x - p1_cs_x)**2 + (p2_cs_y - p1_cs_y)**2)
+                
+                # Get scaled length and unit string for display
+                display_length_val, display_unit_str = self.scale_manager.transform_value_for_display(line_pixel_length_cs)
+                
+                y_axis_label = f"Distance along line ({display_length_val:.2f} {display_unit_str})"
+                if display_unit_str == "px" and self.scale_manager.get_scale_m_per_px() is not None : # If scale is defined but pixels shown
+                    y_axis_label = f"Distance along line ({display_length_val:.1f} {display_unit_str})"
+
+                x_axis_label = f"Time (Frames: {self.total_frames}, Duration: {self._format_time(self.total_duration_ms)})"
+
+                # Instantiate and show the dialog
+                # (Assuming KymographDisplayDialog will handle its own conversion to QPixmap etc.)
+                kymo_dialog = KymographDisplayDialog(
+                    kymograph_data=kymo_data_np,
+                    line_id=line_id,
+                    video_filename=video_filename,
+                    y_axis_label=y_axis_label,
+                    x_axis_label=x_axis_label,
+                    parent=self
+                )
+                kymo_dialog.show() # Or exec() if modal
+            else:
+                logger.warning("KymographDisplayDialog is not available. Cannot display kymograph.")
+                QtWidgets.QMessageBox.information(self, "Kymograph Generated",
+                                                 "Kymograph data generated, but display dialog is not yet implemented.")
+        else:
+            if status_bar and not status_bar.currentMessage().startswith("Error generating kymograph"): # Avoid overwriting specific error
+                status_bar.showMessage("Kymograph generation failed or produced no data.", 4000)
+            logger.warning("Kymograph data is None after generation attempt.")
 
     @QtCore.Slot()
     def _trigger_export_video(self) -> None:
