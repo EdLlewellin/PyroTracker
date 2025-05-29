@@ -2068,41 +2068,35 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar: status_bar.showMessage("Kymograph generated. Opening display...", 2000)
             logger.info(f"Kymograph data generated successfully (shape: {kymo_data_np.shape}).")
             
-            if KymographDisplayDialog is not None: # Check if the class was imported
-                # Information for the dialog:
+            if KymographDisplayDialog is not None:
                 line_id = self.element_manager.get_active_element_id()
                 video_filename = os.path.basename(self.video_filepath) if self.video_filepath else "Untitled Video"
                 
-                # Calculate line length for Y-axis label
                 p1_tl_x, p1_tl_y = active_line_data[0][2], active_line_data[0][3]
                 p2_tl_x, p2_tl_y = active_line_data[1][2], active_line_data[1][3]
                 
-                # Transform points to current display CS (without scaling yet)
                 p1_cs_x, p1_cs_y = self.coord_transformer.transform_point_for_display(p1_tl_x, p1_tl_y)
                 p2_cs_x, p2_cs_y = self.coord_transformer.transform_point_for_display(p2_tl_x, p2_tl_y)
                 
                 line_pixel_length_cs = math.sqrt((p2_cs_x - p1_cs_x)**2 + (p2_cs_y - p1_cs_y)**2)
                 
                 # Get scaled length and unit string for display
-                display_length_val, display_unit_str = self.scale_manager.transform_value_for_display(line_pixel_length_cs)
+                # transform_value_for_display returns (value, unit_string)
+                total_line_dist_val, dist_units_str = self.scale_manager.transform_value_for_display(line_pixel_length_cs)
                 
-                y_axis_label = f"Distance along line ({display_length_val:.2f} {display_unit_str})"
-                if display_unit_str == "px" and self.scale_manager.get_scale_m_per_px() is not None : # If scale is defined but pixels shown
-                    y_axis_label = f"Distance along line ({display_length_val:.1f} {display_unit_str})"
+                total_vid_duration_s = self.total_duration_ms / 1000.0
 
-                x_axis_label = f"Time (Frames: {self.total_frames}, Duration: {self._format_time(self.total_duration_ms)})"
-
-                # Instantiate and show the dialog
-                # (Assuming KymographDisplayDialog will handle its own conversion to QPixmap etc.)
                 kymo_dialog = KymographDisplayDialog(
                     kymograph_data=kymo_data_np,
                     line_id=line_id,
                     video_filename=video_filename,
-                    y_axis_label=y_axis_label,
-                    x_axis_label=x_axis_label,
+                    total_line_distance=total_line_dist_val, # Pass the numerical value
+                    distance_units=dist_units_str,          # Pass the unit string
+                    total_video_duration_seconds=total_vid_duration_s,
+                    # total_frames=self.total_frames, # Can be passed if preferring frame no. for time axis
                     parent=self
                 )
-                kymo_dialog.show() # Or exec() if modal
+                kymo_dialog.show()
             else:
                 logger.warning("KymographDisplayDialog is not available. Cannot display kymograph.")
                 QtWidgets.QMessageBox.information(self, "Kymograph Generated",
