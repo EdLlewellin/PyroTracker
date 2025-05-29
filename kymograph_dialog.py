@@ -24,21 +24,9 @@ class KymographDisplayDialog(QtWidgets.QDialog):
                  kymograph_data: np.ndarray,
                  line_id: int,
                  video_filename: str,
-                 y_axis_label: str, # e.g., "Distance along line (123.4 px)"
-                 x_axis_label: str, # e.g., "Time (Frames: 1000, Duration: 00:33.333)"
+                 y_axis_label: str,
+                 x_axis_label: str,
                  parent: Optional[QtWidgets.QWidget] = None):
-        """
-        Initializes the Kymograph Display Dialog.
-
-        Args:
-            kymograph_data: The 2D (grayscale) or 3D (color) NumPy array of the kymograph.
-                            Expected shape: (time_frames, distance_pixels, [channels])
-            line_id: The ID of the measurement line used.
-            video_filename: The filename of the source video.
-            y_axis_label: The descriptive label for the Y-axis (distance).
-            x_axis_label: The descriptive label for the X-axis (time).
-            parent: The parent widget.
-        """
         super().__init__(parent)
         
         self.kymograph_data = kymograph_data
@@ -46,11 +34,27 @@ class KymographDisplayDialog(QtWidgets.QDialog):
         self.video_filename = video_filename
         self.y_axis_label_str = y_axis_label
         self.x_axis_label_str = x_axis_label
-
         self._kymograph_pixmap_item: Optional[QtWidgets.QGraphicsPixmapItem] = None
 
         self.setWindowTitle(f"Kymograph - Line {self.line_id} ({self.video_filename})")
-        self.setMinimumSize(600, 400) # Initial reasonable size
+        
+        # Initial Sizing Strategy:
+        # Aim for a decent size, e.g., a fraction of the primary screen or parent if available.
+        # The kymograph will stretch to this.
+        if parent:
+            parent_size = parent.size()
+            initial_width = int(parent_size.width() * 0.7)
+            initial_height = int(parent_size.height() * 0.6)
+            self.resize(initial_width, initial_height)
+        else:
+            screen = QtGui.QGuiApplication.primaryScreen()
+            if screen:
+                screen_geometry = screen.availableGeometry()
+                self.resize(int(screen_geometry.width() * 0.5), int(screen_geometry.height() * 0.5))
+            else:
+                self.resize(800, 600) # Fallback default size
+
+        self.setMinimumSize(400, 300) # A smaller minimum if user resizes aggressively
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
 
         self._setup_ui()
@@ -114,35 +118,35 @@ class KymographDisplayDialog(QtWidgets.QDialog):
         main_layout.addWidget(button_box)
 
     def _display_kymograph_image(self) -> None:
-        """Converts the NumPy kymograph data to QPixmap and displays it."""
+        """Converts the NumPy kymograph data to QPixmap and displays it,
+           stretching to fill the view."""
         if self.kymograph_data is None:
             logger.error("No kymograph data to display.")
-            # Optionally display an error message in the view
+            self.kymograph_scene.clear()
             error_text = self.kymograph_scene.addText("Error: No kymograph data.")
             error_text.setDefaultTextColor(QtCore.Qt.GlobalColor.red)
             return
 
         data = self.kymograph_data
         
-        # KymographHandler returns (time_frames, distance_pixels, [channels])
-        # For display with time on X-axis and distance on Y-axis,
-        # the image data needs to be (distance_pixels, time_frames, [channels])
         if data.ndim == 2: # Grayscale
-            data_for_image = data.T # Transpose: (distance_pixels, time_frames)
+            data_for_image = data.T 
         elif data.ndim == 3: # Color
-            data_for_image = data.transpose(1, 0, 2) # Transpose to (distance_pixels, time_frames, channels)
+            data_for_image = data.transpose(1, 0, 2)
         else:
             logger.error(f"Unsupported kymograph data dimension: {data.ndim}")
+            self.kymograph_scene.clear()
+            error_text = self.kymograph_scene.addText(f"Error: Unsupported data dim {data.ndim}.")
+            error_text.setDefaultTextColor(QtCore.Qt.GlobalColor.red)
             return
 
         height, width = data_for_image.shape[0], data_for_image.shape[1]
-        
         q_image: Optional[QtGui.QImage] = None
+        
         try:
+            # ... (NumPy to QImage conversion logic remains the same as before) ...
             if data_for_image.ndim == 2 or (data_for_image.ndim == 3 and data_for_image.shape[2] == 1): # Grayscale
-                # Ensure it's uint8 for QImage
                 if data_for_image.dtype != np.uint8:
-                    # Basic normalization if not uint8, can be improved
                     if np.max(data_for_image) > np.min(data_for_image):
                         img_norm = 255 * (data_for_image - np.min(data_for_image)) / (np.max(data_for_image) - np.min(data_for_image))
                     else:
@@ -150,16 +154,12 @@ class KymographDisplayDialog(QtWidgets.QDialog):
                     img_u8 = img_norm.astype(np.uint8)
                 else:
                     img_u8 = data_for_image
-
-                if img_u8.ndim == 3 and img_u8.shape[2] == 1: # If it was (h,w,1)
-                    img_u8 = img_u8.squeeze(axis=2)
-
+                if img_u8.ndim == 3 and img_u8.shape[2] == 1: img_u8 = img_u8.squeeze(axis=2)
                 bytes_per_line = img_u8.strides[0]
                 q_image = QtGui.QImage(img_u8.data, width, height, bytes_per_line, QtGui.QImage.Format.Format_Grayscale8)
             
             elif data_for_image.ndim == 3 and data_for_image.shape[2] == 3: # Color (BGR from OpenCV)
                 if data_for_image.dtype != np.uint8:
-                     # Basic normalization if not uint8
                     if np.max(data_for_image) > np.min(data_for_image):
                         img_norm = 255 * (data_for_image - np.min(data_for_image)) / (np.max(data_for_image) - np.min(data_for_image))
                     else:
@@ -167,35 +167,37 @@ class KymographDisplayDialog(QtWidgets.QDialog):
                     img_u8 = img_norm.astype(np.uint8)
                 else:
                     img_u8 = data_for_image
-                
-                # Convert BGR (OpenCV default for color) to RGB for QImage
                 rgb_image = cv2.cvtColor(img_u8, cv2.COLOR_BGR2RGB)
-                rgb_image_contiguous = np.require(rgb_image, np.uint8, 'C') # Ensure it's contiguous
+                rgb_image_contiguous = np.require(rgb_image, np.uint8, 'C')
                 bytes_per_line = rgb_image_contiguous.strides[0]
                 q_image = QtGui.QImage(rgb_image_contiguous.data, width, height, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
-            
             else:
                 logger.error(f"Unsupported kymograph data shape for QImage: {data_for_image.shape}")
+                self.kymograph_scene.clear()
+                self.kymograph_scene.addText("Error: Bad kymograph data shape.").setDefaultTextColor(QtCore.Qt.GlobalColor.red)
                 return
 
             if q_image and not q_image.isNull():
-                pixmap = QtGui.QPixmap.fromImage(q_image.copy()) # Use copy to ensure data ownership
-                self.kymograph_scene.clear() # Clear previous items
+                pixmap = QtGui.QPixmap.fromImage(q_image.copy()) 
+                self.kymograph_scene.clear() 
                 self._kymograph_pixmap_item = self.kymograph_scene.addPixmap(pixmap)
+                # Important: Set sceneRect to the pixmap's bounding rect BEFORE calling fitInView
+                # This defines the coordinate system of the scene based on the pixmap.
                 self.kymograph_scene.setSceneRect(self._kymograph_pixmap_item.boundingRect())
-                self.kymograph_view.fitInView(self._kymograph_pixmap_item, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
-                self.resize(pixmap.width() + 40 if pixmap.width() > 560 else 600, 
-                            pixmap.height() + 120 if pixmap.height() > 280 else 400) # Resize dialog to fit content plus some padding for labels/buttons
+                # MODIFIED: Use IgnoreAspectRatio to stretch the kymograph
+                self.kymograph_view.fitInView(self._kymograph_pixmap_item, QtCore.Qt.AspectRatioMode.IgnoreAspectRatio)
+                # Dialog resize logic removed from here, handled by __init__ and resizeEvent
             else:
                 logger.error("Failed to create QImage or QPixmap from kymograph data.")
-                self.kymograph_scene.addText("Error displaying kymograph.").setDefaultTextColor(QtCore.Qt.GlobalColor.red)
+                self.kymograph_scene.clear()
+                self.kymograph_scene.addText("Error displaying kymograph (conversion failed).").setDefaultTextColor(QtCore.Qt.GlobalColor.red)
 
         except Exception as e:
             logger.exception(f"Error converting/displaying kymograph data: {e}")
             self.kymograph_scene.clear()
             error_text_item = self.kymograph_scene.addText(f"Error displaying kymograph:\n{e}")
-            error_text_item.setDefaultTextColor(QtCore.Qt.GlobalColor.red)
-            
+            error_text_item.setDefaultTextColor(QtCore.Qt.GlobalColor.red) 
+
     def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
         """Handles mouse wheel events for zooming the kymograph view."""
         if not self.kymograph_view or not self._kymograph_pixmap_item:
@@ -218,6 +220,18 @@ class KymographDisplayDialog(QtWidgets.QDialog):
         else:
             super().wheelEvent(event) # Pass to base class for other scroll behaviors
 
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """Handles dialog resize events to refit the kymograph view."""
+        super().resizeEvent(event) # Call base class implementation
+        if self.kymograph_view and self._kymograph_pixmap_item and self._kymograph_pixmap_item.scene() == self.kymograph_scene:
+            # Ensure sceneRect is based on the pixmap if it hasn't changed,
+            # or if it has, _display_kymograph_image should have updated it.
+            # Forcing it here again might be redundant if _kymograph_pixmap_item never changes after creation.
+            # self.kymograph_scene.setSceneRect(self._kymograph_pixmap_item.boundingRect())
+            
+            # Refit the view, stretching the kymograph to the new view dimensions
+            self.kymograph_view.fitInView(self._kymograph_pixmap_item, QtCore.Qt.AspectRatioMode.IgnoreAspectRatio)
+        logger.debug(f"KymographDialog resized to: {event.size().width()}x{event.size().height()}")
 
 if __name__ == '__main__':
     # Basic test for the dialog
