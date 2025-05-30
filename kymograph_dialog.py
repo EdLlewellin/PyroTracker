@@ -10,12 +10,11 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 import cv2 # For BGR to RGB conversion
 
-# Attempt to import pyqtgraph
 try:
     import pyqtgraph as pg
     PYQTGRAPH_AVAILABLE = True
 except ImportError:
-    pg = None # Placeholder
+    pg = None 
     PYQTGRAPH_AVAILABLE = False
     logging.warning("PyQtGraph not found. Kymograph display will be basic or unavailable.")
 
@@ -27,28 +26,31 @@ logger = logging.getLogger(__name__)
 class KymographDisplayDialog(QtWidgets.QDialog):
     """
     A dialog to display the generated kymograph image using PyQtGraph.ImageView.
+    Visual X-axis will represent Time.
+    Visual Y-axis will represent Distance.
     """
 
     def __init__(self,
-                 kymograph_data: np.ndarray, # Shape: (time_frames, distance_pixels, [channels])
+                 kymograph_data: np.ndarray, # Expected raw shape: (time_frames, distance_pixels, [channels])
                  line_id: int,
                  video_filename: str,
-                 # --- Parameters for axis calibration and labeling ---
-                 total_line_distance: float, # Actual length of the line in chosen units
-                 distance_units: str,        # e.g., "px" or "m"
-                 total_video_duration_seconds: float, # For time axis calibration
-                 # total_frames: int, # Also useful for time axis if preferring frame numbers
+                 total_line_distance: float, 
+                 distance_units: str,        
+                 total_video_duration_seconds: float,
+                 total_frames_in_kymo: int, 
+                 num_distance_points_in_kymo: int,
                  parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         
-        self.kymograph_data_raw = kymograph_data # Store raw (time, distance, [ch])
+        self.kymograph_data_raw = kymograph_data 
         self.line_id = line_id
         self.video_filename = video_filename
         
         self.total_line_distance = total_line_distance
         self.distance_units = distance_units
         self.total_video_duration_seconds = total_video_duration_seconds
-        # self.total_frames = total_frames
+        self.num_time_frames_in_kymo = total_frames_in_kymo
+        self.num_distance_points_in_kymo = num_distance_points_in_kymo
 
         self.setWindowTitle(f"Kymograph - Line {self.line_id} ({self.video_filename})")
         
@@ -77,186 +79,152 @@ class KymographDisplayDialog(QtWidgets.QDialog):
         logger.debug(f"KymographDisplayDialog initialized for Line ID {self.line_id}.")
 
     def _setup_ui(self) -> None:
-        """Creates and arranges the UI elements within the dialog."""
         main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setSpacing(5)
 
         if PYQTGRAPH_AVAILABLE and pg is not None:
-            # --- Kymograph Display Area using PyQtGraph ImageView ---
-            # ImageView itself is a QWidget
-            self.imageView = pg.ImageView(self) # levelMode='mono' could be useful for single channel float data
-            # To allow the kymograph image to stretch to the view's aspect ratio:
-            self.imageView.view.setAspectLocked(lock=False)
+            # Create a PlotWidget first for more control over axes
+            self.plotWidget = pg.PlotWidget(self)
+            self.imageItem = pg.ImageItem()
+            self.plotWidget.addItem(self.imageItem)
             
-            main_layout.addWidget(self.imageView, 1) # Give it stretch factor 1
+            # Ensure the image item stretches by controlling its ViewBox
+            self.plotWidget.getViewBox().setAspectLocked(lock=False)
+            
+            # Hide default ImageView UI elements if we were using ImageView directly
+            # For PlotWidget, these aren't present unless added.
+            # If using ImageView:
+            # self.imageView.ui.histogram.hide()
+            # self.imageView.ui.roiBtn.hide()
+            # self.imageView.ui.menuBtn.hide()
+
+            main_layout.addWidget(self.plotWidget, 1)
         else:
-            # Fallback if PyQtGraph is not available
             self.fallback_label = QtWidgets.QLabel(
-                "PyQtGraph library is not installed.\n"
-                "Kymograph display requires PyQtGraph for advanced features.\n"
+                "PyQtGraph library is not installed. Kymograph display requires PyQtGraph.\n"
                 "Please install it (e.g., 'pip install pyqtgraph') and restart."
             )
             self.fallback_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             self.fallback_label.setWordWrap(True)
             main_layout.addWidget(self.fallback_label, 1)
 
-        # --- Dialog Buttons ---
         button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
-        # For QDialog, connecting QDialogButtonBox.accepted/rejected to self.accept/self.reject is typical
-        # For a "Close" button, it usually triggers reject.
-        button_box.rejected.connect(self.reject) 
+        button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
 
     def _show_pyqtgraph_unavailable_message(self):
         logger.error("PyQtGraph is not available for KymographDisplayDialog.")
-        # The fallback label is already added in _setup_ui
+
 
     def _display_kymograph_with_pyqtgraph(self) -> None:
-        """
-        Processes the NumPy kymograph data and displays it using PyQtGraph.ImageView,
-        with calibrated axes.
-        """
-        if not PYQTGRAPH_AVAILABLE or self.imageView is None:
-            logger.error("Attempted to display with PyQtGraph, but it's not available or ImageView not initialized.")
+        if not PYQTGRAPH_AVAILABLE or not hasattr(self, 'plotWidget') or self.plotWidget is None:
+            logger.error("PyQtGraph not available or PlotWidget not initialized.")
             return
-
         if self.kymograph_data_raw is None:
-            logger.error("No kymograph data to display.")
-            self.imageView.clear()
-            if pg and hasattr(self.imageView, 'addItem'): # Check if addItem is available
-                try:
-                    # ImageView's addItem adds to its internal ViewBox/scene
-                    self.imageView.addItem(pg.TextItem("Error: No kymograph data.", color='r'))
-                except Exception as e_text:
-                    logger.error(f"Could not add error text to ImageView: {e_text}")
+            logger.error("No kymograph data to display.");
+            self.plotWidget.clear() # Clear any existing items like error messages
+            if pg: self.plotWidget.addItem(pg.TextItem("Error: No kymograph data.", color='r'))
             return
 
+        # Raw data from KymographHandler: (N_time, N_dist, [channels])
+        # Hypothesis: ImageItem in PlotWidget context effectively maps axis 0 to X, axis 1 to Y.
+        # Therefore, we do NOT transpose the raw data.
         data_raw = self.kymograph_data_raw
-        
-        if data_raw.ndim == 2: # Grayscale
-            data_for_pg_image = data_raw.T 
-        elif data_raw.ndim == 3: # Color
-            data_for_pg_image = data_raw.transpose(1, 0, 2)
-        else:
-            logger.error(f"Unsupported kymograph data dimension: {data_raw.ndim}")
-            self.imageView.clear()
-            if pg and hasattr(self.imageView, 'addItem'):
-                try:
-                    self.imageView.addItem(pg.TextItem(f"Error: Unsupported data dim {data_raw.ndim}.", color='r'))
-                except Exception as e_text:
-                    logger.error(f"Could not add error text to ImageView: {e_text}")
-            return
+        image_for_display = data_raw # No transpose
 
-        num_distance_pixels = data_for_pg_image.shape[0]
-        num_time_frames = data_for_pg_image.shape[1]
+        if image_for_display.ndim not in [2, 3]:
+            logger.error(f"Unsupported kymograph data dimension: {image_for_display.ndim}"); self.plotWidget.clear(); return
 
-        time_start_val = 0.0
-        time_scale_val = self.total_video_duration_seconds / num_time_frames if num_time_frames > 0 else 1.0
+        # With image_for_display as (N_time, N_dist, ...):
+        # image_for_display.shape[0] is N_time (should map to X-axis width)
+        # image_for_display.shape[1] is N_dist (should map to Y-axis height)
+        img_width_time_pixels = image_for_display.shape[0] # N_time
+        img_height_dist_pixels = image_for_display.shape[1] # N_dist
 
-        distance_start_val = 0.0
-        distance_scale_val = self.total_line_distance / num_distance_pixels if num_distance_pixels > 0 else 1.0
+        # --- Axis Calibration ---
+        # X-axis (Time)
+        time_axis_start_val = 0.0
+        # Time pixels are along the first dimension of image_for_display (original time dim)
+        time_pixel_size_on_x_axis = self.total_video_duration_seconds / img_width_time_pixels if img_width_time_pixels > 0 else 1.0
+        total_time_span_on_x_axis = img_width_time_pixels * time_pixel_size_on_x_axis
 
-        final_image_data_for_pg = data_for_pg_image
-        if data_for_pg_image.ndim == 3 and data_for_pg_image.shape[2] == 3:
-            if data_for_pg_image.dtype != np.uint8:
-                if np.max(data_for_pg_image) > np.min(data_for_pg_image):
-                    img_norm = 255 * (data_for_pg_image - np.min(data_for_pg_image)) / (np.max(data_for_pg_image) - np.min(data_for_pg_image))
-                else:
-                    img_norm = np.zeros_like(data_for_pg_image)
-                img_u8 = img_norm.astype(np.uint8)
-            else:
-                img_u8 = data_for_pg_image
-            final_image_data_for_pg = cv2.cvtColor(img_u8, cv2.COLOR_BGR2RGB)
-        elif data_for_pg_image.ndim == 2:
-             if data_for_pg_image.dtype != np.uint8:
-                if np.max(data_for_pg_image) > np.min(data_for_pg_image):
-                    img_norm = 255 * (data_for_pg_image - np.min(data_for_pg_image)) / (np.max(data_for_pg_image) - np.min(data_for_pg_image))
-                else:
-                    img_norm = np.zeros_like(data_for_pg_image)
-                final_image_data_for_pg = img_norm.astype(np.uint8)
-             else:
-                final_image_data_for_pg = data_for_pg_image
-        
-        self.imageView.setImage(
-            final_image_data_for_pg,
-            # For ImageView, pos and scale are applied to the ImageItem it creates.
-            # These define how the image data maps to the scene coordinates handled by the ViewBox.
-            # The axes will then reflect these scene coordinates.
-            # To make the axes directly show time and distance values, ensure your scale
-            # here translates pixel indices to these real-world values.
-            # Note: PyQtGraph ImageView by default orients the image with (0,0) at top-left.
-            # If your 'final_image_data_for_pg' has (distance, time), then 'distance' is rows (y)
-            # and 'time' is columns (x).
-            # pos=[x0, y0] refers to the coordinate of the corner pixel (0,0) of the image.
-            # scale=[sx, sy] refers to the size of each pixel in x and y.
-            pos=[time_start_val, distance_start_val],       # Time for X-axis, Distance for Y-axis
-            scale=[time_scale_val, distance_scale_val]    # s/px for X, dist_unit/px for Y
-        )
+        # Y-axis (Distance)
+        distance_axis_start_val = 0.0 # P2 (second click, start of kymo distance profile) is at 0 distance
+        # Distance pixels are along the second dimension of image_for_display (original distance dim)
+        distance_pixel_size_on_y_axis = self.total_line_distance / img_height_dist_pixels if img_height_dist_pixels > 0 else 1.0
+        total_distance_span_on_y_axis = img_height_dist_pixels * distance_pixel_size_on_y_axis
 
-        # --- Set Axis Labels ---
-        # Access the PlotItem from ImageView using .plotItem or .getPlotItem() if available
-        # For newer PyQtGraph versions, plotItem is a direct attribute.
-        # For older ones, getPlotItem() was used. Current standard is .plotItem.
-        # If self.imageView is indeed a pg.ImageView, it has a 'plotItem' attribute.
-        if hasattr(self.imageView, 'plotItem') and self.imageView.plotItem is not None:
-            plot_item = self.imageView.plotItem
-        elif hasattr(self.imageView, 'getPlotItem'): # Fallback for potentially older API style
-             plot_item = self.imageView.getPlotItem()
-        else:
-            logger.error("Could not get PlotItem from ImageView to set labels.")
-            return
+        # Prepare image data for display (normalize type, BGR->RGB if color)
+        final_image_data_pg = image_for_display
+        if final_image_data_pg.ndim == 3 and final_image_data_pg.shape[2] == 3:
+            img_to_convert = final_image_data_pg
+            if final_image_data_pg.dtype != np.uint8:
+                m, M = np.min(img_to_convert), np.max(img_to_convert)
+                img_to_convert = ((255 * (img_to_convert - m) / (M - m)) if M > m else np.zeros_like(img_to_convert)).astype(np.uint8)
+            final_image_data_pg = cv2.cvtColor(np.ascontiguousarray(img_to_convert), cv2.COLOR_BGR2RGB)
+        elif final_image_data_pg.ndim == 2:
+             img_to_convert = final_image_data_pg
+             if final_image_data_pg.dtype != np.uint8:
+                m, M = np.min(img_to_convert), np.max(img_to_convert)
+                img_to_convert = ((255 * (img_to_convert - m) / (M - m)) if M > m else np.zeros_like(img_to_convert)).astype(np.uint8)
+             final_image_data_pg = img_to_convert
 
-        plot_item.setLabel('bottom', "Time", units="s")
-        plot_item.setLabel('left', "Distance from Line Start (P2)", units=self.distance_units)
-        
-        # Ensure the aspect lock is off AFTER setting the image if setImage resets it.
-        # This is often done once in _setup_ui, but doesn't hurt to re-affirm if needed.
-        if hasattr(self.imageView, 'view') and self.imageView.view is not None :
-             self.imageView.view.setAspectLocked(lock=False)
+        self.imageItem.setImage(final_image_data_pg, autoLevels=True)
 
+        self.imageItem.setRect(QtCore.QRectF(
+            time_axis_start_val,
+            distance_axis_start_val,
+            total_time_span_on_x_axis,
+            total_distance_span_on_y_axis
+        ))
 
-        logger.info(f"Kymograph displayed with PyQtGraph. Time axis scale: {time_scale_val:.3e} s/px, Distance axis scale: {distance_scale_val:.3e} {self.distance_units}/px.")
+        plot_item = self.plotWidget.getPlotItem()
+        if plot_item:
+            plot_item.getViewBox().invertY(True)
+            plot_item.showAxes(True, showValues=True, size=20)
+            plot_item.setLabel('bottom', "Time", units="s")
+            plot_item.setLabel('left', "Distance from P2", units=self.distance_units)
+            plot_item.getViewBox().setLimits(
+                xMin=time_axis_start_val, xMax=time_axis_start_val + total_time_span_on_x_axis,
+                yMin=distance_axis_start_val, yMax=distance_axis_start_val + total_distance_span_on_y_axis
+            )
+            plot_item.getViewBox().autoRange(padding=0.01)
+            plot_item.getViewBox().setAspectLocked(lock=False)
+
+        logger.info(f"Kymograph displayed. X-axis (Time) from {time_axis_start_val:.2f} to {time_axis_start_val+total_time_span_on_x_axis:.2f} s. "
+                    f"Y-axis (Distance) from {distance_axis_start_val:.2f} to {distance_axis_start_val+total_distance_span_on_y_axis:.2f} {self.distance_units}.")
 
 if __name__ == '__main__':
-    # Ensure QApplication instance exists for QGuiApplication.primaryScreen()
     app = QtWidgets.QApplication.instance() 
     if not app:
         app = QtWidgets.QApplication(sys.argv)
 
     if not PYQTGRAPH_AVAILABLE:
         print("PyQtGraph is not installed. Please install it to run this test/dialog.")
+        QtWidgets.QMessageBox.critical(None, "Missing Dependency", "PyQtGraph is required for kymograph display. Please install it.")
         sys.exit(1)
 
-    # Dummy data for testing
     dummy_time_frames = 150
     dummy_distance_pixels = 200
     
-    # KymographHandler produces (time, distance, [channels])
-    # Color example (BGR)
     dummy_kymo_color_raw = np.zeros((dummy_time_frames, dummy_distance_pixels, 3), dtype=np.uint8)
     for t_idx in range(dummy_time_frames):
         for d_idx in range(dummy_distance_pixels):
-            dummy_kymo_color_raw[t_idx, d_idx, 0] = (t_idx * 255 // dummy_time_frames) % 256 # Blue gradient over time
-            dummy_kymo_color_raw[t_idx, d_idx, 1] = (d_idx * 255 // dummy_distance_pixels) % 256 # Green gradient over distance
-            if (t_idx + d_idx) % 50 < 5 : # Some diagonal features
-                 dummy_kymo_color_raw[t_idx, d_idx, 2] = 255 # Red
-
-    # Grayscale example
-    # dummy_kymo_gray_raw = np.zeros((dummy_time_frames, dummy_distance_pixels), dtype=np.uint8)
-    # for t_idx in range(dummy_time_frames):
-    #     for d_idx in range(dummy_distance_pixels):
-    #         dummy_kymo_gray_raw[t_idx, d_idx] = (t_idx + d_idx) % 256
-
+            dummy_kymo_color_raw[t_idx, d_idx, 0] = (t_idx * 100 // dummy_time_frames + d_idx * 155 // dummy_distance_pixels) % 256 
+            dummy_kymo_color_raw[t_idx, d_idx, 1] = (d_idx * 255 // dummy_distance_pixels) % 256 
+            if (t_idx + d_idx*2) % 70 < 8 :
+                 dummy_kymo_color_raw[t_idx, d_idx, 2] = 255 
 
     dialog = KymographDisplayDialog(
-        kymograph_data=dummy_kymo_color_raw, # or dummy_kymo_gray_raw
+        kymograph_data=dummy_kymo_color_raw,
         line_id=1,
         video_filename="test_video.mp4",
-        total_line_distance=10.5, # Example total distance in meters
+        total_line_distance=12.5, 
         distance_units="m",
-        total_video_duration_seconds=float(dummy_time_frames / 30.0), # Assuming 30 FPS
-        # total_frames=dummy_time_frames,
+        total_video_duration_seconds=float(dummy_time_frames / 25.0), 
+        total_frames_in_kymo=dummy_time_frames,
+        num_distance_points_in_kymo=dummy_distance_pixels,
         parent=None
     )
     dialog.show()

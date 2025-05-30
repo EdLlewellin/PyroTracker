@@ -2090,10 +2090,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     kymograph_data=kymo_data_np,
                     line_id=line_id,
                     video_filename=video_filename,
-                    total_line_distance=total_line_dist_val, # Pass the numerical value
-                    distance_units=dist_units_str,          # Pass the unit string
+                    total_line_distance=total_line_dist_val,
+                    distance_units=dist_units_str,
                     total_video_duration_seconds=total_vid_duration_s,
-                    # total_frames=self.total_frames, # Can be passed if preferring frame no. for time axis
+                    total_frames_in_kymo=kymo_data_np.shape[0],      # time_frames from raw data
+                    num_distance_points_in_kymo=kymo_data_np.shape[1],# distance_pixels from raw data
                     parent=self
                 )
                 kymo_dialog.show()
