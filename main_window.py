@@ -4,6 +4,8 @@ import os
 import math
 import logging
 import json
+import copy
+import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 from typing import Optional, List, Tuple, Dict, Any
 
@@ -28,14 +30,19 @@ import settings_manager as sm_module
 import graphics_utils
 from file_io import UnitSelectionDialog
 from kymograph_handler import KymographHandler
+
+logger = logging.getLogger(__name__)
+
 try:
     from kymograph_dialog import KymographDisplayDialog
 except ImportError:
     KymographDisplayDialog = None # Placeholder
-
-
-
-logger = logging.getLogger(__name__)
+try:
+    from track_analysis_dialog import TrackAnalysisDialog, PYQTGRAPH_AVAILABLE # Import PYQTGRAPH_AVAILABLE here
+except ImportError:
+    TrackAnalysisDialog = None 
+    PYQTGRAPH_AVAILABLE = False # Define it as False if the import fails
+    logger.error("Failed to import TrackAnalysisDialog or its PYQTGRAPH_AVAILABLE flag. Analysis feature will be unavailable.")
 
 basedir = os.path.dirname(os.path.abspath(__file__))
 ICON_PATH = os.path.join(basedir, "PyroTracker.ico")
@@ -142,6 +149,8 @@ class MainWindow(QtWidgets.QMainWindow):
     copyTracksTableButton: Optional[QtWidgets.QPushButton] = None
     saveLinesTableButton: Optional[QtWidgets.QPushButton] = None
     copyLinesTableButton: Optional[QtWidgets.QPushButton] = None
+    
+    analyzeTrackAction: Optional[QtGui.QAction] = None
     
     # Help Menu Actions
     manualAction: Optional[QtGui.QAction] = None
@@ -640,19 +649,28 @@ class MainWindow(QtWidgets.QMainWindow):
                 break
         
         if not analysis_menu:
-            logger.error("Analysis menu not found from ui_setup. Cannot add kymograph action.")
+            logger.error("Analysis menu not found from ui_setup. Cannot add analysis actions.")
             return
 
-        # --- Generate Kymograph Action ---
-        # Icon can be a placeholder for now or a generic analysis icon
-        # kymograph_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSeekForward) # Example
+        # --- Analyze Track Action ---
+        # Icon can be a placeholder, e.g., a generic graph or statistics icon
+        analyze_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSeekForward) # Placeholder
+        self.analyzeTrackAction = QtGui.QAction(analyze_icon, "Analyze Track...", self)
+        self.analyzeTrackAction.setStatusTip("Perform y(t) parabola fitting analysis on the selected track")
+        self.analyzeTrackAction.setEnabled(False) # Initially disabled
+        self.analyzeTrackAction.triggered.connect(self._trigger_open_track_analysis_dialog) # Connect to new slot
+        analysis_menu.addAction(self.analyzeTrackAction)
+
+        analysis_menu.addSeparator() # Separator before Kymograph
+
+        # --- Generate Kymograph Action (existing) ---
         self.generateKymographAction = QtGui.QAction("Generate Kymograph...", self)
         self.generateKymographAction.setStatusTip("Generate a kymograph from the active measurement line")
-        self.generateKymographAction.setEnabled(False) # Initially disabled
+        self.generateKymographAction.setEnabled(False) 
         self.generateKymographAction.triggered.connect(self._trigger_generate_kymograph)
         analysis_menu.addAction(self.generateKymographAction)
 
-        logger.debug("Analysis menu setup complete with Kymograph action.")
+        logger.debug("Analysis menu setup complete with Kymograph and Analyze Track actions.")
 
     def _find_or_create_action(self, 
                                existing_actions: List[QtGui.QAction], 
@@ -1044,7 +1062,6 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.debug("Measurement line definition UI reset.")
 
     def _update_ui_state(self) -> None:
-        # ... (existing method with Save/SaveAs/Close Project updates)
         is_video_loaded: bool = self.video_loaded
         is_setting_scale_by_line = False
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line'):
@@ -1074,10 +1091,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'newMeasurementLineAction') and self.newMeasurementLineAction:
             self.newMeasurementLineAction.setEnabled(can_create_new_element)
 
+        # --- MODIFIED/CORRECTED SECTION for analyzeTrackAction ---
+        if hasattr(self, 'analyzeTrackAction') and self.analyzeTrackAction:
+            can_analyze_track = (
+                is_video_loaded and
+                self.element_manager is not None and # Ensure element_manager exists
+                self.element_manager.get_active_element_type() == ElementType.TRACK and
+                bool(self.element_manager.get_active_element_points_if_track()) # Check if track has points
+            )
+            self.analyzeTrackAction.setEnabled(can_analyze_track) # Ensure this line is present and active
+        # --- END MODIFIED/CORRECTED SECTION ---
+
         if hasattr(self, 'generateKymographAction') and self.generateKymographAction:
             can_generate_kymograph = (
                 is_video_loaded and
-                not is_defining_any_line and # Don't allow while defining other lines
+                not is_defining_any_line and 
+                self.element_manager is not None and # Ensure element_manager exists
                 self.element_manager.get_active_element_type() == ElementType.MEASUREMENT_LINE
             )
             self.generateKymographAction.setEnabled(can_generate_kymograph)
@@ -1097,7 +1126,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         can_interact_with_project = is_video_loaded or (self.project_manager and self.project_manager.get_current_project_filepath() is not None)
 
-        if hasattr(self, 'saveAction') and self.saveAction:
+        if hasattr(self, 'saveAction') and self.saveAction and self.project_manager:
             self.saveAction.setEnabled(
                 can_interact_with_project and self.project_manager.project_has_unsaved_changes()
             )
@@ -1136,7 +1165,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'exportFrameAction') and self.exportFrameAction:
             self.exportFrameAction.setEnabled(is_video_loaded)
 
-        if hasattr(self, 'undoAction') and self.undoAction:
+        if hasattr(self, 'undoAction') and self.undoAction and self.element_manager:
             self.undoAction.setEnabled(self.element_manager.can_undo_last_point_action() and is_video_loaded)
 
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(is_video_loaded)
@@ -1149,7 +1178,6 @@ class MainWindow(QtWidgets.QMainWindow):
         
         if self.project_manager:
              self._handle_unsaved_changes_state_changed(self.project_manager.project_has_unsaved_changes())
-
     def _update_ui_for_frame(self, frame_index: int) -> None:
         # ... (existing method)
         if not self.video_loaded:
@@ -2106,6 +2134,74 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar and not status_bar.currentMessage().startswith("Error generating kymograph"): # Avoid overwriting specific error
                 status_bar.showMessage("Kymograph generation failed or produced no data.", 4000)
             logger.warning("Kymograph data is None after generation attempt.")
+
+    @QtCore.Slot()
+    def _trigger_open_track_analysis_dialog(self) -> None:
+        """
+        Opens the TrackAnalysisDialog for the currently selected track.
+        """
+        logger.info("Analyze Track action triggered.")
+        status_bar = self.statusBar()
+
+        if not self.video_loaded:
+            if status_bar: status_bar.showMessage("Cannot analyze track: No video loaded.", 3000)
+            QtWidgets.QMessageBox.warning(self, "Track Analysis Error", "A video must be loaded to analyze a track.")
+            return
+
+        if not self.element_manager or not self.video_handler:
+            logger.error("Cannot analyze track: Core managers (ElementManager, VideoHandler) missing.")
+            if status_bar: status_bar.showMessage("Error: Analysis components not ready.", 3000)
+            QtWidgets.QMessageBox.critical(self, "Track Analysis Error", "Internal error: Required components missing.")
+            return
+
+        active_element_idx = self.element_manager.active_element_index
+        if active_element_idx == -1 or \
+           self.element_manager.get_active_element_type() != ElementType.TRACK:
+            if status_bar: status_bar.showMessage("Select a track with data points to analyze.", 3000)
+            QtWidgets.QMessageBox.information(self, "Track Analysis", "Please select a track with data points first.")
+            return
+
+        track_element_original = self.element_manager.elements[active_element_idx]
+        if not track_element_original.get('data'): # Check if the track has any points
+            if status_bar: status_bar.showMessage("Selected track has no data points to analyze.", 3000)
+            QtWidgets.QMessageBox.information(self, "Track Analysis", "The selected track has no data points.")
+            return
+
+        if TrackAnalysisDialog is None or not PYQTGRAPH_AVAILABLE: # Check if dialog and pyqtgraph are available
+            logger.error("TrackAnalysisDialog or PyQtGraph is not available. Cannot open analysis window.")
+            QtWidgets.QMessageBox.critical(self, "Analysis Unavailable",
+                                           "Track analysis functionality requires PyQtGraph and is currently unavailable.\n"
+                                           "Please ensure PyQtGraph is installed correctly.")
+            if status_bar: status_bar.showMessage("Error: Track analysis feature unavailable.", 4000)
+            return
+
+        # Proceed with opening the dialog
+        try:
+            track_copy = copy.deepcopy(track_element_original) # [cite: 29]
+            video_fps_val = self.video_handler.fps # [cite: 29]
+            video_height_val = self.video_handler.frame_height # [cite: 29]
+
+            if video_fps_val <= 0:
+                logger.error("Cannot open analysis dialog: Video FPS is invalid (<=0).")
+                QtWidgets.QMessageBox.warning(self, "Track Analysis Error", "Video FPS is invalid. Cannot perform analysis.")
+                if status_bar: status_bar.showMessage("Error: Invalid video FPS for analysis.", 3000)
+                return
+            if video_height_val <= 0:
+                logger.error("Cannot open analysis dialog: Video height is invalid (<=0).")
+                QtWidgets.QMessageBox.warning(self, "Track Analysis Error", "Video height is invalid. Cannot perform analysis.")
+                if status_bar: status_bar.showMessage("Error: Invalid video height for analysis.", 3000)
+                return
+
+            dialog = TrackAnalysisDialog(track_copy, video_fps_val, video_height_val, self) # [cite: 30]
+            dialog.exec() # Modal execution for now [cite: 15, 30]
+            # If dialog.exec() is used, code here will run after dialog is closed.
+            # Future: If dialog.show() is used, might need signals for when analysis is "saved" or "applied".
+            logger.info(f"TrackAnalysisDialog for track {track_copy.get('id')} closed.")
+
+        except Exception as e:
+            logger.exception("Exception during TrackAnalysisDialog creation or execution.")
+            QtWidgets.QMessageBox.critical(self, "Track Analysis Error", f"An unexpected error occurred:\n{e}")
+            if status_bar: status_bar.showMessage("Error opening analysis dialog.", 4000)
 
     @QtCore.Slot()
     def _trigger_export_video(self) -> None:

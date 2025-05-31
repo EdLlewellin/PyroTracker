@@ -28,6 +28,21 @@ ElementData = List[PointData]
 AllElementsForSaving = List[ElementData]
 VisualElement = Dict[str, Any]
 
+# Default structure for per-track analysis state
+DEFAULT_ANALYSIS_STATE = {
+    'fit_settings': {
+        'g_value_ms2': 9.80665,            # Default g in m/s^2 [cite: 5]
+        'time_range_s': None,              # Optional[Tuple[float, float]] for time range in seconds [cite: 5]
+        'excluded_point_frames': []        # List[int] of frame indices excluded from fit [cite: 5]
+    },
+    'fit_results': {
+        'coefficients_poly2': None,       # Optional[Tuple[float, float, float]] (A, B, C for y = At^2 + Bt + C) [cite: 5]
+        'r_squared': None,                # Optional[float] R-squared value of the fit [cite: 5]
+        'derived_scale_m_per_px': None,   # Optional[float] Scale derived from this fit [cite: 5]
+        'is_applied_to_project': False    # bool: True if this track's scale was last applied globally [cite: 5]
+    }
+}
+
 class ElementVisibilityMode(Enum):
     HIDDEN = auto()
     HOME_FRAME = auto()
@@ -104,7 +119,8 @@ class ElementManager(QtCore.QObject):
             'type': ElementType.TRACK,
             'name': f"Track {new_id}",
             'data': [],
-            'visibility_mode': ElementVisibilityMode.INCREMENTAL
+            'visibility_mode': ElementVisibilityMode.INCREMENTAL,
+            'analysis_state': copy.deepcopy(DEFAULT_ANALYSIS_STATE) # [cite: 8] Add default analysis state
         }
         self.elements.append(new_element)
         new_element_index: int = len(self.elements) - 1
@@ -635,21 +651,24 @@ class ElementManager(QtCore.QObject):
         for element in self.elements:
             element_dict_for_save = {
                 'id': element['id'],
-                'type': element['type'].name,  # Store enum name as string [cite: 9]
-                'name': element.get('name', f"{element['type'].name.title()} {element['id']}"), # Ensure name exists [cite: 9]
-                'visibility_mode': element['visibility_mode'].name, # Store enum name as string [cite: 9]
+                'type': element['type'].name,
+                'name': element.get('name', f"{element['type'].name.title()} {element['id']}"),
+                'visibility_mode': element['visibility_mode'].name,
                 'data': []
             }
             
-            # Structure point data as a list of dictionaries [cite: 10]
+            # Include analysis_state for tracks [cite: 9]
+            if element['type'] == ElementType.TRACK:
+                element_dict_for_save['analysis_state'] = copy.deepcopy(element.get('analysis_state', copy.deepcopy(DEFAULT_ANALYSIS_STATE)))
+
             point_list_for_save = []
             for point_tuple in element['data']:
                 frame_idx, time_ms, x_tl_px, y_tl_px = point_tuple
                 point_dict = {
                     'frame_index': frame_idx,
                     'time_ms': time_ms,
-                    'x': x_tl_px, # Raw TL pixel coordinates [cite: 10]
-                    'y': y_tl_px  # Raw TL pixel coordinates [cite: 10]
+                    'x': x_tl_px,
+                    'y': y_tl_px
                 }
                 point_list_for_save.append(point_dict)
             
@@ -659,13 +678,13 @@ class ElementManager(QtCore.QObject):
         logger.info(f"Prepared {len(elements_for_save)} elements for project saving.")
         return elements_for_save
 
-# MODIFIED for Phase A: Renamed and restructured for JSON project loading
+
     def load_elements_from_project_data(self,
                                         elements_data_from_project: List[Dict[str, Any]],
-                                        video_width: int, # Still needed for point validation
-                                        video_height: int, # Still needed for point validation
-                                        video_frame_count: int, # Still needed for point validation
-                                        video_fps: float # Still needed for time consistency checks (optional)
+                                        video_width: int,
+                                        video_height: int,
+                                        video_frame_count: int,
+                                        video_fps: float
                                        ) -> Tuple[bool, List[str]]:
         """
         Loads elements from a list of dictionaries (typically from a JSON project file).
@@ -683,7 +702,7 @@ class ElementManager(QtCore.QObject):
                                     of warning messages.
         """
         warnings: List[str] = []
-        self.reset() # Clear existing elements before loading new ones
+        self.reset() 
         
         max_loaded_id = 0
         loaded_elements_count = 0
@@ -698,8 +717,9 @@ class ElementManager(QtCore.QObject):
             element_name = element_dict.get('name')
             visibility_mode_str = element_dict.get('visibility_mode')
             points_list_of_dicts = element_dict.get('data', [])
+            # Load analysis_state if present, otherwise use default [cite: 10, 11]
+            analysis_state_loaded = element_dict.get('analysis_state')
 
-            # --- Validation of basic element structure ---
             if element_id is None or not isinstance(element_id, int) or element_id <= 0:
                 warnings.append(f"Skipping element due to missing or invalid ID: {element_dict.get('name', 'Unknown')}")
                 logger.warning(f"Skipping element due to missing/invalid ID: {element_id}. Element dict: {element_dict}")
@@ -709,7 +729,6 @@ class ElementManager(QtCore.QObject):
                 logger.warning(f"Skipping element ID {element_id} ({element_name}) due to missing or invalid type string: {element_type_str}")
                 continue
 
-            # --- Convert type string to ElementType enum ---
             try:
                 element_type_enum = ElementType[element_type_str.upper()]
             except KeyError:
@@ -717,8 +736,30 @@ class ElementManager(QtCore.QObject):
                 logger.warning(f"Unrecognized element type '{element_type_str}' for element ID {element_id}.")
                 continue
 
-            # --- Convert visibility mode string to Enum ---
-            visibility_mode_enum = ElementVisibilityMode.INCREMENTAL # Default
+            final_analysis_state = None
+            if element_type_enum == ElementType.TRACK:
+                if analysis_state_loaded and isinstance(analysis_state_loaded, dict):
+                    # Basic validation: ensure top-level keys 'fit_settings' and 'fit_results' exist
+                    # More robust migration could be added here if the structure evolves significantly.
+                    final_analysis_state = copy.deepcopy(DEFAULT_ANALYSIS_STATE) # Start with defaults
+                    
+                    loaded_fit_settings = analysis_state_loaded.get('fit_settings')
+                    if isinstance(loaded_fit_settings, dict):
+                        for key, default_val in DEFAULT_ANALYSIS_STATE['fit_settings'].items():
+                            final_analysis_state['fit_settings'][key] = loaded_fit_settings.get(key, default_val)
+                    
+                    loaded_fit_results = analysis_state_loaded.get('fit_results')
+                    if isinstance(loaded_fit_results, dict):
+                        for key, default_val in DEFAULT_ANALYSIS_STATE['fit_results'].items():
+                            final_analysis_state['fit_results'][key] = loaded_fit_results.get(key, default_val)
+                else:
+                    final_analysis_state = copy.deepcopy(DEFAULT_ANALYSIS_STATE) # [cite: 11]
+                    if analysis_state_loaded is not None: # If it existed but wasn't a dict
+                        warnings.append(f"Track ID {element_id} ({element_name}) had invalid 'analysis_state'. Using default.")
+                        logger.warning(f"Track ID {element_id} ({element_name}) had invalid 'analysis_state' type: {type(analysis_state_loaded)}. Defaulted.")
+
+
+            visibility_mode_enum = ElementVisibilityMode.INCREMENTAL
             if visibility_mode_str and isinstance(visibility_mode_str, str):
                 try:
                     visibility_mode_enum = ElementVisibilityMode[visibility_mode_str.upper()]
@@ -740,18 +781,18 @@ class ElementManager(QtCore.QObject):
                 if not all(isinstance(val, (int, float)) for val in [frame_idx, time_ms, x_tl_px, y_tl_px]):
                     warnings.append(f"{point_description}: Contains invalid or missing coordinate/frame/time data. Skipped.")
                     is_valid_point = False
-                else: # Basic types are okay, now check values
-                    frame_idx = int(frame_idx) # Ensure int
+                else: 
+                    frame_idx = int(frame_idx) 
                     if not (0 <= frame_idx < video_frame_count):
                         warnings.append(f"{point_description}: Frame index ({frame_idx}) out of video range [0, {video_frame_count-1}]. Skipped.")
                         is_valid_point = False
-                    if is_valid_point and not (0 <= x_tl_px < video_width): # Assuming TL origin, so coords >= 0
+                    if is_valid_point and not (0 <= x_tl_px < video_width): 
                         warnings.append(f"{point_description}: X-coordinate ({x_tl_px:.2f}) out of video width [0, {video_width-1}]. Skipped.")
                         is_valid_point = False
-                    if is_valid_point and not (0 <= y_tl_px < video_height): # Assuming TL origin
+                    if is_valid_point and not (0 <= y_tl_px < video_height): 
                         warnings.append(f"{point_description}: Y-coordinate ({y_tl_px:.2f}) out of video height [0, {video_height-1}]. Skipped.")
                         is_valid_point = False
-                    if is_valid_point and video_fps > 0: # Optional time consistency check
+                    if is_valid_point and video_fps > 0: 
                         expected_time_ms = (frame_idx / video_fps) * 1000.0
                         if abs(time_ms - expected_time_ms) > time_tolerance_ms:
                             warnings.append(f"{point_description}: Time ({time_ms:.1f}ms) seems inconsistent with frame index and FPS (expected ~{expected_time_ms:.1f}ms). Using file time.")
@@ -760,31 +801,26 @@ class ElementManager(QtCore.QObject):
                     internal_points_data.append((frame_idx, time_ms, x_tl_px, y_tl_px))
                 else:
                     current_element_skipped_points += 1
-                    logger.warning(warnings[-1]) # Log the last warning added
+                    logger.warning(warnings[-1]) 
 
             if not internal_points_data and element_type_enum == ElementType.MEASUREMENT_LINE and len(points_list_of_dicts) != 2:
-                # If it was supposed to be a line but its points were invalid, or it didn't have 2 points to begin with.
                 warnings.append(f"Element ID {element_id} ({element_name}) of type {element_type_enum.name} loaded with no valid points. It will be empty.")
             elif not internal_points_data and element_type_enum == ElementType.TRACK and points_list_of_dicts:
-                # If it was a track with points, but all were invalid
                  warnings.append(f"Element ID {element_id} ({element_name}) of type {element_type_enum.name} had all its points skipped due to validation errors. It will be empty.")
 
-
-            # Sort points by frame index for internal consistency
             internal_points_data.sort(key=lambda p: p[0])
 
-            # Specific validation for Measurement Lines (must have exactly 2 points on the same frame)
             if element_type_enum == ElementType.MEASUREMENT_LINE:
                 if len(internal_points_data) != 2:
                     warnings.append(f"Element ID {element_id} ({element_name}): Measurement Line must have exactly 2 valid points. Found {len(internal_points_data)}. Skipping element.")
                     logger.warning(f"Measurement Line ID {element_id} skipped. Expected 2 valid points, found {len(internal_points_data)}.")
                     total_skipped_points += current_element_skipped_points
-                    continue # Skip this element
-                elif internal_points_data[0][0] != internal_points_data[1][0]: # Check if points are on the same frame
+                    continue 
+                elif internal_points_data[0][0] != internal_points_data[1][0]: 
                     warnings.append(f"Element ID {element_id} ({element_name}): Measurement Line points must be on the same frame. Found frames {internal_points_data[0][0]} and {internal_points_data[1][0]}. Skipping element.")
                     logger.warning(f"Measurement Line ID {element_id} skipped. Points on different frames.")
                     total_skipped_points += current_element_skipped_points
-                    continue # Skip this element
+                    continue 
 
             new_internal_element = {
                 'id': element_id,
@@ -793,6 +829,9 @@ class ElementManager(QtCore.QObject):
                 'data': internal_points_data,
                 'visibility_mode': visibility_mode_enum
             }
+            if element_type_enum == ElementType.TRACK:
+                new_internal_element['analysis_state'] = final_analysis_state
+            
             self.elements.append(new_internal_element)
             loaded_elements_count += 1
             total_valid_points_loaded += len(internal_points_data)
@@ -801,7 +840,7 @@ class ElementManager(QtCore.QObject):
                 max_loaded_id = element_id
 
         self._next_element_id = max_loaded_id + 1
-        self.active_element_index = -1 # Deselect any active element
+        self.active_element_index = -1 
         
         logger.info(f"Load from project data: {loaded_elements_count} element(s) loaded. "
                     f"Total valid points: {total_valid_points_loaded}. Total skipped points: {total_skipped_points}.")
@@ -809,6 +848,6 @@ class ElementManager(QtCore.QObject):
         self.elementListChanged.emit()
         self.activeElementDataChanged.emit()
         self.visualsNeedUpdate.emit()
-        self._clear_last_action() # Loading new data clears undo history
+        self._clear_last_action() 
         
         return True, warnings
