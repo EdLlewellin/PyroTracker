@@ -254,6 +254,43 @@ class ElementManager(QtCore.QObject):
                 self.visualsNeedUpdate.emit()
             self.elementListChanged.emit() # To update table radio buttons
 
+    def update_track_analysis_state(self, track_id: int, new_analysis_state: Dict[str, Any]) -> bool: # [cite: 78]
+        """
+        Updates the 'analysis_state' dictionary for a specific track.
+
+        Args:
+            track_id: The ID of the track whose analysis state is to be updated.
+            new_analysis_state: The new analysis state dictionary to apply.
+
+        Returns:
+            bool: True if the track was found and updated, False otherwise.
+        """
+        for i, element in enumerate(self.elements):
+            if element.get('id') == track_id and element.get('type') == ElementType.TRACK:
+                # Ensure the element actually has an analysis_state key, initialize if not (shouldn't happen with Phase 0)
+                if 'analysis_state' not in element:
+                    element['analysis_state'] = copy.deepcopy(DEFAULT_ANALYSIS_STATE)
+                    logger.warning(f"Track ID {track_id} was missing 'analysis_state' key. Initialized with defaults before update.")
+                
+                # Merge/update the existing analysis_state with the new one.
+                # A simple update might be okay if new_analysis_state is always complete.
+                # For robustness, especially if new_analysis_state might be partial (though current plan implies full):
+                element['analysis_state'].update(copy.deepcopy(new_analysis_state)) # [cite: 79]
+                
+                logger.info(f"Analysis state updated for Track ID {track_id}.")
+                
+                # Emit signals to notify UI and potentially mark project as dirty
+                self.elementListChanged.emit() # Updates tables which might show analysis status [cite: 79]
+                if i == self.active_element_index: # If the updated track is the active one
+                    self.activeElementDataChanged.emit() # Could update a detailed view of this track [cite: 79]
+                
+                # self.visualsNeedUpdate.emit() # Not strictly needed unless analysis state affects track visuals directly
+                
+                return True # [cite: 80]
+        
+        logger.warning(f"Could not update analysis state: Track ID {track_id} not found.")
+        return False
+
     def get_element_visibility_mode(self, element_index: int) -> ElementVisibilityMode:
         if 0 <= element_index < len(self.elements):
             return self.elements[element_index]['visibility_mode']

@@ -5,10 +5,12 @@ Dialog window for displaying and analyzing y(t) data for a single track.
 import logging
 import sys
 import math
+import copy
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
+from element_manager import DEFAULT_ANALYSIS_STATE, ElementType
 
 try:
     import pyqtgraph as pg
@@ -31,57 +33,73 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
     Dialog for analyzing a single track's y(t) data and fitting a parabola.
     """
 
+    analysisSettingsSaved = QtCore.Signal(int, dict) # track_id, new_analysis_state
+
     def __init__(self,
                  track_element_copy: Dict[str, Any],
                  video_fps: float,
                  video_height: int,
                  parent_main_window: 'MainWindow'):
         super().__init__(parent_main_window)
-        self.setWindowTitle(f"Track Analysis - ID: {track_element_copy.get('id', 'N/A')}")
+        
+        self.track_element = track_element_copy # Store the copy
+        self.track_id = self.track_element.get('id', -1) # Store track ID for convenience
+        self.setWindowTitle(f"Track Analysis - ID: {self.track_id}")
         self.setModal(True)
 
-        self.track_element = track_element_copy
         self.video_fps = video_fps
         self.video_height = video_height
         self.parent_main_window_ref = parent_main_window
 
-        self.plot_data_y_vs_t: List[Tuple[float, float]] = [] # (time_s, y_plot)
+        self.plot_data_y_vs_t: List[Tuple[float, float]] = [] 
 
-        self.current_g_value_ms2: float = 9.80665
+        # --- Load initial settings from track_element['analysis_state'] ---
+        initial_analysis_state = self.track_element.get('analysis_state', copy.deepcopy(DEFAULT_ANALYSIS_STATE)) # Use DEFAULT_ANALYSIS_STATE from element_manager
+        fit_settings = initial_analysis_state.get('fit_settings', DEFAULT_ANALYSIS_STATE['fit_settings'])
+
+        self.current_g_value_ms2: float = fit_settings.get('g_value_ms2', 9.80665)
         self.fit_coeffs: Optional[Tuple[float, float, float]] = None
         self.fit_r_squared: Optional[float] = None
         self.fit_derived_scale_m_per_px: Optional[float] = None
         
         self.fitted_curve_item: Optional[pg.PlotDataItem] = None
-        self.scatter_plot_item: Optional[pg.ScatterPlotItem] = None # Ensure this is initialized
+        self.scatter_plot_item: Optional[pg.ScatterPlotItem] = None
 
-        # --- Phase 3: Instance variables for filtering ---
-        self.all_points_original_indices: List[int] = [] # To store original index of each point plotted
-        self.included_point_indices_mask: List[bool] = [] # Mask for points included in the fit [cite: 51]
-        self.fit_time_range_s: Optional[Tuple[float, float]] = None # (min_t_s, max_t_s) [cite: 52]
-        self.linear_region_item: Optional[pg.LinearRegionItem] = None # For time range selection
-        # --- End Phase 3 instance variables ---
+        self.all_points_original_indices: List[int] = []
+        self.included_point_indices_mask: List[bool] = []
+        
+        # Load initial time range (will be applied in _prepare_and_plot_data)
+        self.initial_fit_time_range_s: Optional[Tuple[float, float]] = fit_settings.get('time_range_s', None)
+        self.fit_time_range_s: Optional[Tuple[float, float]] = None # Will be set by LinearRegionItem or initial data
 
-        self.setMinimumSize(700, 550)
+        self.linear_region_item: Optional[pg.LinearRegionItem] = None
+        
+        # Load initial excluded points (will be applied in _prepare_and_plot_data)
+        self.initial_excluded_point_frames: List[int] = fit_settings.get('excluded_point_frames', [])
+        # --- End Load initial settings ---
+
+        self.setMinimumSize(700, 600) # Slightly increased height for new buttons
         if parent_main_window:
              parent_size = parent_main_window.size()
-             self.resize(int(parent_size.width() * 0.7), int(parent_size.height() * 0.8)) # Increased height for more controls
+             self.resize(int(parent_size.width() * 0.7), int(parent_size.height() * 0.8))
         else:
-            self.resize(800, 650) # Increased height
+            self.resize(800, 700)
 
         self._setup_ui()
 
         if PYQTGRAPH_AVAILABLE:
-            self._prepare_and_plot_data()
-            # Initial fit attempt with all data after plot is ready
-            if self.plot_data_y_vs_t: # Check if data was successfully prepared
+            self._prepare_and_plot_data() # This will now use initial_excluded_point_frames and initial_fit_time_range_s
+            
+            # Attempt an initial fit if data is present after preparation
+            if self.plot_data_y_vs_t:
+                logger.debug(f"Track {self.track_id}: Performing initial fit based on loaded/default analysis settings.")
                 self._fit_parabola()
             else:
-                self._update_results_display() # Initialize results display if no data
+                self._update_results_display()
         else:
             self._show_pyqtgraph_unavailable_message()
 
-        logger.info(f"TrackAnalysisDialog initialized for Track ID: {self.track_element.get('id', 'N/A')}")
+        logger.info(f"TrackAnalysisDialog initialized for Track ID: {self.track_id}")
 
     def _setup_ui(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
@@ -90,20 +108,18 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
         controls_group_box = QtWidgets.QGroupBox("Analysis Controls")
         controls_layout = QtWidgets.QHBoxLayout(controls_group_box)
 
-        track_id_str = self.track_element.get('id', 'N/A')
-        self.track_id_label = QtWidgets.QLabel(f"<b>Track ID: {track_id_str}</b>")
+        self.track_id_label = QtWidgets.QLabel(f"<b>Track ID: {self.track_id}</b>")
         controls_layout.addWidget(self.track_id_label)
-        
         controls_layout.addStretch(1)
 
         controls_layout.addWidget(QtWidgets.QLabel("g (m/s²):"))
-        self.g_input_lineedit = QtWidgets.QLineEdit(str(self.current_g_value_ms2))
+        self.g_input_lineedit = QtWidgets.QLineEdit(str(self.current_g_value_ms2)) # Use loaded/default g
         self.g_input_lineedit.setValidator(QtGui.QDoubleValidator(0.001, 1000.0, 5, self))
         self.g_input_lineedit.setToolTip("Gravitational acceleration (default: 9.80665 m/s²)")
         self.g_input_lineedit.setMaximumWidth(80)
         controls_layout.addWidget(self.g_input_lineedit)
 
-        self.fit_parabola_button = QtWidgets.QPushButton("Re-Fit Parabola") # Changed text slightly
+        self.fit_parabola_button = QtWidgets.QPushButton("Re-Fit Parabola")
         self.fit_parabola_button.setToolTip("Fit/Re-fit parabola to the currently selected data range and points")
         controls_layout.addWidget(self.fit_parabola_button)
         
@@ -114,20 +130,18 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
             self.plot_widget.setBackground('w')
             self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
             
-            self.scatter_plot_item = pg.ScatterPlotItem() # Pen/brush set in _update_point_visuals
+            self.scatter_plot_item = pg.ScatterPlotItem()
             self.plot_widget.addItem(self.scatter_plot_item)
 
             self.fitted_curve_item = pg.PlotDataItem(pen=pg.mkPen('r', width=2))
             self.plot_widget.addItem(self.fitted_curve_item)
 
-            # --- Phase 3: Add LinearRegionItem for time range selection ---
-            self.linear_region_item = pg.LinearRegionItem(orientation='vertical', # Use string 'vertical' or pg.LinearRegionItem.Vertical
+            self.linear_region_item = pg.LinearRegionItem(orientation='vertical',
                                                           brush=QtGui.QColor(0, 0, 255, 50),
                                                           hoverBrush=QtGui.QColor(0, 0, 255, 70),
-                                                          movable=True) 
-            self.linear_region_item.setZValue(-10) 
+                                                          movable=True)
+            self.linear_region_item.setZValue(-10)
             self.plot_widget.addItem(self.linear_region_item)
-            # --- End Phase 3 ---
             
             main_layout.addWidget(self.plot_widget, stretch=1)
         else:
@@ -150,15 +164,24 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
         results_layout.addRow("Coefficient B (px/s):", self.coeff_B_label)
         self.coeff_C_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("Coefficient C (px):", self.coeff_C_label)
-        
-        results_layout.addRow(QtWidgets.QLabel("---")) 
-
+        results_layout.addRow(QtWidgets.QLabel("---"))
         self.derived_scale_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("Derived Scale (m/px):", self.derived_scale_label)
         self.r_squared_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("R² (Goodness of Fit):", self.r_squared_label)
-
         main_layout.addWidget(results_group_box)
+
+        # --- Phase 4: Action Buttons ---
+        action_buttons_layout = QtWidgets.QHBoxLayout()
+        self.save_analysis_button = QtWidgets.QPushButton("Save Analysis Settings for Track") # [cite: 68]
+        self.save_analysis_button.setToolTip("Save the current fit settings (g, time range, excluded points) and results to this track.")
+        action_buttons_layout.addWidget(self.save_analysis_button)
+
+        self.apply_scale_button = QtWidgets.QPushButton("Apply This Scale to Project") # [cite: 68]
+        self.apply_scale_button.setToolTip("Apply the currently derived scale (m/px) to the entire project.")
+        action_buttons_layout.addWidget(self.apply_scale_button)
+        main_layout.addLayout(action_buttons_layout)
+        # --- End Phase 4 ---
         
         self.button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         self.button_box.rejected.connect(self.reject)
@@ -166,12 +189,14 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
 
         if PYQTGRAPH_AVAILABLE:
             self.fit_parabola_button.clicked.connect(self._fit_parabola)
-            # --- Phase 3: Connect signals for interaction ---
             if self.scatter_plot_item:
-                self.scatter_plot_item.sigClicked.connect(self._on_point_clicked) # [cite: 54]
+                self.scatter_plot_item.sigClicked.connect(self._on_point_clicked)
             if self.linear_region_item:
-                self.linear_region_item.sigRegionChangeFinished.connect(self._on_time_range_changed) # [cite: 59]
-            # --- End Phase 3 ---
+                self.linear_region_item.sigRegionChangeFinished.connect(self._on_time_range_changed)
+            # --- Phase 4: Connect new buttons ---
+            self.save_analysis_button.clicked.connect(self._save_analysis_settings) #
+            self.apply_scale_button.clicked.connect(self._apply_scale_to_project)   #
+            # --- End Phase 4 ---
 
     def _show_pyqtgraph_unavailable_message(self):
         logger.error("PyQtGraph is not available for TrackAnalysisDialog.")
@@ -184,47 +209,66 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
 
         track_point_data_list = self.track_element.get('data', [])
         self.plot_data_y_vs_t.clear()
-        self.all_points_original_indices.clear()
+        self.all_points_original_indices.clear() # This stores the index within track_point_data_list for each plotted point
+        
+        raw_frame_indices_for_plotted_points: List[int] = [] # Store raw frame index for matching with excluded_point_frames
 
         if not track_point_data_list:
-            logger.warning(f"No point data found for track ID: {self.track_element.get('id')}")
+            logger.warning(f"No point data found for track ID: {self.track_id}")
             self.plot_widget.setTitle("No data to plot")
             return
 
         for original_idx, point_data_tuple in enumerate(track_point_data_list):
-            _frame_idx, time_ms, _x_tl_px, y_tl_px = point_data_tuple
+            frame_idx, time_ms, _x_tl_px, y_tl_px = point_data_tuple
             t_seconds = time_ms / 1000.0
             y_plot = float(self.video_height) - y_tl_px
             self.plot_data_y_vs_t.append((t_seconds, y_plot))
-            self.all_points_original_indices.append(original_idx) # Store original index
+            self.all_points_original_indices.append(original_idx)
+            raw_frame_indices_for_plotted_points.append(frame_idx)
+
 
         if not self.plot_data_y_vs_t:
-            self.plot_widget.setTitle(f"Track {self.track_element.get('id', 'N/A')} - No valid points for y(t) plot")
+            self.plot_widget.setTitle(f"Track {self.track_id} - No valid points for y(t) plot")
             return
 
-        # --- Phase 3: Initialize point inclusion mask and time range ---
-        self.included_point_indices_mask = [True] * len(self.plot_data_y_vs_t) # [cite: 52]
+        # Initialize point inclusion mask based on loaded excluded_point_frames [cite: 76]
+        self.included_point_indices_mask = [True] * len(self.plot_data_y_vs_t)
+        for i, plotted_point_frame_idx in enumerate(raw_frame_indices_for_plotted_points):
+            if plotted_point_frame_idx in self.initial_excluded_point_frames:
+                self.included_point_indices_mask[i] = False
         
         times_s_all = np.array([item[0] for item in self.plot_data_y_vs_t])
         if len(times_s_all) > 0:
-            self.fit_time_range_s = (min(times_s_all), max(times_s_all)) # Initialize to full data range [cite: 58]
-            if self.linear_region_item:
-                 self.linear_region_item.setRegion(self.fit_time_range_s) # [cite: 58]
-        else:
+            # Use initial_fit_time_range_s if available, otherwise full data range
+            min_t_data, max_t_data = min(times_s_all), max(times_s_all)
+            if self.initial_fit_time_range_s: # [cite: 76]
+                # Ensure loaded range is within actual data bounds
+                min_t_init = max(min_t_data, self.initial_fit_time_range_s[0])
+                max_t_init = min(max_t_data, self.initial_fit_time_range_s[1])
+                if min_t_init < max_t_init: # Valid stored range
+                    self.fit_time_range_s = (min_t_init, max_t_init)
+                else: # Stored range invalid for current data, fallback to full
+                    self.fit_time_range_s = (min_t_data, max_t_data)
+            else: # No initial range stored, use full data range
+                self.fit_time_range_s = (min_t_data, max_t_data)
+
+            if self.linear_region_item and self.fit_time_range_s:
+                 self.linear_region_item.setRegion(self.fit_time_range_s)
+                 self.linear_region_item.setVisible(True)
+        else: # No data points
             self.fit_time_range_s = None
-            if self.linear_region_item: # No data, hide or disable region
-                self.linear_region_item.setRegion((0,0)) # Set to a point to effectively hide
+            if self.linear_region_item:
+                self.linear_region_item.setRegion((0,0))
                 self.linear_region_item.setVisible(False)
 
-
-        self._update_point_visuals() # Apply initial styling (all points included) [cite: 53]
+        self._update_point_visuals()
         
         self.plot_widget.setLabel('bottom', "Time (s)")
         self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)")
-        self.plot_widget.setTitle(f"Track {self.track_element.get('id', 'N/A')} - Vertical Position (Shift+Click to Exclude Points)") # Updated title
+        self.plot_widget.setTitle(f"Track {self.track_id} - Vertical Position (Shift+Click to Exclude Points)")
         
         self.plot_widget.autoRange()
-        logger.info(f"Plotted {len(self.plot_data_y_vs_t)} points for track ID: {self.track_element.get('id')}")
+        logger.info(f"Plotted {len(self.plot_data_y_vs_t)} points for track ID: {self.track_id}. Initial exclusion mask set from loaded settings.")
 
     def _fit_parabola(self) -> None:
         if not PYQTGRAPH_AVAILABLE or not self.plot_data_y_vs_t:
@@ -379,6 +423,48 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
         
         self.scatter_plot_item.setData(spots)
 
+
+    def _get_current_analysis_state_dict(self) -> Dict[str, Any]: # [cite: 70]
+        """
+        Collects the current analysis settings and results into a dictionary.
+        """
+        excluded_frames_list: List[int] = []
+        track_data_points = self.track_element.get('data', [])
+
+        for i, is_included in enumerate(self.included_point_indices_mask):
+            if not is_included and i < len(self.all_points_original_indices):
+                original_point_data_index = self.all_points_original_indices[i]
+                if original_point_data_index < len(track_data_points):
+                    # track_data_points is a list of PointData tuples (frame_idx, time_ms, x_tl_px, y_tl_px)
+                    excluded_frames_list.append(track_data_points[original_point_data_index][0])
+        
+        # Ensure g_input_lineedit value is up-to-date
+        try:
+            current_g_from_input = float(self.g_input_lineedit.text())
+            if current_g_from_input > 0:
+                self.current_g_value_ms2 = current_g_from_input
+        except ValueError:
+            logger.warning("Could not parse g value from input when getting analysis state, using internal value.")
+            # self.current_g_value_ms2 remains unchanged
+
+        state_dict = {
+            'fit_settings': {
+                'g_value_ms2': self.current_g_value_ms2,
+                'time_range_s': self.fit_time_range_s, # Already a tuple (min_t, max_t) or None
+                'excluded_point_frames': sorted(list(set(excluded_frames_list))) # Store unique, sorted frame indices
+            },
+            'fit_results': {
+                'coefficients_poly2': self.fit_coeffs,
+                'r_squared': self.fit_r_squared,
+                'derived_scale_m_per_px': self.fit_derived_scale_m_per_px,
+                # is_applied_to_project will be handled by the calling context (e.g., _apply_scale_to_project)
+                # For just saving settings, we can fetch it from the original track element's state
+                'is_applied_to_project': self.track_element.get('analysis_state', {}).get('fit_results', {}).get('is_applied_to_project', False)
+            }
+        }
+        return state_dict
+
+
     @QtCore.Slot(object, object) # For pyqtgraph's sigClicked (plot, points)
     def _on_point_clicked(self, scatter_plot_item: pg.ScatterPlotItem, clicked_points: List[pg.SpotItem]) -> None: #
         if not clicked_points:
@@ -412,6 +498,89 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
         logger.info(f"Fit time range changed to: {self.fit_time_range_s[0]:.3f}s - {self.fit_time_range_s[1]:.3f}s")
         
         self._fit_parabola() # Trigger re-fit [cite: 50, 59]
+
+    @QtCore.Slot()
+    def _save_analysis_settings(self) -> None: # [cite: 71]
+        """Saves the current analysis settings and results to the track element in ElementManager."""
+        if self.track_id == -1:
+            logger.error("Cannot save analysis settings: Track ID is invalid.")
+            QtWidgets.QMessageBox.warning(self, "Save Error", "Invalid track identifier. Cannot save settings.")
+            return
+
+        current_state_to_save = self._get_current_analysis_state_dict()
+        
+        # Update the 'is_applied_to_project' field from the original track_element's analysis_state
+        # because this button doesn't change that flag.
+        original_analysis_state = self.track_element.get('analysis_state', DEFAULT_ANALYSIS_STATE)
+        current_state_to_save['fit_results']['is_applied_to_project'] = original_analysis_state.get('fit_results', {}).get('is_applied_to_project', False)
+
+        logger.info(f"Saving analysis settings for Track ID {self.track_id}: {current_state_to_save}")
+        
+        success = self.parent_main_window_ref.element_manager.update_track_analysis_state(
+            self.track_id,
+            current_state_to_save
+        )
+
+        if success:
+            # Also update the local copy of track_element so subsequent saves in this dialog session use the latest
+            self.track_element['analysis_state'] = copy.deepcopy(current_state_to_save)
+            QtWidgets.QMessageBox.information(self, "Settings Saved", f"Analysis settings and results saved for Track {self.track_id}.")
+            self.analysisSettingsSaved.emit(self.track_id, current_state_to_save) # Emit signal
+        else:
+            QtWidgets.QMessageBox.warning(self, "Save Error", f"Could not save analysis settings for Track {self.track_id}.")
+
+    @QtCore.Slot()
+    def _apply_scale_to_project(self) -> None: # [cite: 72]
+        """Applies the currently derived scale to the global ScaleManager."""
+        if self.fit_derived_scale_m_per_px is not None and self.fit_derived_scale_m_per_px > 0:
+            reply = QtWidgets.QMessageBox.question(
+                self, "Apply Scale to Project",
+                f"Apply derived scale ({self.fit_derived_scale_m_per_px:.6g} m/px) to the entire project?\n"
+                "This will override any existing project scale and clear any manually drawn scale line.",
+                QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                QtWidgets.QMessageBox.StandardButton.No
+            )
+            if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+                # Set the global scale
+                scale_source_desc = f"Track {self.track_id} Parabolic Fit (g={self.current_g_value_ms2:.3f} m/s²)"
+                self.parent_main_window_ref.scale_manager.set_scale(
+                    self.fit_derived_scale_m_per_px,
+                    called_from_line_definition=False, # This will clear any existing defined line
+                    source_description=scale_source_desc
+                )
+                
+                # Update this track's analysis_state to mark it as applied
+                current_state_for_this_track = self._get_current_analysis_state_dict()
+                current_state_for_this_track['fit_results']['is_applied_to_project'] = True
+                self.parent_main_window_ref.element_manager.update_track_analysis_state(
+                    self.track_id,
+                    current_state_for_this_track
+                )
+                # Update local copy
+                self.track_element['analysis_state'] = copy.deepcopy(current_state_for_this_track)
+
+
+                # Mark all OTHER tracks as not applied
+                for i, el in enumerate(self.parent_main_window_ref.element_manager.elements):
+                    if el.get('type') == ElementType.TRACK and el.get('id') != self.track_id:
+                        other_track_state = el.get('analysis_state', copy.deepcopy(DEFAULT_ANALYSIS_STATE))
+                        other_track_state['fit_results']['is_applied_to_project'] = False
+                        self.parent_main_window_ref.element_manager.update_track_analysis_state(
+                            el.get('id'),
+                            other_track_state
+                        )
+                
+                QtWidgets.QMessageBox.information(self, "Scale Applied",
+                                                  f"Scale {self.fit_derived_scale_m_per_px:.6g} m/px applied to project.\n"
+                                                  "Analysis settings for this track also saved.")
+                self.analysisSettingsSaved.emit(self.track_id, current_state_for_this_track) # Signal that this track's settings were effectively saved
+                self.accept() # Optionally close dialog after applying scale
+            else:
+                logger.info("User cancelled applying scale to project.")
+        else:
+            QtWidgets.QMessageBox.warning(self, "Apply Scale Error",
+                                          "No valid scale derived from the current fit to apply.")
+
 
 if __name__ == '__main__':
     # Basic test for the dialog

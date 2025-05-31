@@ -28,7 +28,10 @@ class ScaleManager(QtCore.QObject):
         self._defined_scale_line_data: Optional[Tuple[float, float, float, float]] = None
         logger.debug("ScaleManager initialized.")
 
-    def set_scale(self, m_per_px: Optional[float], called_from_line_definition: bool = False) -> None:
+    def set_scale(self, 
+                  m_per_px: Optional[float], 
+                  called_from_line_definition: bool = False, 
+                  source_description: Optional[str] = None) -> None: # Added source_description
         """
         Sets the scale factor in meters per pixel.
         If None, scale is considered unset.
@@ -38,6 +41,7 @@ class ScaleManager(QtCore.QObject):
             m_per_px: The scale factor, or None to clear.
             called_from_line_definition: Internal flag to prevent clearing the defined
                                           line when setting scale *from* that line.
+            source_description: Optional string describing how the scale was set (e.g., "Manual Input", "Line Definition", "Track Fit").
         """
         if m_per_px is not None and m_per_px <= 0:
             logger.warning(f"Attempted to set invalid scale: {m_per_px}. Scale not set.")
@@ -49,29 +53,18 @@ class ScaleManager(QtCore.QObject):
 
         if scale_changed:
             self._scale_m_per_px = new_scale
-            logger.info(f"Scale factor set to: {self._scale_m_per_px} m/px.") # Existing log
+            log_source = f" (Source: {source_description})" if source_description else ""
+            logger.info(f"Scale factor set to: {self._scale_m_per_px} m/px.{log_source}") # Updated log
 
             if self._scale_m_per_px is None: # Scale is being cleared
-                # These methods will emit scaleOrUnitChanged if they cause a relevant state change.
                 self.set_display_in_meters(False)
                 self.clear_defined_scale_line()
             else: # Scale is being set to a new valid value
                 if not called_from_line_definition:
-                    # If setting scale manually, and not as part of defining a line,
-                    # any previously defined line (which might now be inconsistent) should be cleared.
-                    # clear_defined_scale_line() will emit if it actually removes a defined line.
                     self.clear_defined_scale_line()
-                # If called_from_line_definition is True, set_defined_scale_line() would be called
-                # elsewhere and would handle its own emission if the line data changed.
-
-            # Explicitly emit the signal if the core scale value has changed.
-            # This ensures that listeners are notified of the scale change itself,
-            # even if helper methods like clear_defined_scale_line didn't emit
-            # (e.g., because there was no line to clear).
+            
             self.scaleOrUnitChanged.emit()
-            logger.debug("Emitted scaleOrUnitChanged due to scale_changed=True in set_scale.")
-
-        # No 'else' needed; if scale_changed is False, no action or signal is necessary from here.
+            logger.debug(f"Emitted scaleOrUnitChanged due to scale_changed=True in set_scale.{log_source}")
 
     # --- Convenience overload for setting scale internally ---
     def _set_scale_from_line_definition(self, m_per_px: Optional[float]) -> None:
