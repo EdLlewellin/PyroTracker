@@ -2,11 +2,13 @@
 
 ## Description
 
-PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), optionally define a pixel-to-meter scale manually or by drawing a line on a feature of known length, mark the changing position of specific pyroclasts over time to generate tracks, and create measurement lines. **Project data, including element coordinates (always stored as raw Top-Left pixels), video metadata, coordinate system settings, and scale information, is saved to and loaded from JSON-based project files.**
+PyroTracker provides a graphical user interface (GUI) for tracking volcanic pyroclasts in eruption videos. Users can load a video, navigate through frames, manage different coordinate systems (Top-Left, Bottom-Left, Custom Origin), optionally define a pixel-to-meter scale manually or by drawing a line on a feature of known length, mark the changing position of specific pyroclasts over time to generate tracks, and create measurement lines. **A key feature is the ability to analyze individual track data (vertical position vs. time) by fitting a parabola, deriving a pixel-to-meter scale based on gravitational acceleration, and applying this scale to the project.**
+
+Project data, including element coordinates (always stored as raw Top-Left pixels), video metadata, coordinate system settings, scale information, and **per-track analysis states (fit settings and results)**, is saved to and loaded from JSON-based project files.
 
 The tool features interactive zoom and pan capabilities; frame-by-frame navigation; optional auto-advancing; multi-element management (tracks and measurement lines) with visibility controls; element selection via table or image view clicks; visual feedback for marked elements; on-screen information overlays (filename, time, frame number); an optional on-screen scale bar and scale definition line; persistent visual preferences (colors, sizes); a video metadata viewer; export capabilities for both the full video with overlays and individual frames as PNG images; and undo functionality for point marking operations. A **View Menu** provides centralized control for toggling the visibility of various on-screen overlays, including measurement line lengths.
 
-Built using Python with the PySide6 (Qt6) framework for the GUI and OpenCV for video handling. Uses Python's standard `logging` module for diagnostics and Qt's `QSettings` for preference persistence.
+Built using Python with the PySide6 (Qt6) framework for the GUI, OpenCV for video handling, and PyQtGraph for plotting in the analysis dialog. Uses Python's standard `logging` module for diagnostics and Qt's `QSettings` for preference persistence.
 
 ## Download and Run (Recommended for Most Users)
 
@@ -45,14 +47,14 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Zoom/pan state persists across frame changes (after the initial frame).
     * Minimum and maximum zoom levels enforced.
     * Overlay buttons for Zoom In (+), Zoom Out (-), and Fit View (⤢) in the top-right corner.
-    * **Information Overlays:** Displays video filename (top-left), current/total time (bottom-left), and current/total frame number (bottom-left, below time if both visible) directly on the viewport. Appearance (color, font size) for each is customizable via `Edit -> Preferences...`.
+    * **Information Overlays:** Displays video filename (top-left), current/total time (bottom-left), and current/total frame number (bottom-left, below time if both visible) directly on the viewport. Appearance (color, font size) for each is customizable via `View -> Preferences...`.
     * **Optional Scale Bar / Line:** If a pixel-to-meter scale is set, a scale bar and/or the defined scale line are displayed on the image view (bottom-right / defined location respectively). The bar's length represents a round number in appropriate units (e.g., cm, m, km) and dynamically updates with zoom.
     * **View Menu Control:** The `View` menu allows toggling the visibility of:
         * Filename, Time, and Frame Number information overlays.
         * On-screen Scale Bar.
         * Defined Scale Line.
         * Coordinate System Origin Marker.
-        * **Measurement Line Lengths.**
+        * Measurement Line Lengths.
         These menu actions synchronize with corresponding checkboxes in the side panels where applicable.
 * **Multi-Element Data Collection:**
     * **Tracks:**
@@ -65,11 +67,11 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
         * **Track Visibility Control:** Control track display mode individually (Hidden, Home Frame, Incremental, Always Visible) using radio buttons in the "Tracks" table. Set all tracks to a specific mode by clicking the corresponding header icon.
         * **Delete Tracks:** Delete entire tracks using the trash can icon button (🗑️) in the "Tracks" table (confirmation required).
     * **Measurement Lines:**
-        * Create new measurement lines using the "New" button in the "Measurement Lines" tab.
+        * Create new measurement lines using the "New" button in the "Measurement Lines" tab or `Edit -> New Measurement Line`.
         * Define a line by clicking two points on the *same* video frame. Line definition can be snapped to angles (e.g., 0°, 45°, 90°) by holding `Shift` while defining the second point.
         * Lines are displayed with their length (in current display units if scale is set, otherwise pixels) and angle (0-360°, 0° to the right).
         * Length label visibility can be toggled via the `View` menu and preferences.
-        * Visuals (color, width for normal and active states) are customizable via `Edit -> Preferences...`.
+        * Visuals (color, width for normal and active states) are customizable via `View -> Preferences...`.
         * Visibility control (Hidden, Home Frame, Incremental, Always Visible) similar to tracks.
         * Delete lines using the trash can icon.
 * **Auto-Advance:** Optionally enable automatic frame advance after adding/updating a track point via the "Tracks" tab controls.
@@ -80,6 +82,17 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Reset the scale using the reset button.
     * A "Display in meters" checkbox toggles the units for displayed data (Points table, Measurement Line lengths, cursor coordinates).
     * A "Show Scale Bar" checkbox toggles the visibility of the on-screen scale bar. Appearance customizable via Preferences.
+* **Track-Based Scale Calibration (y(t) Parabolic Fit):**
+    * Access via `Analysis -> Analyze Track...` for a selected track with data.
+    * Displays a y(t) plot (vertical position in pixels vs. time in seconds) for the track.
+    * **Interactive Fitting:**
+        * Fits a parabola ($y_{px} = At^2 + Bt + C$) to the y(t) data.
+        * Allows interactive exclusion of individual data points from the fit using `Shift+Click` on the plot.
+        * Allows selection of a time sub-range for the fit using a draggable `LinearRegionItem` on the plot.
+        * The fit dynamically updates with changes to point exclusions or time range.
+    * **Results Display:** Shows the fitted coefficient A (px/s²), R² value, and the derived pixel-to-meter scale ($S_{m/px} = -0.5 \cdot g / A_{px/s^2}$, using a standard `g`).
+    * **Persist Analysis:** "Save Analysis Settings for Track" button saves the current fit settings (time range, excluded points) and results to the track's data within the project. These settings are reloaded when the dialog is reopened for that track.
+    * **Apply Scale:** "Apply This Scale to Project" button updates the global project scale with the derived scale from the current fit.
 * **Coordinate System Management:**
     * Select coordinate system mode (Top-Left, Bottom-Left, Custom) using radio buttons.
     * Set a custom origin by clicking "Pick Custom" and then clicking the desired origin location on the image view.
@@ -94,8 +107,8 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     * Collapsible side panels for "Scale Configuration" and "Coordinate System".
 * **Project Save/Load (JSON Format):**
     * **Save Project:** `File -> Save Project` (`Ctrl+S`) saves the current project to its existing file path. If the project is new, it behaves like "Save Project As...".
-    * **Save Project As...:** `File -> Save Project As...` saves the entire project state (all element data, video path, scale settings, coordinate system settings, relevant UI toggle states) to a new or chosen `.json` file. Element coordinates are always saved as raw Top-Left pixel values.
-    * **Load Project:** `File -> Open Project...` loads a project from a `.json` file, restoring elements, settings, and attempting to reload the associated video. Issues warnings if saved video metadata mismatches the currently loaded video.
+    * **Save Project As...:** `File -> Save Project As...` saves the entire project state (all element data including track analysis states, video path, scale settings, coordinate system settings, relevant UI toggle states) to a new or chosen `.json` file. Element coordinates are always saved as raw Top-Left pixel values.
+    * **Load Project:** `File -> Open Project...` loads a project from a `.json` file, restoring elements (including track analysis states), settings, and attempting to reload the associated video. Issues warnings if saved video metadata mismatches the currently loaded video.
     * **Close Project:** `File -> Close Project` closes the current video and project, prompting to save unsaved changes.
 * **Data Export (Simplified CSV):**
     * `File -> Export Data -> Export Tracks (as CSV)...`: Exports all track data to a simple CSV file.
@@ -105,8 +118,9 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * **Visual Exporting:**
     * **Export Video with Overlays:** `File -> Export Video with Overlays...` allows exporting a video sequence (full or custom range) with all visible overlays rendered. Options for format (MP4/AVI) and resolution (viewport/original).
     * **Export Current Frame to PNG:** `File -> Export Current Frame to PNG...` saves the current frame with overlays as a PNG. Option for viewport or original resolution.
-* **Preferences:** Customize visual settings (track/origin colors and sizes, scale line/bar appearance, info overlay appearance, measurement line appearance) via `Edit -> Preferences...`. Settings are persisted.
+* **Preferences:** Customize visual settings (track/origin colors and sizes, scale line/bar appearance, info overlay appearance, measurement line appearance) via `View -> Preferences...`. Settings are persisted.
 * **Video Information:** View technical metadata from the loaded video via `File -> Video Information...`.
+* **Help Menu:** Access the PyroTracker Manual and "About" dialog via `Help`.
 * **Logging:** Diagnostic information printed to console.
 
 ## Developer Requirements
@@ -116,8 +130,9 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
 * OpenCV for Python (`pip install opencv-python`)
 * NumPy (usually installed as a dependency with OpenCV) (`pip install numpy`)
 * Pillow (`pip install Pillow`) (Needed for icon conversion during automated builds)
+* **PyQtGraph** (`pip install pyqtgraph`) (Required for track analysis plotting features)
 
-*(Note: The Python standard libraries `csv`, `os`, `math`, `logging`, `enum`, `sys`, `typing`, `re`, `json`, `io` are also used but do not require separate installation).*
+*(Note: The Python standard libraries `csv`, `os`, `math`, `logging`, `enum`, `sys`, `typing`, `re`, `json`, `io`, `copy` are also used but do not require separate installation).*
 
 ## Developer Installation (from Source)
 
@@ -136,7 +151,7 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     ```bash
     pip install -r requirements.txt
     ```
-    *(The `requirements.txt` file includes PySide6, opencv-python, numpy, and Pillow).*
+    *(The `requirements.txt` file includes PySide6, opencv-python, numpy, Pillow, and pyqtgraph).*
 6.  The `PyroTracker.ico` file should be present in the main directory (used by PyInstaller during builds).
 
 ## Developer Usage (from Source)
@@ -147,65 +162,65 @@ Pre-built versions of PyroTracker for Windows, macOS, and Linux are available fo
     python main.py
     ```
     *(Note: Debugging information will be printed to the console).*
-3.  **Basic Workflow:**
+3.  **Basic Workflow (including Track Analysis):**
     * Go to `File -> Open Video...`.
-    * Navigate frames (slider, buttons, mouse wheel, time/frame input). Play/pause with `Spacebar`.
-    * Zoom/Pan (`Ctrl+Scroll`, Left-Click-Drag). Reset view with overlay button.
-    * **(Optional) Set Scale:** Use "Scale Configuration" panel (manual input or "Set" from feature).
-    * Select "Coordinate System" and optionally "Pick Custom" origin. Observe live cursor coordinates.
-    * **Toggle Overlays:** Use `View` menu or panel checkboxes.
-    * Create elements: "New" button in "Tracks" tab (or `Ctrl+N`) for tracks; "New" button in "Measurement Lines" tab for lines.
-    * **Select Active Element:** Click its row in the respective table, or `Ctrl+Click` a track marker.
-    * **Add/Update Track Points:** For an active track, left-click on the video.
-    * **Define Line Endpoints:** For an active (new) line, click two points on the same frame. Hold `Shift` for angle snapping.
-    * **Delete Point (Tracks):** `Delete`/`Backspace` for active track's point on current frame.
-    * **Undo Point Operation (Tracks):** `Edit -> Undo Point Action` or `Ctrl+Z`.
-    * **Delete Element:** Click trash icon (🗑️) in "Tracks" or "Measurement Lines" table.
-    * **Save/Load Project:** Use `File -> Save Project` (`Ctrl+S`), `File -> Save Project As...`, and `File -> Open Project...` for JSON project files. Use `File -> Close Project` to close the current work.
-    * **Export Data:** Use `File -> Export Data` submenu for CSVs, or quick Save/Copy icons on element tabs.
-    * **Export Visuals:** Use `File -> Export Video with Overlays...` or `File -> Export Current Frame to PNG...`.
-    * **Customize:** `Edit -> Preferences...`.
-    * **View Info:** `File -> Video Information...`.
-    * **About:** `Help -> About`.
+    * Navigate frames and perform tracking as usual.
+    * **Track Analysis for Scaling:**
+        * Select a track in the "Tracks" table that has data points.
+        * Go to `Analysis -> Analyze Track...`.
+        * In the "Track Analysis" dialog:
+            * Adjust the time range for fitting using the draggable region on the plot.
+            * `Shift+Click` data points on the plot to exclude/include them from the fit.
+            * Click "Re-Fit Parabola" to update the fit based on current selections.
+            * Review the "Derived Scale (m/px)" and "R²" values.
+            * Click "Save Analysis Settings for Track" to store the current fit configuration with the track.
+            * If satisfied, click "Apply This Scale to Project" to use the derived scale globally.
+    * Continue with other operations like setting coordinates, creating measurement lines, etc.
+    * Save/Load Project, Export Data/Visuals, Customize Preferences.
 
 ## File Structure
 
 * `main.py`: Entry point script; initializes QApplication, logging, and MainWindow.
-* `config.py`: Shared constants (metadata keys, table indices, default styles, app info).
-* `coordinates.py`: `CoordinateSystem` enum and `CoordinateTransformer` class for coordinate management.
-* `scale_manager.py`: `ScaleManager` class; manages pixel-to-meter scale factor, display units, and defined scale line data.
-* `scale_bar_widget.py`: `ScaleBarWidget` class; custom widget for drawing the dynamic on-screen scale bar.
-* `info_overlay_widget.py`: `InfoOverlayWidget` class; custom widget for rendering fixed informational text overlays (filename, time, frame number) on the image view.
-* `settings_manager.py`: Manages persistent application settings (visuals) using QSettings.
-* `ui_setup.py`: Function `setup_main_window_ui` to create and arrange GUI widgets and menus for the `MainWindow`.
-* `main_window.py`: `MainWindow` class; orchestrates core components, main application signals/slots, menu actions, and drawing of scene overlays.
-* `interactive_image_view.py`: `InteractiveImageView` class (QGraphicsView) for frame display, mouse interaction (including angle snapping for scale/measurement lines), and hosting overlay widgets.
-* `video_handler.py`: `VideoHandler` class; manages video loading (OpenCV), playback (QTimer), navigation, frame extraction.
-* `element_manager.py`: `ElementManager` class; stores and manages multi-element (tracks, lines) point data, visibility settings, and point operation undo logic.
-* `project_manager.py`: `ProjectManager` class; orchestrates saving/loading of JSON project files, and tracks unsaved changes.
-* `file_io.py`: Functions for JSON project file reading/writing and data-only CSV export. Includes `UnitSelectionDialog`.
-* `export_handler.py`: `ExportHandler` class; manages logic for exporting video frames with overlays as new video files or individual images.
-* `export_options_dialog.py`: `ExportOptionsDialog` class for selecting video export range and resolution.
-* `panel_controllers.py`: Contains controller classes (`ScalePanelController`, `CoordinatePanelController`, `GetDistanceDialog`) that manage UI logic for specific QGroupBox panels.
-* `table_controllers.py`: Contains `TrackDataViewController` class that manages UI logic for the Tracks, Lines, and Points data tables.
-* `view_menu_controller.py`: `ViewMenuController` class; manages the View menu and actions related to overlay visibility.
-* `preferences_dialog.py`: `PreferencesDialog` class for editing visual settings.
-* `metadata_dialog.py`: `MetadataDialog` class for displaying video metadata.
-* `collapsible_panel.qss`: Qt Style Sheet file used for styling the collapsible QGroupBox panels. Loaded by `main.py`.
-* `PyroTracker.ico`: Application icon file (used for builds).
-* `icons/` (directory): Contains SVG files (e.g., `arrow_right.svg`, `arrow_down.svg`) used by `collapsible_panel.qss` for panel indicators.
-* `.github/workflows/release.yml`: GitHub Actions workflow for automated building and releasing.
-* `requirements.txt`: Lists Python dependencies for `pip`.
-* `.gitignore`: Specifies intentionally untracked files for Git.
+* `config.py`: Shared constants.
+* `coordinates.py`: `CoordinateSystem` enum and `CoordinateTransformer` class.
+* `scale_manager.py`: `ScaleManager` class.
+* `scale_bar_widget.py`: `ScaleBarWidget` class.
+* `info_overlay_widget.py`: `InfoOverlayWidget` class.
+* `settings_manager.py`: Manages persistent application settings.
+* `ui_setup.py`: Function `setup_main_window_ui`.
+* `main_window.py`: `MainWindow` class.
+* `interactive_image_view.py`: `InteractiveImageView` class.
+* `video_handler.py`: `VideoHandler` class.
+* `element_manager.py`: `ElementManager` class.
+* `project_manager.py`: `ProjectManager` class.
+* `file_io.py`: File I/O functions and `UnitSelectionDialog`.
+* `export_handler.py`: `ExportHandler` class.
+* `export_options_dialog.py`: `ExportOptionsDialog` class.
+* `panel_controllers.py`: `ScalePanelController`, `CoordinatePanelController`.
+* `table_controllers.py`: `TrackDataViewController` class.
+* `view_menu_controller.py`: `ViewMenuController` class.
+* `preferences_dialog.py`: `PreferencesDialog` class.
+* `metadata_dialog.py`: `MetadataDialog` class.
+* `kymograph_handler.py`: `KymographHandler` class.
+* `kymograph_dialog.py`: `KymographDisplayDialog` class for kymographs.
+* **`track_analysis_dialog.py`**: `TrackAnalysisDialog` class for single-track y(t) parabolic fitting and scale derivation.
+* `collapsible_panel.qss`: Qt Style Sheet for panels.
+* `PyroTracker.ico`: Application icon.
+* `icons/`: Directory for SVG icons used by QSS.
+* `.github/workflows/release.yml`: GitHub Actions workflow.
+* `requirements.txt`: Python dependencies.
+* `.gitignore`: Git ignore file.
 
 ## Future Improvements / Todo
 
-* **Adjusting Line Endpoints:** Allow users to graphically select and modify the endpoints of existing measurement lines. (Phase D)
-* **Undo/Redo for Line Operations:** Integrate line creation, deletion, and endpoint modification into the undo system. (Phase E)
-* Add basic data analysis capabilities (e.g., velocity calculation, track plotting).
+* **Multi-Track Scaling Analysis View:** Implement the extended roadmap (New Phases 1-5) for a consolidated view for analyzing multiple tracks, deriving a global scale, and further diagnostic plots.
+* **Adjusting Line Endpoints:** Allow users to graphically select and modify the endpoints of existing measurement lines.
+* **Undo/Redo for Line Operations:** Integrate line creation, deletion, and endpoint modification into the undo system.
+* Calculate and display velocities/accelerations from track data.
 * Enhance logging configuration (e.g., allow user to set level, log to file).
 * Replace standard text/pixmap overlay buttons with custom SVG icons for a cleaner look.
 * Consider adding unit tests for core logic.
 * Improve error handling for invalid video files or corrupted project files.
 * Add more video export format options with clear indication of codec dependencies.
-* Consider Redo functionality for point/element operations.
+* Consider Redo functionality for point/element operations beyond tracks.
+* Investigate spatially variable scaling factor to account for lens distortion.
