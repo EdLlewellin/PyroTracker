@@ -4,6 +4,7 @@ Dialog window for displaying and analyzing y(t) data for a single track.
 """
 import logging
 import sys
+import math
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
 
 import numpy as np
@@ -37,82 +38,96 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
                  parent_main_window: 'MainWindow'):
         super().__init__(parent_main_window)
         self.setWindowTitle(f"Track Analysis - ID: {track_element_copy.get('id', 'N/A')}")
-        self.setModal(True) # [cite: 15]
+        self.setModal(True)
 
-        self.track_element = track_element_copy # [cite: 19]
+        self.track_element = track_element_copy
         self.video_fps = video_fps
         self.video_height = video_height
         self.parent_main_window_ref = parent_main_window
 
-        self.plot_data_y_vs_t: List[Tuple[float, float]] = []
+        self.plot_data_y_vs_t: List[Tuple[float, float]] = [] # (time_s, y_plot)
 
-        # --- Phase 2: Instance variables for fitting ---
-        self.current_g_value_ms2: float = 9.80665 # Default g in m/s^2 [cite: 35]
-        self.fit_coeffs: Optional[Tuple[float, float, float]] = None # A, B, C
+        self.current_g_value_ms2: float = 9.80665
+        self.fit_coeffs: Optional[Tuple[float, float, float]] = None
         self.fit_r_squared: Optional[float] = None
         self.fit_derived_scale_m_per_px: Optional[float] = None
         
-        self.fitted_curve_item: Optional[pg.PlotDataItem] = None # For the fitted parabola line
-        # --- End Phase 2 instance variables ---
+        self.fitted_curve_item: Optional[pg.PlotDataItem] = None
+        self.scatter_plot_item: Optional[pg.ScatterPlotItem] = None # Ensure this is initialized
+
+        # --- Phase 3: Instance variables for filtering ---
+        self.all_points_original_indices: List[int] = [] # To store original index of each point plotted
+        self.included_point_indices_mask: List[bool] = [] # Mask for points included in the fit [cite: 51]
+        self.fit_time_range_s: Optional[Tuple[float, float]] = None # (min_t_s, max_t_s) [cite: 52]
+        self.linear_region_item: Optional[pg.LinearRegionItem] = None # For time range selection
+        # --- End Phase 3 instance variables ---
 
         self.setMinimumSize(700, 550)
         if parent_main_window:
              parent_size = parent_main_window.size()
-             self.resize(int(parent_size.width() * 0.6), int(parent_size.height() * 0.7))
+             self.resize(int(parent_size.width() * 0.7), int(parent_size.height() * 0.8)) # Increased height for more controls
         else:
-            self.resize(800, 600)
+            self.resize(800, 650) # Increased height
 
-        self._setup_ui() # This will now include new widgets
+        self._setup_ui()
 
         if PYQTGRAPH_AVAILABLE:
             self._prepare_and_plot_data()
-            self._update_results_display() # Initialize results display to N/A
+            # Initial fit attempt with all data after plot is ready
+            if self.plot_data_y_vs_t: # Check if data was successfully prepared
+                self._fit_parabola()
+            else:
+                self._update_results_display() # Initialize results display if no data
         else:
             self._show_pyqtgraph_unavailable_message()
 
         logger.info(f"TrackAnalysisDialog initialized for Track ID: {self.track_element.get('id', 'N/A')}")
 
-
     def _setup_ui(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setSpacing(10) # Add some spacing between major sections
+        main_layout.setSpacing(10)
 
-        # --- Top section for Track ID and Fit Controls ---
         controls_group_box = QtWidgets.QGroupBox("Analysis Controls")
         controls_layout = QtWidgets.QHBoxLayout(controls_group_box)
 
         track_id_str = self.track_element.get('id', 'N/A')
-        self.track_id_label = QtWidgets.QLabel(f"<b>Track ID: {track_id_str}</b>") # [cite: 20]
+        self.track_id_label = QtWidgets.QLabel(f"<b>Track ID: {track_id_str}</b>")
         controls_layout.addWidget(self.track_id_label)
+        
         controls_layout.addStretch(1)
 
         controls_layout.addWidget(QtWidgets.QLabel("g (m/s²):"))
-        self.g_input_lineedit = QtWidgets.QLineEdit(str(self.current_g_value_ms2)) # [cite: 35]
-        self.g_input_lineedit.setValidator(QtGui.QDoubleValidator(0.001, 1000.0, 5, self)) # Positive float for g [cite: 35]
+        self.g_input_lineedit = QtWidgets.QLineEdit(str(self.current_g_value_ms2))
+        self.g_input_lineedit.setValidator(QtGui.QDoubleValidator(0.001, 1000.0, 5, self))
         self.g_input_lineedit.setToolTip("Gravitational acceleration (default: 9.80665 m/s²)")
         self.g_input_lineedit.setMaximumWidth(80)
         controls_layout.addWidget(self.g_input_lineedit)
 
-        self.fit_parabola_button = QtWidgets.QPushButton("Fit Parabola") # [cite: 35]
-        self.fit_parabola_button.setToolTip("Fit a parabola to the selected y(t) data points")
+        self.fit_parabola_button = QtWidgets.QPushButton("Re-Fit Parabola") # Changed text slightly
+        self.fit_parabola_button.setToolTip("Fit/Re-fit parabola to the currently selected data range and points")
         controls_layout.addWidget(self.fit_parabola_button)
         
         main_layout.addWidget(controls_group_box)
 
-
-        # --- Main plot area ---
         if PYQTGRAPH_AVAILABLE and pg is not None:
-            self.plot_widget = pg.PlotWidget() # [cite: 20]
+            self.plot_widget = pg.PlotWidget()
             self.plot_widget.setBackground('w')
             self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
             
-            # Scatter plot for original data points
-            self.scatter_plot_item = pg.ScatterPlotItem(pen=None, symbol='o', symbolBrush='b', size=8)
+            self.scatter_plot_item = pg.ScatterPlotItem() # Pen/brush set in _update_point_visuals
             self.plot_widget.addItem(self.scatter_plot_item)
 
-            # Plot item for the fitted curve (initially no data)
-            self.fitted_curve_item = pg.PlotDataItem(pen=pg.mkPen('r', width=2)) # [cite: 42, 43]
+            self.fitted_curve_item = pg.PlotDataItem(pen=pg.mkPen('r', width=2))
             self.plot_widget.addItem(self.fitted_curve_item)
+
+            # --- Phase 3: Add LinearRegionItem for time range selection ---
+            self.linear_region_item = pg.LinearRegionItem(orientation='vertical', # Use string 'vertical' or pg.LinearRegionItem.Vertical
+                                                          brush=QtGui.QColor(0, 0, 255, 50),
+                                                          hoverBrush=QtGui.QColor(0, 0, 255, 70),
+                                                          movable=True) 
+            self.linear_region_item.setZValue(-10) 
+            self.plot_widget.addItem(self.linear_region_item)
+            # --- End Phase 3 ---
             
             main_layout.addWidget(self.plot_widget, stretch=1)
         else:
@@ -124,12 +139,10 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
             self.fallback_label.setWordWrap(True)
             main_layout.addWidget(self.fallback_label, stretch=1)
 
-
-        # --- Results Display Area --- [cite: 36]
         results_group_box = QtWidgets.QGroupBox("Fit Results")
         results_layout = QtWidgets.QFormLayout(results_group_box)
-        results_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows) #
-        results_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight) #
+        results_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
+        results_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
 
         self.coeff_A_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("Coefficient A (px/s²):", self.coeff_A_label)
@@ -138,7 +151,7 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
         self.coeff_C_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("Coefficient C (px):", self.coeff_C_label)
         
-        results_layout.addRow(QtWidgets.QLabel("---")) # Visual separator
+        results_layout.addRow(QtWidgets.QLabel("---")) 
 
         self.derived_scale_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("Derived Scale (m/px):", self.derived_scale_label)
@@ -147,149 +160,189 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
 
         main_layout.addWidget(results_group_box)
         
-        # Dialog buttons
-        self.button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close) # [cite: 21]
+        self.button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         self.button_box.rejected.connect(self.reject)
         main_layout.addWidget(self.button_box)
 
-        # Connect signals for Phase 2
         if PYQTGRAPH_AVAILABLE:
-            self.fit_parabola_button.clicked.connect(self._fit_parabola) # [cite: 44]
-            # Connect g_input QLineEdit editingFinished to _fit_parabola [cite: 45]
-            # Alternatively, _fit_parabola can just read the current value when button is clicked.
-            # Let's go with the button click re-reading g for simplicity now.
-            # self.g_input_lineedit.editingFinished.connect(self._fit_parabola)
+            self.fit_parabola_button.clicked.connect(self._fit_parabola)
+            # --- Phase 3: Connect signals for interaction ---
+            if self.scatter_plot_item:
+                self.scatter_plot_item.sigClicked.connect(self._on_point_clicked) # [cite: 54]
+            if self.linear_region_item:
+                self.linear_region_item.sigRegionChangeFinished.connect(self._on_time_range_changed) # [cite: 59]
+            # --- End Phase 3 ---
 
     def _show_pyqtgraph_unavailable_message(self):
         logger.error("PyQtGraph is not available for TrackAnalysisDialog.")
         # The fallback_label in _setup_ui will be visible.
 
     def _prepare_and_plot_data(self) -> None:
-        if not PYQTGRAPH_AVAILABLE or not hasattr(self, 'plot_widget'):
-            logger.warning("Cannot prepare/plot data: PyQtGraph not available or plot_widget missing.")
+        if not PYQTGRAPH_AVAILABLE or not hasattr(self, 'plot_widget') or self.scatter_plot_item is None:
+            logger.warning("Cannot prepare/plot data: PyQtGraph not available or plot_widget/scatter_plot_item missing.")
             return
 
-        track_point_data_list = self.track_element.get('data', []) # List of PointData tuples
-        # analysis_state = self.track_element.get('analysis_state', {}) # [cite: 22] - Will use later
-
+        track_point_data_list = self.track_element.get('data', [])
         self.plot_data_y_vs_t.clear()
+        self.all_points_original_indices.clear()
 
         if not track_point_data_list:
             logger.warning(f"No point data found for track ID: {self.track_element.get('id')}")
             self.plot_widget.setTitle("No data to plot")
             return
 
-        for point_data_tuple in track_point_data_list:
-            # PointData is (frame_index, time_ms, x_tl_px, y_tl_px)
+        for original_idx, point_data_tuple in enumerate(track_point_data_list):
             _frame_idx, time_ms, _x_tl_px, y_tl_px = point_data_tuple
-            
-            t_seconds = time_ms / 1000.0 # [cite: 23]
-            y_plot = float(self.video_height) - y_tl_px # y_plot = video_height - y_TL [cite: 6, 23]
-            
-            self.plot_data_y_vs_t.append((t_seconds, y_plot)) # [cite: 24]
+            t_seconds = time_ms / 1000.0
+            y_plot = float(self.video_height) - y_tl_px
+            self.plot_data_y_vs_t.append((t_seconds, y_plot))
+            self.all_points_original_indices.append(original_idx) # Store original index
 
         if not self.plot_data_y_vs_t:
             self.plot_widget.setTitle(f"Track {self.track_element.get('id', 'N/A')} - No valid points for y(t) plot")
             return
 
-        # Prepare data for pyqtgraph scatter plot
-        times_s = np.array([item[0] for item in self.plot_data_y_vs_t])
-        y_pixels_plot = np.array([item[1] for item in self.plot_data_y_vs_t])
+        # --- Phase 3: Initialize point inclusion mask and time range ---
+        self.included_point_indices_mask = [True] * len(self.plot_data_y_vs_t) # [cite: 52]
+        
+        times_s_all = np.array([item[0] for item in self.plot_data_y_vs_t])
+        if len(times_s_all) > 0:
+            self.fit_time_range_s = (min(times_s_all), max(times_s_all)) # Initialize to full data range [cite: 58]
+            if self.linear_region_item:
+                 self.linear_region_item.setRegion(self.fit_time_range_s) # [cite: 58]
+        else:
+            self.fit_time_range_s = None
+            if self.linear_region_item: # No data, hide or disable region
+                self.linear_region_item.setRegion((0,0)) # Set to a point to effectively hide
+                self.linear_region_item.setVisible(False)
 
-        self.scatter_plot_item.setData(x=times_s, y=y_pixels_plot, pen=None, symbol='o', symbolBrush='b', size=8) # [cite: 24]
+
+        self._update_point_visuals() # Apply initial styling (all points included) [cite: 53]
         
-        # Set plot labels and title
-        self.plot_widget.setLabel('bottom', "Time (s)") # [cite: 25]
-        self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)") # [cite: 6, 25]
-        self.plot_widget.setTitle(f"Track {self.track_element.get('id', 'N/A')} - Vertical Position vs. Time")
+        self.plot_widget.setLabel('bottom', "Time (s)")
+        self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)")
+        self.plot_widget.setTitle(f"Track {self.track_element.get('id', 'N/A')} - Vertical Position (Shift+Click to Exclude Points)") # Updated title
         
-        # Auto-range axes
         self.plot_widget.autoRange()
         logger.info(f"Plotted {len(self.plot_data_y_vs_t)} points for track ID: {self.track_element.get('id')}")
 
-    def _fit_parabola(self) -> None: # [cite: 34, 37]
+    def _fit_parabola(self) -> None:
         if not PYQTGRAPH_AVAILABLE or not self.plot_data_y_vs_t:
             logger.warning("Cannot fit parabola: PyQtGraph not available or no data points.")
+            # Clear previous fit results if any
             self.fit_coeffs = None
             self.fit_derived_scale_m_per_px = None
             self.fit_r_squared = None
             self._update_results_display()
-            self._plot_fitted_curve() # Clears the curve if no fit
+            if self.fitted_curve_item: self.fitted_curve_item.clear()
             return
 
         try:
             g_val_text = self.g_input_lineedit.text()
-            self.current_g_value_ms2 = float(g_val_text) # [cite: 38]
+            self.current_g_value_ms2 = float(g_val_text)
             if self.current_g_value_ms2 <= 0:
                 raise ValueError("g value must be positive.")
         except ValueError:
-            logger.warning(f"Invalid g value: '{self.g_input_lineedit.text()}'. Using default {self.current_g_value_ms2}.")
-            self.g_input_lineedit.setText(str(self.current_g_value_ms2)) # Revert to last valid g
-            # Optionally show a message box
-            QtWidgets.QMessageBox.warning(self, "Invalid Input", f"Value for 'g' must be a positive number. Using previous value: {self.current_g_value_ms2:.5f} m/s².")
+            logger.warning(f"Invalid g value: '{self.g_input_lineedit.text()}'. Using previous/default {self.current_g_value_ms2}.")
+            self.g_input_lineedit.setText(str(self.current_g_value_ms2))
+            QtWidgets.QMessageBox.warning(self, "Invalid Input", f"Value for 'g' must be a positive number. Using {self.current_g_value_ms2:.5f} m/s².")
+            # Do not proceed with fit if g is invalid from user input
+            self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
+            self._update_results_display(); 
+            if self.fitted_curve_item: self.fitted_curve_item.clear()
+            return
 
 
-        times_s = np.array([item[0] for item in self.plot_data_y_vs_t])
-        y_pixels_plot = np.array([item[1] for item in self.plot_data_y_vs_t])
+        # --- Phase 3: Filter data for fitting ---
+        filtered_times_s = []
+        filtered_y_pixels_plot = []
 
-        if len(times_s) < 3: # Need at least 3 points for a quadratic fit
-            logger.warning("Cannot fit parabola: Less than 3 data points available.")
+        if self.fit_time_range_s: # Ensure time range is set
+            min_t, max_t = self.fit_time_range_s
+            for i, (t_s, y_plot) in enumerate(self.plot_data_y_vs_t):
+                if self.included_point_indices_mask[i] and min_t <= t_s <= max_t: #
+                    filtered_times_s.append(t_s)
+                    filtered_y_pixels_plot.append(y_plot)
+        
+        times_s_to_fit = np.array(filtered_times_s)
+        y_pixels_to_fit = np.array(filtered_y_pixels_plot)
+        # --- End Phase 3 Filter ---
+
+        if len(times_s_to_fit) < 3: # Need at least 3 points for a quadratic fit [cite: 61]
+            logger.warning(f"Cannot fit parabola: Only {len(times_s_to_fit)} points selected/in range for fitting.")
             self.fit_coeffs = None
             self.fit_derived_scale_m_per_px = None
             self.fit_r_squared = None
         else:
             try:
-                coeffs = np.polyfit(times_s, y_pixels_plot, 2) # [cite: 38]
-                self.fit_coeffs = (coeffs[0], coeffs[1], coeffs[2]) # A, B, C [cite: 38]
+                coeffs = np.polyfit(times_s_to_fit, y_pixels_to_fit, 2)
+                self.fit_coeffs = (coeffs[0], coeffs[1], coeffs[2]) 
 
-                # Calculate derived scale Sm/px = -0.5 * g / A [cite: 34, 39]
                 A_px_s2 = self.fit_coeffs[0]
-                if abs(A_px_s2) < 1e-9: # Avoid division by zero or near-zero [cite: 39]
+                if abs(A_px_s2) < 1e-9: 
                     logger.warning("Coefficient A is near zero, cannot derive scale.")
                     self.fit_derived_scale_m_per_px = None
                 else:
-                    self.fit_derived_scale_m_per_px = -0.5 * self.current_g_value_ms2 / A_px_s2 # [cite: 39]
+                    self.fit_derived_scale_m_per_px = -0.5 * self.current_g_value_ms2 / A_px_s2
                 
-                # Calculate R-squared [cite: 40]
-                y_fit = np.polyval(self.fit_coeffs, times_s) # [cite: 40]
-                ss_res = np.sum((y_pixels_plot - y_fit)**2) # [cite: 40]
-                ss_tot = np.sum((y_pixels_plot - np.mean(y_pixels_plot))**2) # [cite: 40]
-                if abs(ss_tot) < 1e-9: # Avoid division by zero if all y_plot points are the same
-                    self.fit_r_squared = 1.0 if ss_res < 1e-9 else 0.0 # Perfect fit or no variance
+                y_fit_filtered = np.polyval(self.fit_coeffs, times_s_to_fit)
+                ss_res = np.sum((y_pixels_to_fit - y_fit_filtered)**2)
+                ss_tot = np.sum((y_pixels_to_fit - np.mean(y_pixels_to_fit))**2)
+                if abs(ss_tot) < 1e-9:
+                    self.fit_r_squared = 1.0 if ss_res < 1e-9 else 0.0 
                 else:
-                    self.fit_r_squared = 1 - (ss_res / ss_tot) # [cite: 40]
+                    self.fit_r_squared = 1 - (ss_res / ss_tot)
                 
-                logger.info(f"Fit complete: A={self.fit_coeffs[0]:.3g}, B={self.fit_coeffs[1]:.3g}, C={self.fit_coeffs[2]:.3g}, Scale={self.fit_derived_scale_m_per_px if self.fit_derived_scale_m_per_px else 'N/A'}, R2={self.fit_r_squared:.4f}")
+                logger.info(f"Fit complete (on {len(times_s_to_fit)} points): A={self.fit_coeffs[0]:.3g}, B={self.fit_coeffs[1]:.3g}, C={self.fit_coeffs[2]:.3g}, Scale={self.fit_derived_scale_m_per_px if self.fit_derived_scale_m_per_px else 'N/A'}, R2={self.fit_r_squared:.4f}")
 
             except np.linalg.LinAlgError as e:
                 logger.error(f"Linear algebra error during polyfit: {e}")
-                self.fit_coeffs = None
-                self.fit_derived_scale_m_per_px = None
-                self.fit_r_squared = None
+                self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
             except Exception as e:
                 logger.exception(f"Unexpected error during parabola fitting: {e}")
-                self.fit_coeffs = None
-                self.fit_derived_scale_m_per_px = None
-                self.fit_r_squared = None
+                self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
 
-        self._update_results_display() # [cite: 41]
-        self._plot_fitted_curve()    # [cite: 41]
+        self._update_results_display()
+        self._plot_fitted_curve() # This will use times_s_to_fit for its range if fit is valid
 
-    def _plot_fitted_curve(self) -> None: # [cite: 42]
+    def _plot_fitted_curve(self) -> None:
         if not PYQTGRAPH_AVAILABLE or self.fitted_curve_item is None:
             return
 
         if self.fit_coeffs and self.plot_data_y_vs_t:
-            times_s = np.array([item[0] for item in self.plot_data_y_vs_t])
-            if len(times_s) > 0:
-                # Generate points for the curve over the time range of the data
-                t_curve = np.linspace(min(times_s), max(times_s), 100) # 100 points for a smooth curve
-                y_curve = np.polyval(self.fit_coeffs, t_curve) # [cite: 41]
-                self.fitted_curve_item.setData(x=t_curve, y=y_curve) # [cite: 43]
-            else:
-                self.fitted_curve_item.clear() # No data points to define range
-        else:
-            self.fitted_curve_item.clear() # No fit coefficients, clear the curve
+            # Determine the time range for plotting the curve
+            # Use the currently selected fit_time_range_s if available and valid
+            # Otherwise, use the range of all available data points
+            
+            times_for_curve_range = []
+            if self.fit_time_range_s: # Time range from LinearRegionItem
+                min_t_plot, max_t_plot = self.fit_time_range_s
+                if min_t_plot < max_t_plot: # Ensure valid range
+                    times_for_curve_range = [min_t_plot, max_t_plot]
+
+            # Fallback to actual data range if filtered range is not good or not set
+            if not times_for_curve_range and self.plot_data_y_vs_t:
+                all_times_s = [item[0] for item in self.plot_data_y_vs_t]
+                if all_times_s:
+                    times_for_curve_range = [min(all_times_s), max(all_times_s)]
+            
+            if times_for_curve_range:
+                t_curve_start, t_curve_end = times_for_curve_range
+                if t_curve_start == t_curve_end : # Avoid linspace error for single point range
+                    if len(self.plot_data_y_vs_t) > 0: # Use first point's time if available
+                         t_curve = np.array([self.plot_data_y_vs_t[0][0]])
+                    else: # No data, clear curve
+                         self.fitted_curve_item.clear()
+                         return
+                else:
+                    t_curve = np.linspace(t_curve_start, t_curve_end, 200) # More points for smoother curve
+
+                y_curve = np.polyval(self.fit_coeffs, t_curve)
+                self.fitted_curve_item.setData(x=t_curve, y=y_curve)
+            else: # No valid range to plot curve
+                self.fitted_curve_item.clear()
+        else: # No fit coefficients, clear the curve
+            self.fitted_curve_item.clear()
 
     def _update_results_display(self) -> None: # [cite: 44]
         if self.fit_coeffs:
@@ -310,6 +363,55 @@ class TrackAnalysisDialog(QtWidgets.QDialog):
             self.r_squared_label.setText(f"{self.fit_r_squared:.4f}")
         else:
             self.r_squared_label.setText("N/A")
+
+    def _update_point_visuals(self) -> None: #
+        if not PYQTGRAPH_AVAILABLE or self.scatter_plot_item is None or not self.plot_data_y_vs_t:
+            return
+
+        spots = []
+        for i, (t_s, y_plot) in enumerate(self.plot_data_y_vs_t):
+            if self.included_point_indices_mask[i]:
+                # Included point: blue, normal size
+                spots.append({'pos': (t_s, y_plot), 'data': i, 'size': 8, 'symbol': 'o', 'brush': pg.mkBrush('b'), 'pen': None})
+            else:
+                # Excluded point: light gray, smaller size, cross symbol
+                spots.append({'pos': (t_s, y_plot), 'data': i, 'size': 6, 'symbol': 'x', 'brush': pg.mkBrush(150, 150, 150, 150), 'pen': pg.mkPen(150,150,150)})
+        
+        self.scatter_plot_item.setData(spots)
+
+    @QtCore.Slot(object, object) # For pyqtgraph's sigClicked (plot, points)
+    def _on_point_clicked(self, scatter_plot_item: pg.ScatterPlotItem, clicked_points: List[pg.SpotItem]) -> None: #
+        if not clicked_points:
+            return
+        
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        if not (modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier): # [cite: 55]
+            logger.debug("Point clicked without Shift modifier. No exclusion action.")
+            return
+
+        clicked_spot = clicked_points[0] # Process first clicked point
+        point_original_idx = clicked_spot.data() # Retrieve original index stored in point's data [cite: 55]
+
+        if point_original_idx is not None and 0 <= point_original_idx < len(self.included_point_indices_mask):
+            # Toggle inclusion state [cite: 56]
+            self.included_point_indices_mask[point_original_idx] = not self.included_point_indices_mask[point_original_idx]
+            logger.info(f"Point at original index {point_original_idx} (t={clicked_spot.pos().x():.2f}s) "
+                        f"toggled to {'included' if self.included_point_indices_mask[point_original_idx] else 'excluded'}.")
+            
+            self._update_point_visuals() # Update visuals [cite: 56]
+            self._fit_parabola()         # Trigger re-fit [cite: 50, 56]
+        else:
+            logger.warning(f"Clicked point has invalid original index: {point_original_idx}")
+
+    @QtCore.Slot(object) # For pyqtgraph's sigRegionChangeFinished (region_item)
+    def _on_time_range_changed(self, region_item: pg.LinearRegionItem) -> None: #
+        if self.linear_region_item is None: return
+        
+        current_region = self.linear_region_item.getRegion() #
+        self.fit_time_range_s = (current_region[0], current_region[1]) #
+        logger.info(f"Fit time range changed to: {self.fit_time_range_s[0]:.3f}s - {self.fit_time_range_s[1]:.3f}s")
+        
+        self._fit_parabola() # Trigger re-fit [cite: 50, 59]
 
 if __name__ == '__main__':
     # Basic test for the dialog
