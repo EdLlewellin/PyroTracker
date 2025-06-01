@@ -15,7 +15,7 @@ from interactive_image_view import InteractiveImageView, InteractionMode
 from element_manager import ElementManager, ElementVisibilityMode, PointData, VisualElement, UndoActionType, ElementType
 import file_io
 from video_handler import VideoHandler
-import ui_setup # Will use the modified version
+import ui_setup
 from coordinates import CoordinateSystem, CoordinateTransformer
 import settings_manager
 from preferences_dialog import PreferencesDialog
@@ -34,27 +34,32 @@ from kymograph_handler import KymographHandler
 logger = logging.getLogger(__name__)
 
 try:
+    from scale_analysis_view import ScaleAnalysisView
+except ImportError:
+    ScaleAnalysisView = None # type: ignore
+    logger.info("ScaleAnalysisView not yet available for import.")
+
+try:
     from kymograph_dialog import KymographDisplayDialog
 except ImportError:
-    KymographDisplayDialog = None # Placeholder
+    KymographDisplayDialog = None
 try:
-    from track_analysis_dialog import TrackAnalysisDialog, PYQTGRAPH_AVAILABLE # Import PYQTGRAPH_AVAILABLE here
+    from track_analysis_dialog import TrackAnalysisDialog, PYQTGRAPH_AVAILABLE
 except ImportError:
-    TrackAnalysisDialog = None 
-    PYQTGRAPH_AVAILABLE = False # Define it as False if the import fails
+    TrackAnalysisDialog = None
+    PYQTGRAPH_AVAILABLE = False
     logger.error("Failed to import TrackAnalysisDialog or its PYQTGRAPH_AVAILABLE flag. Analysis feature will be unavailable.")
 
 basedir = os.path.dirname(os.path.abspath(__file__))
 ICON_PATH = os.path.join(basedir, "PyroTracker.ico")
 
 class MainWindow(QtWidgets.QMainWindow):
-    # --- Instance Variable Type Hinting (ensure these match ui_setup.py) ---
     element_manager: ElementManager
     imageView: InteractiveImageView
     video_handler: VideoHandler
     coord_transformer: CoordinateTransformer
     scale_manager: ScaleManager
-    project_manager: ProjectManager 
+    project_manager: ProjectManager
     settings_manager_instance: sm_module
     generateKymographAction: Optional[QtGui.QAction] = None
     _kymograph_handler: Optional[KymographHandler] = None
@@ -64,6 +69,10 @@ class MainWindow(QtWidgets.QMainWindow):
     table_data_controller: Optional[TrackDataViewController]
     _export_handler: Optional[ExportHandler] = None
     view_menu_controller: Optional[ViewMenuController] = None
+
+    # --- BEGIN MODIFICATION: Add type hint for ScaleAnalysisView ---
+    scale_analysis_view: Optional['ScaleAnalysisView'] = None
+    # --- END MODIFICATION ---
 
     total_frames: int = 0
     current_frame_index: int = -1
@@ -82,7 +91,10 @@ class MainWindow(QtWidgets.QMainWindow):
     _project_load_warnings: List[str] = []
     _export_action_busy: bool = False
 
-
+    # --- BEGIN MODIFICATION: Add main_mode_tabs and video_tracking_tab_widget ---
+    main_mode_tabs: QtWidgets.QTabWidget
+    video_tracking_tab_widget: QtWidgets.QWidget
+    # --- END MODIFICATION ---
     mainSplitter: QtWidgets.QSplitter
     leftPanelWidget: QtWidgets.QWidget
     rightPanelWidget: QtWidgets.QWidget
@@ -101,8 +113,8 @@ class MainWindow(QtWidgets.QMainWindow):
     newLineButton: Optional[QtWidgets.QPushButton] = None
     pointsTabLabel: QtWidgets.QLabel
     pointsTableWidget: QtWidgets.QTableWidget
-    newTrackButton: QtWidgets.QPushButton # From ui_setup
-    newMeasurementLineAction: Optional[QtGui.QAction] = None # From ui_setup, will be connected
+    newTrackButton: QtWidgets.QPushButton
+    newMeasurementLineAction: Optional[QtGui.QAction] = None
     autoAdvanceCheckBox: QtWidgets.QCheckBox
     autoAdvanceSpinBox: QtWidgets.QSpinBox
     coordSystemGroup: QtWidgets.QButtonGroup
@@ -121,14 +133,14 @@ class MainWindow(QtWidgets.QMainWindow):
     stop_icon: QtGui.QIcon
 
     loadProjectAction: QtGui.QAction
-    saveProjectAsAction: QtGui.QAction 
+    saveProjectAsAction: QtGui.QAction
     saveAction: Optional[QtGui.QAction] = None
     closeProjectAction: Optional[QtGui.QAction] = None
     exportViewAction: QtGui.QAction
     exportFrameAction: QtGui.QAction
     newTrackAction: QtGui.QAction
     videoInfoAction: QtGui.QAction
-    preferencesAction: QtGui.QAction # Still created in ui_setup, moved to View menu by ViewMenuController
+    preferencesAction: QtGui.QAction
     undoAction: Optional[QtGui.QAction] = None
     scale_m_per_px_input: Optional[QtWidgets.QLineEdit] = None
     scale_px_per_m_input: Optional[QtWidgets.QLineEdit] = None
@@ -152,10 +164,8 @@ class MainWindow(QtWidgets.QMainWindow):
     
     analyzeTrackAction: Optional[QtGui.QAction] = None
     
-    # Help Menu Actions
     manualAction: Optional[QtGui.QAction] = None
     aboutAction: Optional[QtGui.QAction] = None
-
 
     pen_origin_marker: QtGui.QPen
     pen_marker_active_current: QtGui.QPen
@@ -201,58 +211,85 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setGeometry(50, 50, int(screen_geometry.width() * 0.8), int(screen_geometry.height() * 0.8))
         self.setMinimumSize(800, 600)
 
-        ui_setup.setup_main_window_ui(self) 
-        # Menu actions defined in ui_setup.py are now attributes of self (e.g., self.newTrackAction)
-        
-        self._setup_file_menu() # Consolidate File menu setup
+        # --- BEGIN MODIFICATION: Restructure central widget for main mode tabs ---
+        # ui_setup.setup_main_window_ui(self) # Call this AFTER main_mode_tabs is set as central widget
 
-        # Connect actions created in ui_setup or _setup_file_menu
+        self.main_mode_tabs = QtWidgets.QTabWidget() # [cite: 22]
+        self.setCentralWidget(self.main_mode_tabs) # [cite: 23]
+
+        # Create the "Video & Tracking" tab and its container widget
+        self.video_tracking_tab_widget = QtWidgets.QWidget() # [cite: 23]
+        video_tracking_layout = QtWidgets.QVBoxLayout(self.video_tracking_tab_widget) # [cite: 24]
+        video_tracking_layout.setContentsMargins(0,0,0,0) # Ensure it fills the tab
+        
+        # The mainSplitter will now be part of this first tab's layout
+        # It is initialized and populated by ui_setup.setup_main_window_ui
+        
+        ui_setup.setup_main_window_ui(self)  # Existing UI setup, mainSplitter is now an attribute
+        
+        video_tracking_layout.addWidget(self.mainSplitter) # [cite: 24] Add mainSplitter to the first tab
+        self.main_mode_tabs.addTab(self.video_tracking_tab_widget, "Video & Tracking") # [cite: 23]
+
+        # Instantiate and add the "Scale Analysis" tab [cite: 21, 25]
+        if ScaleAnalysisView is not None:
+            self.scale_analysis_view = ScaleAnalysisView(main_window_ref=self) # [cite: 21]
+            self.main_mode_tabs.addTab(self.scale_analysis_view, "Scale Analysis") # [cite: 25]
+        else:
+            # Fallback if ScaleAnalysisView couldn't be imported
+            # (e.g., if file doesn't exist yet in the step-by-step process)
+            scale_analysis_placeholder_tab = QtWidgets.QWidget()
+            placeholder_layout = QtWidgets.QVBoxLayout(scale_analysis_placeholder_tab)
+            placeholder_label = QtWidgets.QLabel("Scale Analysis View (Placeholder)")
+            placeholder_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            placeholder_layout.addWidget(placeholder_label)
+            self.main_mode_tabs.addTab(scale_analysis_placeholder_tab, "Scale Analysis (Dev)")
+            logger.warning("ScaleAnalysisView class not found, using placeholder tab.")
+
+        # --- END MODIFICATION ---
+        
+        self._setup_file_menu()
+
         if hasattr(self, 'loadProjectAction') and self.loadProjectAction:
             self.loadProjectAction.triggered.connect(self._trigger_load_project)
         if hasattr(self, 'saveProjectAsAction') and self.saveProjectAsAction:
             self.saveProjectAsAction.triggered.connect(self._trigger_save_project_as)
-        if hasattr(self, 'saveAction') and self.saveAction: # From _setup_file_menu
+        if hasattr(self, 'saveAction') and self.saveAction:
             self.saveAction.triggered.connect(self._trigger_save_project_direct)
-        if hasattr(self, 'closeProjectAction') and self.closeProjectAction: # From _setup_file_menu
+        if hasattr(self, 'closeProjectAction') and self.closeProjectAction:
             self.closeProjectAction.triggered.connect(self._trigger_close_project)
         
-        if hasattr(self, 'exportTracksCsvAction') and self.exportTracksCsvAction: # From _setup_file_menu
+        if hasattr(self, 'exportTracksCsvAction') and self.exportTracksCsvAction:
             self.exportTracksCsvAction.triggered.connect(self._trigger_export_tracks_data_csv)
-        if hasattr(self, 'exportLinesCsvAction') and self.exportLinesCsvAction: # From _setup_file_menu
+        if hasattr(self, 'exportLinesCsvAction') and self.exportLinesCsvAction:
             self.exportLinesCsvAction.triggered.connect(self._trigger_export_lines_data_csv)
 
-        if hasattr(self, 'newTrackAction') and self.newTrackAction: # From ui_setup
-            self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New) # Ctrl+N
+        if hasattr(self, 'newTrackAction') and self.newTrackAction:
+            self.newTrackAction.setShortcut(QtGui.QKeySequence.StandardKey.New)
             self.newTrackAction.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
             self.newTrackAction.triggered.connect(self._create_new_track)
         
-        # Connect "New Measurement Line" action (created in ui_setup.py)
         if hasattr(self, 'newMeasurementLineAction') and self.newMeasurementLineAction:
             self.newMeasurementLineAction.triggered.connect(self._trigger_new_measurement_line)
             logger.debug("Connected newMeasurementLineAction to _trigger_new_measurement_line.")
         else:
             logger.error("newMeasurementLineAction QAction not found after UI setup.")
 
-
-        # View Menu and Help Menu setup
         menu_bar_instance = self.menuBar()
         if self.imageView:
             self.view_menu_controller = ViewMenuController(main_window_ref=self, image_view_ref=self.imageView, parent=self)
             if menu_bar_instance:
-                 self.view_menu_controller.setup_view_menu(menu_bar_instance) # ViewMenuController adds Preferences here
+                 self.view_menu_controller.setup_view_menu(menu_bar_instance)
 
                  logger.debug("Creating Help menu in MainWindow...")
                  help_menu: QtWidgets.QMenu = menu_bar_instance.addMenu("&Help")
                  
-                 # PyroTracker Manual action with icon
-                 manual_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogHelpButton) # Or SP_MessageBoxInformation
+                 manual_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogHelpButton)
                  self.manualAction = QtGui.QAction(manual_icon, "PyroTracker &Manual", self)
                  self.manualAction.setStatusTip("Open the PyroTracker user manual (PDF)")
                  self.manualAction.triggered.connect(self._trigger_show_manual)
                  help_menu.addAction(self.manualAction)
                  
-                 # About action with application icon
-                 app_icon_for_menu = self.windowIcon() # Get the already set window icon
+                 app_icon_for_menu = self.windowIcon()
                  self.aboutAction = QtGui.QAction(app_icon_for_menu, "&About PyroTracker", self)
                  self.aboutAction.setStatusTip("Show information about this application")
                  self.aboutAction.triggered.connect(self._show_about_dialog)
@@ -277,7 +314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.imageView:
             self.imageView.viewTransformChanged.connect(self._update_zoom_display)
 
-        if hasattr(self, 'undoAction') and self.undoAction: # From ui_setup
+        if hasattr(self, 'undoAction') and self.undoAction:
             self.undoAction.triggered.connect(self._trigger_undo_point_action)
             self.undoAction.setEnabled(False)
 
@@ -409,7 +446,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.element_manager.activeElementDataChanged.connect(self.table_data_controller._sync_active_element_selection_in_tables)
         self.element_manager.visualsNeedUpdate.connect(self._redraw_scene_overlay)
 
-        self.element_manager.activeElementDataChanged.connect(self._update_ui_state) # Ensures menu action state updates
+        self.element_manager.activeElementDataChanged.connect(self._update_ui_state) 
 
         if self.scale_panel_controller:
             self.scale_manager.scaleOrUnitChanged.connect(self.scale_panel_controller.update_ui_from_manager)
@@ -463,13 +500,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.videoInfoAction:
             self.videoInfoAction.triggered.connect(self._show_video_info_dialog)
-        if self.preferencesAction: # This action is now added to View menu by ViewMenuController
+        if self.preferencesAction: 
             self.preferencesAction.triggered.connect(self._show_preferences_dialog)
 
-        if hasattr(self, 'newTrackButton') and self.newTrackButton: # From Tracks Tab
+        if hasattr(self, 'newTrackButton') and self.newTrackButton: 
             self.newTrackButton.clicked.connect(self._create_new_track)
-        if hasattr(self, 'newLineButton') and self.newLineButton: # From Lines Tab
-            self.newLineButton.clicked.connect(self._trigger_new_measurement_line) # Use the same slot as menu
+        if hasattr(self, 'newLineButton') and self.newLineButton: 
+            self.newLineButton.clicked.connect(self._trigger_new_measurement_line) 
 
         if hasattr(self, 'exportViewAction') and self.exportViewAction and self._export_handler:
             self.exportViewAction.triggered.connect(self._trigger_export_video)
@@ -517,13 +554,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         logger.info("MainWindow initialization complete.")
 
-    # --- Modified File Menu Setup ---
     def _setup_file_menu(self) -> None:
-        """Configures the File menu according to the new structure."""
         logger.debug("MainWindow: Setting up File menu...")
         menu_bar = self.menuBar()
         file_menu = None
-        # Find existing File menu created by ui_setup
         for action in menu_bar.actions():
             if action.menu() and action.text() == "&File":
                 file_menu = action.menu()
@@ -533,30 +567,22 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error("MainWindow: File menu not found from ui_setup. Cannot restructure.")
             return
 
-        # Clear existing File menu actions before rebuilding
         file_menu.clear()
-
         style = self.style()
 
-        # --- Open Video... ---
-        # This action was created in ui_setup.py but as a local variable.
-        # We need to recreate it or ensure it's an attribute. Let's recreate for clarity here.
         self.openVideoAction = QtGui.QAction(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogOpenButton), "&Open Video...", self)
         self.openVideoAction.setStatusTip("Select and load a video file")
         self.openVideoAction.setShortcut(QtGui.QKeySequence.StandardKey.Open)
-        self.openVideoAction.triggered.connect(self.open_video) # Connect to the existing slot
+        self.openVideoAction.triggered.connect(self.open_video)
         file_menu.addAction(self.openVideoAction)
 
         file_menu.addSeparator()
 
-        # --- Open Project... ---
-        # self.loadProjectAction is expected to be an attribute from ui_setup.py
         if hasattr(self, 'loadProjectAction') and self.loadProjectAction:
             file_menu.addAction(self.loadProjectAction)
         else: 
             logger.error("loadProjectAction not found on MainWindow, cannot add to File menu.")
 
-        # --- Save Project ---
         save_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton)
         self.saveAction = QtGui.QAction(save_icon, "&Save Project", self)
         self.saveAction.setStatusTip("Save the current project (Ctrl+S)")
@@ -565,14 +591,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.saveAction.triggered.connect(self._trigger_save_project_direct)
         file_menu.addAction(self.saveAction)
 
-        # --- Save Project As... ---
-        # self.saveProjectAsAction is expected to be an attribute from ui_setup.py
         if hasattr(self, 'saveProjectAsAction') and self.saveProjectAsAction:
             file_menu.addAction(self.saveProjectAsAction)
         else:
             logger.error("saveProjectAsAction not found on MainWindow, cannot add to File menu.")
 
-        # --- Close Project ---
         close_icon = style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DockWidgetCloseButton) 
         self.closeProjectAction = QtGui.QAction(close_icon, "&Close Project", self)
         self.closeProjectAction.setStatusTip("Close the current project")
@@ -582,33 +605,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
         file_menu.addSeparator()
 
-        # --- Export Data (submenu) ---
         self.exportDataMenu = QtWidgets.QMenu("Export Data", self)
         
         self.exportTracksCsvAction = QtGui.QAction("Export Tracks (as CSV)...", self)
         self.exportTracksCsvAction.setStatusTip("Export track data to a simple CSV file")
-        self.exportTracksCsvAction.setEnabled(False) # Will be enabled when tracks exist
+        self.exportTracksCsvAction.setEnabled(False)
         self.exportTracksCsvAction.triggered.connect(self._trigger_export_tracks_data_csv)
         self.exportDataMenu.addAction(self.exportTracksCsvAction)
 
         self.exportLinesCsvAction = QtGui.QAction("Export Lines (as CSV)...", self)
         self.exportLinesCsvAction.setStatusTip("Export measurement line data to a simple CSV file")
-        self.exportLinesCsvAction.setEnabled(False) # Will be enabled when lines exist
+        self.exportLinesCsvAction.setEnabled(False)
         self.exportLinesCsvAction.triggered.connect(self._trigger_export_lines_data_csv)
         self.exportDataMenu.addAction(self.exportLinesCsvAction)
         
         file_menu.addMenu(self.exportDataMenu)
 
-        # --- Export Video with Overlays... ---
-        # self.exportViewAction is expected to be an attribute from ui_setup.py
         if hasattr(self, 'exportViewAction') and self.exportViewAction:
             file_menu.addAction(self.exportViewAction)
         else:
             logger.error("exportViewAction not found on MainWindow, cannot add to File menu.")
 
-
-        # --- Export Current Frame to PNG... ---
-        # self.exportFrameAction is expected to be an attribute from ui_setup.py
         if hasattr(self, 'exportFrameAction') and self.exportFrameAction:
             file_menu.addAction(self.exportFrameAction)
         else:
@@ -616,8 +633,6 @@ class MainWindow(QtWidgets.QMainWindow):
             
         file_menu.addSeparator()
 
-        # --- Video Information... ---
-        # self.videoInfoAction is expected to be an attribute from ui_setup.py
         if hasattr(self, 'videoInfoAction') and self.videoInfoAction:
             file_menu.addAction(self.videoInfoAction)
         else:
@@ -625,24 +640,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         file_menu.addSeparator()
 
-        # --- Exit ---
-        # This action was created in ui_setup.py but as a local variable.
-        # Recreate it here.
         self.exitAction = QtGui.QAction(style.standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogCloseButton), "E&xit", self)
         self.exitAction.setStatusTip("Exit the application")
         self.exitAction.setShortcut(QtGui.QKeySequence.StandardKey.Quit)
-        self.exitAction.triggered.connect(self.close) # Connect to QMainWindow.close
+        self.exitAction.triggered.connect(self.close)
         file_menu.addAction(self.exitAction)
         
         logger.debug("File menu setup complete.")
 
     def _setup_analysis_menu(self) -> None:
-        """Sets up the Analysis menu and its actions."""
         logger.debug("MainWindow: Setting up Analysis menu...")
         menu_bar = self.menuBar()
         analysis_menu = None
         
-        # Find existing Analysis menu (should have been created by ui_setup.py)
         for action in menu_bar.actions():
             if action.menu() and action.text() == "&Analysis":
                 analysis_menu = action.menu()
@@ -652,18 +662,15 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.error("Analysis menu not found from ui_setup. Cannot add analysis actions.")
             return
 
-        # --- Analyze Track Action ---
-        # Icon can be a placeholder, e.g., a generic graph or statistics icon
-        analyze_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSeekForward) # Placeholder
+        analyze_icon = self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_MediaSeekForward)
         self.analyzeTrackAction = QtGui.QAction(analyze_icon, "Analyze Track...", self)
         self.analyzeTrackAction.setStatusTip("Perform y(t) parabola fitting analysis on the selected track")
-        self.analyzeTrackAction.setEnabled(False) # Initially disabled
-        self.analyzeTrackAction.triggered.connect(self._trigger_open_track_analysis_dialog) # Connect to new slot
+        self.analyzeTrackAction.setEnabled(False)
+        self.analyzeTrackAction.triggered.connect(self._trigger_open_track_analysis_dialog)
         analysis_menu.addAction(self.analyzeTrackAction)
 
-        analysis_menu.addSeparator() # Separator before Kymograph
+        analysis_menu.addSeparator()
 
-        # --- Generate Kymograph Action (existing) ---
         self.generateKymographAction = QtGui.QAction("Generate Kymograph...", self)
         self.generateKymographAction.setStatusTip("Generate a kymograph from the active measurement line")
         self.generateKymographAction.setEnabled(False) 
@@ -680,10 +687,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                shortcut: Optional[QtGui.QKeySequence] = None,
                                triggered_slot: Optional[QtCore.Slot] = None,
                                checkable: bool = False) -> QtGui.QAction:
-        """Helper to find an existing action by text or create a new one."""
         for action in existing_actions:
             if action.text() == text:
-                # Optionally update properties if needed, or just return
                 if icon and action.icon().isNull(): action.setIcon(icon)
                 if status_tip and not action.statusTip(): action.setStatusTip(status_tip)
                 if shortcut and action.shortcut().isEmpty(): action.setShortcut(shortcut)
@@ -691,7 +696,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     action.triggered.connect(triggered_slot)
                 return action
         
-        # If not found, create it
         new_action = QtGui.QAction(text, self)
         if icon: new_action.setIcon(icon)
         if status_tip: new_action.setStatusTip(status_tip)
@@ -701,37 +705,22 @@ class MainWindow(QtWidgets.QMainWindow):
         return new_action
         
     def _is_slot_connected(self, signal: QtCore.SignalInstance, slot_method: Any) -> bool:
-        """Checks if a specific method (slot) is connected to a signal."""
-        # This is a bit tricky with PySide6 as there's no direct public API
-        # to list connected slots by method reference for non-QObject senders if slot is lambda etc.
-        # For direct method connections to QObject methods, it's more feasible.
-        # This is a simplified check and might not be perfectly robust for all cases.
         try:
-            # This works if the slot is a direct method of an object
             if signal.receivers(slot_method.__self__) > 0 : # type: ignore
-                return True # Crude check, assumes if any receiver exists for that object, it might be this one
-        except AttributeError: # slot_method might not have __self__ (e.g. function, lambda)
+                return True
+        except AttributeError:
             pass
-        return False # Fallback
+        return False
 
-
-    # Method previously named _setup_additional_file_menu_actions is now integrated into _setup_file_menu
-    # delete or rename if it's not used elsewhere. For now, it's effectively replaced.
-
-    # --- NEW Slot for "New Measurement Line" menu action ---
     @QtCore.Slot()
     def _trigger_new_measurement_line(self) -> None:
-        """Handles the 'New Measurement Line' menu action."""
         logger.info("'New Measurement Line' action triggered from menu.")
-        # This logic is identical to the button press for creating a new line
         self._create_new_line_action()
 
-    # --- Slot for "PyroTracker Manual" menu action ---
     @QtCore.Slot()
     def _trigger_show_manual(self) -> None:
-        """Handles the 'PyroTracker Manual' menu action."""
         logger.info("'PyroTracker Manual' action triggered.")
-        manual_filename = "PyroTracker_Manual.pdf" # Define the filename
+        manual_filename = "PyroTracker_Manual.pdf"
         manual_path = os.path.join(basedir, manual_filename) 
         
         github_repo_url = "https://github.com/EdLlewellin/PyroTracker"
@@ -748,7 +737,7 @@ class MainWindow(QtWidgets.QMainWindow):
             msg_box = QtWidgets.QMessageBox(self)
             msg_box.setIcon(QtWidgets.QMessageBox.Icon.Information)
             msg_box.setWindowTitle("Manual Not Found")
-            msg_box.setTextFormat(QtCore.Qt.TextFormat.RichText) # Enable rich text
+            msg_box.setTextFormat(QtCore.Qt.TextFormat.RichText)
             msg_box.setText(
                 f"The PyroTracker Manual (<i>{manual_filename}</i>) could not be found in the application directory:<br>"
                 f"<i>{basedir}</i><br><br>"
@@ -762,7 +751,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(bool)
     def _handle_unsaved_changes_state_changed(self, has_unsaved_changes: bool) -> None:
-        """Updates the enabled state of the 'Save' action and window title."""
         if hasattr(self, 'saveAction') and self.saveAction:
             self.saveAction.setEnabled(has_unsaved_changes and self.video_loaded)
         
@@ -777,14 +765,13 @@ class MainWindow(QtWidgets.QMainWindow):
             title += f" - {current_file_display_name}"
         
         if has_unsaved_changes and (self.video_loaded or (self.project_manager and self.project_manager.get_current_project_filepath() is not None)):
-            title += "*" # Add asterisk if there's something potentially saveable
+            title += "*"
         
         self.setWindowTitle(title)
 
 
     @QtCore.Slot()
     def _trigger_save_project_direct(self) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
         if not self.video_loaded and not (self.project_manager and self.project_manager.get_current_project_filepath()):
             if status_bar: status_bar.showMessage("Cannot save: No project/video loaded.", 3000)
@@ -818,8 +805,6 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._handle_data_export_request(ElementType.TRACK)
         finally:
-            # Use QTimer.singleShot to reset the flag after the current event processing cycle
-            # This helps prevent issues if the dialog closing itself causes immediate re-triggering
             QtCore.QTimer.singleShot(0, lambda: setattr(self, '_export_action_busy', False))
 
     @QtCore.Slot()
@@ -835,7 +820,6 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, lambda: setattr(self, '_export_action_busy', False))
 
     def _handle_data_export_request(self, element_type_to_export: ElementType) -> None:
-        # ... (existing method)
         if not self.video_loaded: 
             QtWidgets.QMessageBox.warning(self, "Export Data Error", "A video must be loaded to export element data.")
             return
@@ -900,7 +884,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _setup_pens(self) -> None:
-        # ... (existing method)
         logger.debug("Setting up QPen objects using current settings...")
         color_active_marker = settings_manager.get_setting(settings_manager.KEY_ACTIVE_MARKER_COLOR)
         color_active_line = settings_manager.get_setting(settings_manager.KEY_ACTIVE_LINE_COLOR)
@@ -947,7 +930,6 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.debug("QPen setup complete using settings.")
 
     def _reset_ui_after_video_close(self) -> None:
-        # ... (existing method with title update)
         logger.debug("Resetting UI elements for no video loaded state.")
         self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}")
         status_bar = self.statusBar()
@@ -1001,10 +983,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.view_menu_controller:
             self.view_menu_controller.handle_video_loaded_state_changed(False)
+        
+        # --- BEGIN MODIFICATION: Reset ScaleAnalysisView ---
+        if self.scale_analysis_view:
+            self.scale_analysis_view.update_on_project_or_video_change(False) # [cite: 26]
+        # --- END MODIFICATION ---
 
 
     def _prepare_for_project_load(self) -> None:
-        # ... (existing method)
         logger.info("Preparing MainWindow for project load...")
 
         if self.project_manager and self.project_manager.project_has_unsaved_changes():
@@ -1046,10 +1032,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageView.clearOverlay() 
             self.imageView.viewport().update()
 
+        # --- BEGIN MODIFICATION: Reset ScaleAnalysisView ---
+        if self.scale_analysis_view:
+            self.scale_analysis_view.update_on_project_or_video_change(False) # [cite: 26]
+        # --- END MODIFICATION ---
         logger.info("MainWindow preparation for project load complete.")
 
     def _cancel_active_line_definition_ui_reset(self) -> None:
-        # ... (existing method)
         if self.element_manager:
             self.element_manager.cancel_active_line_definition()
 
@@ -1091,22 +1080,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'newMeasurementLineAction') and self.newMeasurementLineAction:
             self.newMeasurementLineAction.setEnabled(can_create_new_element)
 
-        # --- MODIFIED/CORRECTED SECTION for analyzeTrackAction ---
         if hasattr(self, 'analyzeTrackAction') and self.analyzeTrackAction:
             can_analyze_track = (
                 is_video_loaded and
-                self.element_manager is not None and # Ensure element_manager exists
+                self.element_manager is not None and 
                 self.element_manager.get_active_element_type() == ElementType.TRACK and
-                bool(self.element_manager.get_active_element_points_if_track()) # Check if track has points
+                bool(self.element_manager.get_active_element_points_if_track()) 
             )
-            self.analyzeTrackAction.setEnabled(can_analyze_track) # Ensure this line is present and active
-        # --- END MODIFIED/CORRECTED SECTION ---
+            self.analyzeTrackAction.setEnabled(can_analyze_track) 
 
         if hasattr(self, 'generateKymographAction') and self.generateKymographAction:
             can_generate_kymograph = (
                 is_video_loaded and
                 not is_defining_any_line and 
-                self.element_manager is not None and # Ensure element_manager exists
+                self.element_manager is not None and 
                 self.element_manager.get_active_element_type() == ElementType.MEASUREMENT_LINE
             )
             self.generateKymographAction.setEnabled(can_generate_kymograph)
@@ -1138,7 +1125,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.closeProjectAction.setEnabled(can_interact_with_project)
         
         if hasattr(self, 'loadProjectAction') and self.loadProjectAction:
-            self.loadProjectAction.setEnabled(True) # Always enabled
+            self.loadProjectAction.setEnabled(True) 
 
         if self.videoInfoAction: self.videoInfoAction.setEnabled(is_video_loaded)
 
@@ -1179,7 +1166,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.project_manager:
              self._handle_unsaved_changes_state_changed(self.project_manager.project_has_unsaved_changes())
     def _update_ui_for_frame(self, frame_index: int) -> None:
-        # ... (existing method)
         if not self.video_loaded:
             if hasattr(self, 'currentFrameLineEdit'): self.currentFrameLineEdit.blockSignals(True); self.currentFrameLineEdit.setReadOnly(True); self.currentFrameLineEdit.setText("-"); self.currentFrameLineEdit.deselect(); self.currentFrameLineEdit.blockSignals(False)
             if hasattr(self, 'totalFramesLabel'): self.totalFramesLabel.setText("/ -")
@@ -1197,7 +1183,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _handle_frame_input_finished(self) -> None:
-        # ... (existing method)
         if not self.video_loaded or not hasattr(self, 'currentFrameLineEdit') or not isinstance(self.currentFrameLineEdit, QtWidgets.QLineEdit): return
         line_edit = self.currentFrameLineEdit; status_bar = self.statusBar(); input_text = line_edit.text().strip()
         if line_edit.isReadOnly(): return
@@ -1212,7 +1197,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _handle_time_input_finished(self) -> None:
-        # ... (existing method)
         if not self.video_loaded or not hasattr(self, 'currentTimeLineEdit') or not isinstance(self.currentTimeLineEdit, QtWidgets.QLineEdit): return
         line_edit = self.currentTimeLineEdit; status_bar = self.statusBar(); input_text = line_edit.text().strip()
         if line_edit.isReadOnly(): return
@@ -1230,32 +1214,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def open_video(self) -> None:
-        # ... (existing method)
         logger.info("Open Video action triggered."); status_bar = self.statusBar(); proceed_with_file_dialog = False
-        if self.video_loaded: # Modified this condition slightly for clarity for project context
-            # If a project is loaded (even if video part failed), prompt for closing that project.
-            # Otherwise, if just a video is loaded without a project context, prompt for closing video.
+        if self.video_loaded: 
             prompt_message = ("Opening a new video will close the current project and video. "
                               "Any unsaved project changes will be lost.\n\nDo you want to proceed?") \
                              if self.project_manager and self.project_manager.get_current_project_filepath() else \
                              ("Opening a new video will close the current video. "
                               "Any unsaved tracks will be lost.\n\nDo you want to proceed?")
 
-            # Delegate to _trigger_close_project if a project might have unsaved changes
             if self.project_manager and self.project_manager.project_has_unsaved_changes():
                 logger.info("Open Video: Current project has unsaved changes. Triggering close project flow first.")
                 try:
-                    self._trigger_close_project() # This handles save/discard/cancel
-                    if self.project_manager.project_has_unsaved_changes(): # If user cancelled save/close
+                    self._trigger_close_project() 
+                    if self.project_manager.project_has_unsaved_changes(): 
                         logger.info("Open Video: Close project was cancelled. Aborting opening new video.")
                         if status_bar: status_bar.showMessage("Open new video cancelled.", 3000)
                         return
-                    # If close was successful (saved or discarded), proceed
                     proceed_with_file_dialog = True
-                except Exception as e: # Should not happen if _trigger_close_project is robust
+                except Exception as e: 
                     logger.error(f"Error during _trigger_close_project call from open_video: {e}")
-                    proceed_with_file_dialog = False # Don't proceed if error
-            else: # No project changes, or no project loaded, just ask to close video
+                    proceed_with_file_dialog = False 
+            else: 
                 reply = QtWidgets.QMessageBox.question(self, "Confirm Open New Video", prompt_message,
                                                        QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
                                                        QtWidgets.QMessageBox.StandardButton.No)
@@ -1264,7 +1243,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 elif status_bar:
                     status_bar.showMessage("Open new video cancelled.", 3000)
                     return
-        else: # No video currently loaded
+        else: 
             proceed_with_file_dialog = True
 
         if proceed_with_file_dialog:
@@ -1273,15 +1252,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 if status_bar: status_bar.showMessage("Video loading cancelled.", 3000)
                 return
             
-            # If a project was open, it should have been handled (saved/discarded/closed) above.
-            # Now, explicitly clear any remaining project context before loading just a video.
             if self.project_manager and self.project_manager.get_current_project_filepath():
                 logger.info("Clearing previous project state before opening standalone video.")
-                self._release_video() # Ensure video resources are released
-                self.project_manager.clear_project_state_for_close() # Clear project path and dirty flag
-                self._reset_ui_after_video_close() # Full UI reset
+                self._release_video() 
+                self.project_manager.clear_project_state_for_close() 
+                self._reset_ui_after_video_close() 
 
-            if self.video_loaded: # If a video (but no project) was loaded, release it
+            if self.video_loaded: 
                 self._release_video()
 
             if status_bar: status_bar.showMessage(f"Opening video: {os.path.basename(file_path)}...", 0)
@@ -1290,7 +1267,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _release_video(self) -> None:
-        # ... (existing method)
         logger.info("Releasing video resources and resetting state...")
         self.video_handler.release_video(); self.video_loaded = False; self.total_frames = 0; self.current_frame_index = -1; self.fps = 0.0
         self.total_duration_ms = 0.0; self.video_filepath = ""; self.frame_width = 0; self.frame_height = 0; self.is_playing = False
@@ -1299,11 +1275,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_save_project_as(self) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
-        if not self.video_loaded and not (self.project_manager and self.project_manager.get_current_project_filepath()): # Allow save as if project loaded but video failed
+        if not self.video_loaded and not (self.project_manager and self.project_manager.get_current_project_filepath()): 
             if status_bar: status_bar.showMessage("Cannot save project: No video or project data loaded.", 3000)
-            # Allow saving project metadata even if video failed to load, if a project path is known
             if not (self.project_manager and self.project_manager.get_current_project_filepath()):
                  QtWidgets.QMessageBox.warning(self, "Save Project Error", "A video must be loaded or a project opened to save a project.")
                  return
@@ -1344,7 +1318,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if success:
             if status_bar: status_bar.showMessage(f"Project saved to {os.path.basename(save_path)}", 5000)
-            # self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} - {os.path.basename(save_path)}") # This is handled by dirty state
         else:
             if status_bar: status_bar.showMessage("Error saving project. See log.", 5000)
             QtWidgets.QMessageBox.critical(self, "Save Project Error", f"Could not save project to {save_path}.\nPlease check the logs for details.")
@@ -1353,7 +1326,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_close_project(self) -> None:
-        # ... (existing method)
         logger.info("'Close Project' action triggered.")
         status_bar = self.statusBar()
 
@@ -1390,11 +1362,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.project_manager.clear_project_state_for_close() 
 
         if status_bar: status_bar.showMessage("Project closed. Ready.", 3000)
-        # self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION}") # Handled by dirty state / _update_ui_state
 
     @QtCore.Slot()
     def _trigger_load_project(self) -> None:
-        # ... (existing method)
         logger.info("Load Project action triggered by user.")
         status_bar = self.statusBar()
         if not self.project_manager:
@@ -1547,17 +1517,19 @@ class MainWindow(QtWidgets.QMainWindow):
                          self.project_manager.set_project_dirty(True) 
                          self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} (Load Failed)")
     
+            # --- BEGIN MODIFICATION: Update ScaleAnalysisView after project load ---
+            if self.scale_analysis_view:
+                self.scale_analysis_view.update_on_project_or_video_change(self.video_loaded or (self.project_manager and self.project_manager.get_current_project_filepath() is not None)) # [cite: 26]
+            # --- END MODIFICATION ---
             logger.info("Project loading attempt finished in MainWindow.")
 
 
     @QtCore.Slot()
     def _show_preferences_dialog(self) -> None:
-        # ... (existing method)
         dialog = PreferencesDialog(self); dialog.settingsApplied.connect(self._handle_settings_applied); dialog.exec()
 
     @QtCore.Slot()
     def _handle_settings_applied(self) -> None:
-        # ... (existing method)
         logger.info("MainWindow: Settings applied, refreshing visuals.")
         self._setup_pens()
         if self.imageView and hasattr(self.imageView, '_scale_bar_widget') and self.imageView._scale_bar_widget:
@@ -1572,32 +1544,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(int)
     def _slider_value_changed(self, value: int) -> None:
-        # ... (existing method)
         if self.video_loaded and self.current_frame_index != value: self.video_handler.seek_frame(value)
 
     @QtCore.Slot(int)
     def _handle_frame_step(self, step: int) -> None:
-        # ... (existing method)
         if self.video_loaded: self.video_handler.next_frame() if step > 0 else self.video_handler.previous_frame()
 
     @QtCore.Slot()
     def _show_previous_frame(self) -> None:
-        # ... (existing method)
         if self.video_loaded: self.video_handler.previous_frame()
 
     @QtCore.Slot()
     def _show_next_frame(self) -> None:
-        # ... (existing method)
         if self.video_loaded: self.video_handler.next_frame()
 
     @QtCore.Slot()
     def _toggle_playback(self) -> None:
-        # ... (existing method)
         if self.video_loaded and self.fps > 0: self.video_handler.toggle_playback()
 
     @QtCore.Slot()
     def _update_zoom_display(self) -> None:
-        # ... (existing method)
         if not self.video_loaded or not hasattr(self, 'imageView') or not hasattr(self, 'zoomLevelLineEdit') or self.zoomLevelLineEdit is None:
             if hasattr(self, 'zoomLevelLineEdit') and self.zoomLevelLineEdit is not None: self.zoomLevelLineEdit.setText("---.-")
             return
@@ -1611,7 +1577,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _handle_zoom_input_finished(self) -> None:
-        # ... (existing method)
         if not self.video_loaded or not hasattr(self, 'imageView') or not hasattr(self, 'zoomLevelLineEdit') or self.zoomLevelLineEdit is None: return
         line_edit = self.zoomLevelLineEdit; status_bar = self.statusBar(); input_text = line_edit.text().strip()
         if line_edit.isReadOnly(): return
@@ -1637,10 +1602,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(dict)
     def _handle_video_loaded(self, video_info: Dict[str, Any]) -> None:
-        # ... (existing method)
         self.total_frames = video_info.get('total_frames', 0); self.video_loaded = True; self.fps = video_info.get('fps', 0.0)
         self.total_duration_ms = video_info.get('duration_ms', 0.0); self.video_filepath = video_info.get('filepath', ''); self.frame_width = video_info.get('width', 0)
-        self.frame_height = video_info.get('height', 0); self.is_playing = False; # self.setWindowTitle - handled by dirty state
+        self.frame_height = video_info.get('height', 0); self.is_playing = False; 
         self.coord_transformer.set_video_height(self.frame_height)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_height(self.frame_height)
         self.element_manager.reset()
@@ -1653,22 +1617,24 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.scale_panel_controller: self.scale_panel_controller.set_video_loaded_status(True)
         if self.coord_panel_controller: self.coord_panel_controller.set_video_loaded_status(True)
         if self.table_data_controller: self.table_data_controller.set_video_loaded_status(True, self.total_frames)
-        self._update_zoom_display(); self._update_ui_state() # Calls _handle_unsaved_changes_state_changed
+        self._update_zoom_display(); self._update_ui_state() 
         if self.view_menu_controller: self.view_menu_controller.handle_video_loaded_state_changed(True)
         status_msg = (f"Loaded '{video_info.get('filename', 'N/A')}' ({self.total_frames} frames, {self.frame_width}x{self.frame_height}, {self.fps:.2f} FPS)")
         if self.statusBar(): self.statusBar().showMessage(status_msg, 5000)
-        if self.project_manager: self.project_manager.set_project_dirty(False) # Video load without project is considered 'clean' initially
+        if self.project_manager: self.project_manager.set_project_dirty(False) 
+        # --- BEGIN MODIFICATION: Update ScaleAnalysisView after video load ---
+        if self.scale_analysis_view:
+            self.scale_analysis_view.update_on_project_or_video_change(self.video_loaded) # [cite: 26]
+        # --- END MODIFICATION ---
 
     @QtCore.Slot(str)
     def _handle_video_load_failed(self, error_msg: str) -> None:
-        # ... (existing method)
         QtWidgets.QMessageBox.critical(self, "Video Load Error", error_msg)
         if self.statusBar(): self.statusBar().showMessage("Error loading video", 5000)
         self._release_video()
 
     @QtCore.Slot(QtGui.QPixmap, int)
     def _handle_frame_changed(self, pixmap: QtGui.QPixmap, frame_index: int) -> None:
-        # ... (existing method)
         if not self.video_loaded: return
         self.current_frame_index = frame_index
         if self.imageView:
@@ -1682,7 +1648,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(bool)
     def _handle_playback_state_changed(self, is_playing: bool) -> None:
-        # ... (existing method)
         self.is_playing = is_playing; status_bar = self.statusBar()
         if self.playPauseButton and self.stop_icon and self.play_icon:
             self.playPauseButton.setIcon(self.stop_icon if self.is_playing else self.play_icon)
@@ -1693,7 +1658,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float)
     def _handle_add_point_click(self, x: float, y: float) -> None:
-        # ... (existing method)
         if self._is_defining_measurement_line: logger.debug("_handle_add_point_click: Ignoring as currently defining a measurement line."); return
         status_bar = self.statusBar()
         if self.coord_panel_controller and self.coord_panel_controller.is_setting_origin_mode(): return
@@ -1715,7 +1679,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float, QtCore.Qt.KeyboardModifiers)
     def _handle_modified_click(self, x: float, y: float, modifiers: QtCore.Qt.KeyboardModifiers) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Cannot interact: Video/components not ready.", 3000); return
@@ -1736,17 +1699,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
             if self.element_manager.active_element_index != element_idx:
                 self.element_manager.set_active_element(element_idx)
-                if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id, self.tracksTableWidget, config.COL_TRACK_ID)) # Specify table
+                if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id, self.tracksTableWidget, config.COL_TRACK_ID)) 
                 if status_bar: status_bar.showMessage(f"Selected Track {element_id}.", 3000)
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
             if self.element_manager.active_element_index != element_idx: self.element_manager.set_active_element(element_idx)
-            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id, self.tracksTableWidget, config.COL_TRACK_ID)) # Specify table
+            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id, self.tracksTableWidget, config.COL_TRACK_ID)) 
             if self.current_frame_index != frame_idx_of_point: self.video_handler.seek_frame(frame_idx_of_point)
             if status_bar: status_bar.showMessage(f"Selected Track {element_id}, jumped to Frame {frame_idx_of_point + 1}.", 3000)
 
     @QtCore.Slot(float, float)
     def _handle_scale_or_measurement_line_first_point(self, scene_x: float, scene_y: float) -> None:
-        # ... (existing method)
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
            self.scale_panel_controller._is_setting_scale_by_line:
             logger.debug("MainWindow: First point click routed to ScalePanelController.")
@@ -1759,7 +1721,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float, float, float)
     def _handle_scale_or_measurement_line_second_point(self, p1x: float, p1y: float, p2x: float, p2y: float) -> None:
-        # ... (existing method)
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line') and \
            self.scale_panel_controller._is_setting_scale_by_line:
             logger.debug("MainWindow: Second point click routed to ScalePanelController.")
@@ -1772,7 +1733,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float)
     def _handle_measurement_line_first_point_defined(self, scene_x: float, scene_y: float) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
         if not self._is_defining_measurement_line or not self.imageView or self.imageView._current_mode != InteractionMode.SET_SCALE_LINE_START:
              logger.debug("_handle_measurement_line_first_point_defined called out of context or wrong ImageView mode.")
@@ -1792,7 +1752,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(float, float, float, float)
     def _handle_measurement_line_second_point_defined(self, p1x: float, p1y: float, p2x: float, p2y: float) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
         if not self._is_defining_measurement_line or not self.imageView or self.imageView._current_mode != InteractionMode.SET_SCALE_LINE_END:
             logger.debug("_handle_measurement_line_second_point_defined called out of context or wrong ImageView mode.")
@@ -1816,19 +1775,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _handle_auto_advance_frames_changed(self, value: int) -> None: self._auto_advance_frames = value
     @QtCore.Slot()
     def _create_new_track(self) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Load a video first to create tracks.", 3000); return
         new_id = self.element_manager.create_new_track()
         if status_bar: status_bar.showMessage(f"Created Track {new_id}. It is now active.", 3000)
-        if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(new_id, self.tracksTableWidget, config.COL_TRACK_ID)) # Specify table
+        if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(new_id, self.tracksTableWidget, config.COL_TRACK_ID)) 
         if self.dataTabsWidget: self.dataTabsWidget.setCurrentIndex(0)
         self._update_ui_state()
 
     @QtCore.Slot()
-    def _create_new_line_action(self) -> None: # Renamed from _create_new_line_action
-        # ... (existing method)
+    def _create_new_line_action(self) -> None: 
         status_bar = self.statusBar()
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("Load a video first to create a measurement line.", 3000); return
@@ -1846,7 +1803,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._is_defining_measurement_line = True; self._current_line_definition_frame_index = self.current_frame_index
             if status_bar: status_bar.showMessage(f"Defining Line {new_line_id}: Click first point on Frame {self.current_frame_index + 1}. (Esc to cancel)", 0)
             if hasattr(self, 'dataTabsWidget') and self.dataTabsWidget and hasattr(self, 'linesTableWidget') and self.linesTableWidget:
-                # Find the "Measurement Lines" tab and switch to it
                 for i in range(self.dataTabsWidget.count()):
                     if self.dataTabsWidget.tabText(i) == "Measurement Lines":
                          self.dataTabsWidget.setCurrentIndex(i); break
@@ -1856,7 +1812,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(bool)
     def _handle_disable_frame_navigation(self, disable: bool) -> None:
-        # ... (existing method)
         logger.debug(f"Setting frame navigation controls disabled: {disable}")
         enabled = not disable and self.video_loaded
         if self.frameSlider: self.frameSlider.setEnabled(enabled)
@@ -1881,7 +1836,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _redraw_scene_overlay(self) -> None:
-        # ... (existing method)
         if not (self.imageView and self.imageView._scene and self.video_loaded and self.current_frame_index >= 0):
             if self.imageView: self.imageView.clearOverlay()
             return
@@ -2025,7 +1979,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def _get_export_resolution_choice(self) -> Optional[ExportResolutionMode]:
-        # ... (existing method)
         dialog = QtWidgets.QDialog(self); dialog.setWindowTitle("Choose Export Resolution"); dialog.setModal(True)
         layout = QtWidgets.QVBoxLayout(dialog); label = QtWidgets.QLabel("Select the resolution for the export:"); layout.addWidget(label)
         radio_group = QtWidgets.QButtonGroup(dialog); viewport_res_radio = QtWidgets.QRadioButton("Current Viewport Resolution"); viewport_res_radio.setChecked(True)
@@ -2071,9 +2024,9 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Kymograph Error", "The selected measurement line does not have valid endpoint data.")
             return
 
-        if status_bar: status_bar.showMessage("Generating kymograph... please wait.", 0) # Persistent message
+        if status_bar: status_bar.showMessage("Generating kymograph... please wait.", 0) 
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        QtWidgets.QApplication.processEvents() # Ensure cursor and message update
+        QtWidgets.QApplication.processEvents() 
 
         kymo_data_np: Optional[np.ndarray] = None
         try:
@@ -2085,7 +2038,7 @@ class MainWindow(QtWidgets.QMainWindow):
             logger.exception("Exception during kymograph data generation.")
             if status_bar: status_bar.showMessage(f"Error generating kymograph: {e}", 5000)
             QtWidgets.QMessageBox.critical(self, "Kymograph Generation Error", f"An error occurred while generating kymograph data:\n{e}")
-            kymo_data_np = None # Ensure it's None on error
+            kymo_data_np = None 
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
             if status_bar and status_bar.currentMessage() == "Generating kymograph... please wait.":
@@ -2108,8 +2061,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 
                 line_pixel_length_cs = math.sqrt((p2_cs_x - p1_cs_x)**2 + (p2_cs_y - p1_cs_y)**2)
                 
-                # Get scaled length and unit string for display
-                # transform_value_for_display returns (value, unit_string)
                 total_line_dist_val, dist_units_str = self.scale_manager.transform_value_for_display(line_pixel_length_cs)
                 
                 total_vid_duration_s = self.total_duration_ms / 1000.0
@@ -2121,8 +2072,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     total_line_distance=total_line_dist_val,
                     distance_units=dist_units_str,
                     total_video_duration_seconds=total_vid_duration_s,
-                    total_frames_in_kymo=kymo_data_np.shape[0],      # time_frames from raw data
-                    num_distance_points_in_kymo=kymo_data_np.shape[1],# distance_pixels from raw data
+                    total_frames_in_kymo=kymo_data_np.shape[0],      
+                    num_distance_points_in_kymo=kymo_data_np.shape[1],
                     parent=self
                 )
                 kymo_dialog.show()
@@ -2131,15 +2082,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.information(self, "Kymograph Generated",
                                                  "Kymograph data generated, but display dialog is not yet implemented.")
         else:
-            if status_bar and not status_bar.currentMessage().startswith("Error generating kymograph"): # Avoid overwriting specific error
+            if status_bar and not status_bar.currentMessage().startswith("Error generating kymograph"): 
                 status_bar.showMessage("Kymograph generation failed or produced no data.", 4000)
             logger.warning("Kymograph data is None after generation attempt.")
 
     @QtCore.Slot()
     def _trigger_open_track_analysis_dialog(self) -> None:
-        """
-        Opens the TrackAnalysisDialog for the currently selected track.
-        """
         logger.info("Analyze Track action triggered.")
         status_bar = self.statusBar()
 
@@ -2162,12 +2110,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         track_element_original = self.element_manager.elements[active_element_idx]
-        if not track_element_original.get('data'): # Check if the track has any points
+        if not track_element_original.get('data'): 
             if status_bar: status_bar.showMessage("Selected track has no data points to analyze.", 3000)
             QtWidgets.QMessageBox.information(self, "Track Analysis", "The selected track has no data points.")
             return
 
-        if TrackAnalysisDialog is None or not PYQTGRAPH_AVAILABLE: # Check if dialog and pyqtgraph are available
+        if TrackAnalysisDialog is None or not PYQTGRAPH_AVAILABLE: 
             logger.error("TrackAnalysisDialog or PyQtGraph is not available. Cannot open analysis window.")
             QtWidgets.QMessageBox.critical(self, "Analysis Unavailable",
                                            "Track analysis functionality requires PyQtGraph and is currently unavailable.\n"
@@ -2175,7 +2123,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if status_bar: status_bar.showMessage("Error: Track analysis feature unavailable.", 4000)
             return
 
-        # Proceed with opening the dialog
         try:
             track_copy = copy.deepcopy(track_element_original) # [cite: 29]
             video_fps_val = self.video_handler.fps # [cite: 29]
@@ -2193,9 +2140,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
             dialog = TrackAnalysisDialog(track_copy, video_fps_val, video_height_val, self) # [cite: 30]
-            dialog.exec() # Modal execution for now [cite: 15, 30]
-            # If dialog.exec() is used, code here will run after dialog is closed.
-            # Future: If dialog.show() is used, might need signals for when analysis is "saved" or "applied".
+            dialog.exec() # [cite: 15, 30]
             logger.info(f"TrackAnalysisDialog for track {track_copy.get('id')} closed.")
 
         except Exception as e:
@@ -2205,7 +2150,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_export_video(self) -> None:
-        # ... (existing method)
         if not self.video_loaded or not self._export_handler: QtWidgets.QMessageBox.warning(self, "Export Error", "No video loaded or export handler not ready."); return
         export_options_dialog = ExportOptionsDialog(total_frames=self.total_frames, fps=self.fps, current_frame_idx=self.current_frame_index, video_frame_width=self.frame_width, video_frame_height=self.frame_height, parent=self)
         if export_options_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
@@ -2238,7 +2182,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_export_frame(self) -> None:
-        # ... (existing method)
         if not self.video_loaded or self.current_frame_index < 0 or not self._export_handler: QtWidgets.QMessageBox.warning(self, "Export Frame Error", "No video loaded, no current frame, or export handler not ready."); return
         export_mode = self._get_export_resolution_choice()
         if export_mode is None:
@@ -2254,7 +2197,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _on_export_started(self) -> None:
-        # ... (existing method)
         if self.exportViewAction: self.exportViewAction.setEnabled(False); 
         if self.exportFrameAction: self.exportFrameAction.setEnabled(False)
         self._export_progress_dialog = QtWidgets.QProgressDialog("Exporting...", "Cancel", 0, 100, self)
@@ -2264,7 +2206,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(str, int, int)
     def _on_export_progress(self, message: str, current_value: int, max_value: int) -> None:
-        # ... (existing method)
         if self._export_progress_dialog:
             if self._export_progress_dialog.maximum() != max_value: self._export_progress_dialog.setMaximum(max_value)
             self._export_progress_dialog.setValue(current_value); self._export_progress_dialog.setLabelText(message)
@@ -2272,7 +2213,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot(bool, str)
     def _on_export_finished(self, success: bool, message: str) -> None:
-        # ... (existing method)
         if self._export_progress_dialog: self._export_progress_dialog.close(); self._export_progress_dialog = None
         status_bar = self.statusBar()
         if status_bar: status_bar.showMessage(message, 5000 if success else 8000)
@@ -2290,30 +2230,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_save_tracks_table_data(self) -> None:
-        # ... (existing method)
         logger.info("Save Tracks Table Data button clicked.")
         self._export_or_copy_table_data(ElementType.TRACK, to_clipboard=False)
 
     @QtCore.Slot()
     def _trigger_copy_tracks_table_data(self) -> None:
-        # ... (existing method)
         logger.info("Copy Tracks Table Data button clicked.")
         self._export_or_copy_table_data(ElementType.TRACK, to_clipboard=True)
 
     @QtCore.Slot()
     def _trigger_save_lines_table_data(self) -> None:
-        # ... (existing method)
         logger.info("Save Lines Table Data button clicked.")
         self._export_or_copy_table_data(ElementType.MEASUREMENT_LINE, to_clipboard=False)
 
     @QtCore.Slot()
     def _trigger_copy_lines_table_data(self) -> None:
-        # ... (existing method)
         logger.info("Copy Lines Table Data button clicked.")
         self._export_or_copy_table_data(ElementType.MEASUREMENT_LINE, to_clipboard=True)
 
     def _export_or_copy_table_data(self, element_type: ElementType, to_clipboard: bool) -> None:
-        # ... (existing method)
         action_verb = "copy" if to_clipboard else "export"
         action_ing = "Copying" if to_clipboard else "Exporting"
         type_name_plural = f"{element_type.name.lower().replace('_', ' ')}s"
@@ -2392,7 +2327,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        # ... (existing method)
         key = event.key(); modifiers = event.modifiers(); accepted = False; status_bar = self.statusBar()
         if key == QtCore.Qt.Key.Key_Escape:
             if self._is_defining_measurement_line: self._cancel_active_line_definition_ui_reset(); 
@@ -2424,14 +2358,13 @@ class MainWindow(QtWidgets.QMainWindow):
         else: super().keyPressEvent(event)
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        # ... (existing method)
         if self.video_loaded and isinstance(watched, QtWidgets.QLineEdit):
             line_edit_to_process: Optional[QtWidgets.QLineEdit] = None; is_frame_edit = False; is_time_edit = False; is_zoom_edit = False
             if hasattr(self, 'currentFrameLineEdit') and watched is self.currentFrameLineEdit: line_edit_to_process = self.currentFrameLineEdit; is_frame_edit = True
             elif hasattr(self, 'currentTimeLineEdit') and watched is self.currentTimeLineEdit: line_edit_to_process = self.currentTimeLineEdit; is_time_edit = True
             elif hasattr(self, 'zoomLevelLineEdit') and watched is self.zoomLevelLineEdit: line_edit_to_process = self.zoomLevelLineEdit; is_zoom_edit = True
             if line_edit_to_process:
-                if event.type() == QtCore.QEvent.Type.FocusIn:
+                if event.type() == QtCore.QEvent.FocusIn:
                     line_edit_to_process.setReadOnly(False)
                     if is_frame_edit and self.current_frame_index >= 0: line_edit_to_process.setText(str(self.current_frame_index + 1))
                     elif is_time_edit and self.current_frame_index >= 0:
@@ -2444,7 +2377,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         else: line_edit_to_process.setText("---.-")
                     else: line_edit_to_process.setText("")
                     line_edit_to_process.selectAll(); return False
-                elif event.type() == QtCore.QEvent.Type.FocusOut:
+                elif event.type() == QtCore.QEvent.FocusOut:
                     if not line_edit_to_process.isReadOnly():
                         if is_frame_edit: self._handle_frame_input_finished()
                         elif is_time_edit: self._handle_time_input_finished()
@@ -2454,7 +2387,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_undo_point_action(self) -> None:
-        # ... (existing method)
         if not self.video_loaded:
             if self.statusBar(): self.statusBar().showMessage("Cannot undo: No video loaded.", 3000); return
         if self.element_manager.undo_last_point_action():
@@ -2465,7 +2397,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _show_video_info_dialog(self) -> None:
-        # ... (existing method)
         status_bar = self.statusBar()
         if not self.video_loaded:
             if status_bar: status_bar.showMessage("No video loaded.", 3000); return
@@ -2477,21 +2408,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _show_about_dialog(self) -> None:
-        # ... (keep existing method)
         icon = self.windowIcon()
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle(f"About {config.APP_NAME}")
-        box.setTextFormat(QtCore.Qt.TextFormat.RichText) # Ensure RichText for wrapping and HTML
+        box.setTextFormat(QtCore.Qt.TextFormat.RichText) 
         
-        # Constructing the text with HTML for better control over wrapping and formatting
         about_text = (
             f"<b>{config.APP_NAME}</b><br>"
             f"Version {config.APP_VERSION}<br><br>"
             "PyroTracker is a tool for tracking volcanic pyroclasts in eruption videos, "
             "allowing users to mark element positions, manage coordinate systems, "
             "set scales, and export data and visuals.<br><br>"
-            f"Developed at Durham University.<br>" # Example addition
-            f"Project Page: <a href='https://github.com/EdLlewellin/PyroTracker'>github.com/EdLlewellin/PyroTracker</a><br><br>" # Example addition
+            f"Developed at Durham University.<br>" 
+            f"Project Page: <a href='https://github.com/EdLlewellin/PyroTracker'>github.com/EdLlewellin/PyroTracker</a><br><br>" 
             f"Python {sys.version.split()[0]}, PySide6 {QtCore.__version__}"
         )
         box.setText(about_text)
@@ -2501,7 +2430,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if not pix.isNull(): 
                 box.setIconPixmap(pix)
             else: 
-                # Fallback if pixmap creation failed for some reason, though unlikely if icon is valid
                 box.setIcon(QtWidgets.QMessageBox.Icon.Information)
         else: 
             box.setIcon(QtWidgets.QMessageBox.Icon.Information)
@@ -2510,7 +2438,6 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
-        # ... (existing method)
         logger.info("Application close event triggered.")
         if self.project_manager and self.project_manager.project_has_unsaved_changes():
             reply = QtWidgets.QMessageBox.warning(
@@ -2539,7 +2466,6 @@ class MainWindow(QtWidgets.QMainWindow):
         super().closeEvent(event)
         
     def _format_time(self, ms: float) -> str:
-        # ... (existing method)
         if ms < 0: return "--:--.---"
         try: s,mils = divmod(ms,1000); m,s = divmod(int(s),60); return f"{m:02}:{s:02}.{int(mils):03}"
         except: return "--:--.---"

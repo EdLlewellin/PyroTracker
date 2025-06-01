@@ -24,7 +24,7 @@ def setup_main_window_ui(main_window: 'MainWindow') -> None:
     style: QtWidgets.QStyle = main_window.style()
 
     main_window.mainSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-    main_window.setCentralWidget(main_window.mainSplitter)
+    # main_window.setCentralWidget(main_window.mainSplitter)
 
     # --- Left Panel (ImageView and Video Controls) ---
     main_window.leftPanelWidget = QtWidgets.QWidget()
