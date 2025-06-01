@@ -621,10 +621,53 @@ class ScaleAnalysisView(QtWidgets.QWidget):
 
     @QtCore.Slot(object, list)
     def _on_ancillary_plot_point_clicked(self, plot_item: pg.ScatterPlotItem, points: List[pg.SpotItem]) -> None: # [cite: 132]
-        # Implementation for this will be added in the next step
-        logger.debug(f"Ancillary plot point clicked. Plot: {plot_item}, Points: {len(points)}")
-        pass # Placeholder
-    # --- END MODIFICATION ---
+        """
+        Handles clicks on points within any of the ancillary diagnostic plots.
+        Selects the corresponding track in the analysis_tracks_table.
+        """
+        if not points or not self.analysis_tracks_table: # [cite: 132]
+            logger.debug("Ancillary plot click ignored: No points clicked or table not available.")
+            return
+
+        # Assuming the first clicked point is the one of interest
+        clicked_spot = points[0]
+        track_id_from_plot_point = clicked_spot.data() # This 'data' was set to track_id during scatter plot creation [cite: 132]
+
+        if track_id_from_plot_point is None:
+            logger.warning("Clicked point on ancillary plot has no associated track_id data.")
+            return
+
+        if not isinstance(track_id_from_plot_point, int):
+            logger.warning(f"Clicked point on ancillary plot has non-integer track_id data: {track_id_from_plot_point}")
+            return
+            
+        logger.debug(f"Ancillary plot point clicked. Track ID from point data: {track_id_from_plot_point}")
+
+        # Find and select the row in the analysis_tracks_table [cite: 133]
+        found_row = -1
+        for r in range(self.analysis_tracks_table.rowCount()):
+            id_item = self.analysis_tracks_table.item(r, 0) # Assuming ID is in column 0
+            if id_item:
+                table_track_id = id_item.data(QtCore.Qt.ItemDataRole.UserRole) # Get track_id stored in the item
+                if table_track_id == track_id_from_plot_point:
+                    found_row = r
+                    break
+        
+        if found_row != -1:
+            logger.debug(f"Found track ID {track_id_from_plot_point} in table at row {found_row}. Selecting row.")
+            # Check if the row is already selected to avoid potential recursion if selection also triggers this
+            current_selected_row = -1
+            if self.analysis_tracks_table.selectedItems():
+                current_selected_row = self.analysis_tracks_table.currentRow()
+            
+            if current_selected_row != found_row:
+                self.analysis_tracks_table.selectRow(found_row)
+            else:
+                logger.debug(f"Row {found_row} for track ID {track_id_from_plot_point} is already selected.")
+            # Selecting the row will trigger _on_analysis_table_selection_changed,
+            # which then handles updating the main plot and the SingleTrackFitWidget. [cite: 134]
+        else:
+            logger.warning(f"Could not find track ID {track_id_from_plot_point} in analysis_tracks_table.")
 
     @QtCore.Slot(int, dict)
     def _handle_save_track_analysis(self, track_id: int, analysis_state_dict: Dict) -> None:
