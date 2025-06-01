@@ -12,10 +12,7 @@ from typing import TYPE_CHECKING, Optional, Dict, List
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from element_manager import ElementType, DEFAULT_ANALYSIS_STATE
-
-# --- BEGIN MODIFICATION: Import SingleTrackFitWidget ---
-from single_track_fit_widget import SingleTrackFitWidget # [cite: 98]
-# --- END MODIFICATION ---
+from single_track_fit_widget import SingleTrackFitWidget
 
 try:
     import pyqtgraph as pg
@@ -33,6 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 class CustomZoomViewBox(pg.ViewBox):
+    # ... (CustomZoomViewBox class remains unchanged) ...
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._default_mouse_mode = self.PanMode
@@ -74,15 +72,19 @@ class CustomZoomViewBox(pg.ViewBox):
 
 
 class ScaleAnalysisView(QtWidgets.QWidget):
+    # ... (__init__ remains unchanged from your latest version) ...
     def __init__(self, main_window_ref: 'MainWindow', parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.main_window_ref = main_window_ref
         
         self.main_yt_plot: Optional[pg.PlotWidget] = None
         self.analysis_tracks_table: Optional[QtWidgets.QTableWidget] = None
-        # --- BEGIN MODIFICATION: Add attribute for SingleTrackFitWidget ---
-        self.single_track_fit_widget: Optional[SingleTrackFitWidget] = None # [cite: 98]
-        # --- END MODIFICATION ---
+        self.single_track_fit_widget: Optional[SingleTrackFitWidget] = None
+
+        self.scale_vs_time_plot: Optional[pg.PlotWidget] = None
+        self.scale_vs_centroid_x_plot: Optional[pg.PlotWidget] = None
+        self.scale_vs_centroid_y_plot: Optional[pg.PlotWidget] = None
+        self.scale_vs_radial_pos_plot: Optional[pg.PlotWidget] = None
 
         self.track_plot_items: Dict[int, Dict[str, pg.PlotDataItem | pg.ScatterPlotItem]] = {}
         self.current_selected_track_id_for_plot: Optional[int] = None
@@ -98,7 +100,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         ]
 
         self._setup_ui()
-        self._connect_signals() # Added a separate method for signal connections
+        self._connect_signals()
 
         if self.main_window_ref and self.main_window_ref.element_manager:
             self.main_window_ref.element_manager.elementListChanged.connect(self.populate_tracks_table)
@@ -108,6 +110,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
 
         logger.info("ScaleAnalysisView initialized.")
 
+    # ... (_setup_ui, _connect_signals, _setup_analysis_tracks_table, _get_plot_color_for_track, _update_main_yt_plot remain unchanged) ...
     def _setup_ui(self) -> None:
         main_layout = QtWidgets.QHBoxLayout(self)
 
@@ -133,12 +136,49 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             left_main_area_layout.addWidget(self.main_yt_plot_placeholder, stretch=3)
 
         self.ancillary_global_groupbox = QtWidgets.QGroupBox("Diagnostic Plots & Global Scale")
-        ancillary_global_layout = QtWidgets.QVBoxLayout(self.ancillary_global_groupbox)
-        placeholder_label_ancillary = QtWidgets.QLabel("Ancillary plots and global scale results will appear here.")
-        placeholder_label_ancillary.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        ancillary_global_layout.addWidget(placeholder_label_ancillary)
+        
+        ancillary_plots_container_layout = QtWidgets.QGridLayout(self.ancillary_global_groupbox)
+        ancillary_plots_container_layout.setContentsMargins(6, 6, 6, 6)
+        ancillary_plots_container_layout.setSpacing(5)
+
+        if PYQTGRAPH_AVAILABLE and pg is not None:
+            self.scale_vs_time_plot = pg.PlotWidget()
+            self.scale_vs_time_plot.setBackground('w')
+            self.scale_vs_time_plot.showGrid(x=True, y=True, alpha=0.3)
+            self.scale_vs_time_plot.setLabel('left', "Derived Scale (m/px)")
+            self.scale_vs_time_plot.setLabel('bottom', "Average Fit Time (s)")
+            ancillary_plots_container_layout.addWidget(self.scale_vs_time_plot, 0, 0)
+
+            self.scale_vs_centroid_x_plot = pg.PlotWidget()
+            self.scale_vs_centroid_x_plot.setBackground('w')
+            self.scale_vs_centroid_x_plot.showGrid(x=True, y=True, alpha=0.3)
+            self.scale_vs_centroid_x_plot.setLabel('left', "Derived Scale (m/px)")
+            self.scale_vs_centroid_x_plot.setLabel('bottom', "Centroid X (px, TL)")
+            ancillary_plots_container_layout.addWidget(self.scale_vs_centroid_x_plot, 0, 1)
+
+            self.scale_vs_centroid_y_plot = pg.PlotWidget()
+            self.scale_vs_centroid_y_plot.setBackground('w')
+            self.scale_vs_centroid_y_plot.showGrid(x=True, y=True, alpha=0.3)
+            self.scale_vs_centroid_y_plot.setLabel('left', "Derived Scale (m/px)")
+            self.scale_vs_centroid_y_plot.setLabel('bottom', "Centroid Y (px, TL)")
+            ancillary_plots_container_layout.addWidget(self.scale_vs_centroid_y_plot, 1, 0)
+
+            self.scale_vs_radial_pos_plot = pg.PlotWidget()
+            self.scale_vs_radial_pos_plot.setBackground('w')
+            self.scale_vs_radial_pos_plot.showGrid(x=True, y=True, alpha=0.3)
+            self.scale_vs_radial_pos_plot.setLabel('left', "Derived Scale (m/px)")
+            self.scale_vs_radial_pos_plot.setLabel('bottom', "Radial Distance from Image Center (px)")
+            ancillary_plots_container_layout.addWidget(self.scale_vs_radial_pos_plot, 1, 1)
+        else: 
+            placeholder_label_ancillary = QtWidgets.QLabel(
+                "PyQtGraph is not available. Ancillary diagnostic plots cannot be displayed."
+            )
+            placeholder_label_ancillary.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            placeholder_label_ancillary.setWordWrap(True)
+            ancillary_plots_container_layout.addWidget(placeholder_label_ancillary, 0, 0, 2, 2)
+        
         self.ancillary_global_groupbox.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Expanding)
-        left_main_area_layout.addWidget(self.ancillary_global_groupbox, stretch=1)
+        left_main_area_layout.addWidget(self.ancillary_global_groupbox, stretch=2)
         main_layout.addWidget(left_main_area_widget, stretch=3)
 
         right_panel_widget = QtWidgets.QWidget()
@@ -150,45 +190,35 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self._setup_analysis_tracks_table()
         right_panel_layout.addWidget(self.analysis_tracks_table, stretch=2)
 
-        self.single_track_groupbox = QtWidgets.QGroupBox("Selected Track Details & Fit Controls") # [cite: 19]
-        single_track_outer_layout = QtWidgets.QVBoxLayout(self.single_track_groupbox) # Use an outer layout for margins
-        single_track_outer_layout.setContentsMargins(6,6,6,6) # Standard group box margins
-        single_track_outer_layout.setSpacing(0) # Outer layout has no spacing, inner widget handles it
+        self.single_track_groupbox = QtWidgets.QGroupBox("Selected Track Details & Fit Controls")
+        single_track_outer_layout = QtWidgets.QVBoxLayout(self.single_track_groupbox)
+        single_track_outer_layout.setContentsMargins(6,6,6,6)
+        single_track_outer_layout.setSpacing(0)
 
-        # --- BEGIN MODIFICATION: Instantiate and add SingleTrackFitWidget ---
-        self.single_track_fit_widget = SingleTrackFitWidget(main_window_ref=self.main_window_ref, parent_view=self) # [cite: 98]
-        # Replace the placeholder label with the actual widget
-        # Remove old placeholder_label_single_track if it was added to single_track_layout
-        # Check if single_track_groupbox already has a layout; if so, add widget to it.
-        # If not, set a new layout and add. For robustness:
+        self.single_track_fit_widget = SingleTrackFitWidget(main_window_ref=self.main_window_ref, parent_view=self)
         existing_layout = self.single_track_groupbox.layout()
         if existing_layout:
-            # Clear existing items (e.g., the placeholder label)
             while existing_layout.count():
                 child = existing_layout.takeAt(0)
                 if child.widget():
                     child.widget().deleteLater()
-            existing_layout.addWidget(self.single_track_fit_widget) # [cite: 99]
-        else: # Should not happen if _setup_ui followed plan, but defensive
+            existing_layout.addWidget(self.single_track_fit_widget)
+        else: 
             new_single_track_layout = QtWidgets.QVBoxLayout()
             new_single_track_layout.addWidget(self.single_track_fit_widget)
             self.single_track_groupbox.setLayout(new_single_track_layout)
-        # --- END MODIFICATION ---
         
         self.single_track_groupbox.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Expanding)
         right_panel_layout.addWidget(self.single_track_groupbox, stretch=3)
         main_layout.addWidget(right_panel_widget, stretch=1)
 
-    # --- BEGIN MODIFICATION: New method for connecting signals ---
     def _connect_signals(self) -> None:
-        """Connects signals for UI elements within this view."""
         if self.analysis_tracks_table:
             self.analysis_tracks_table.itemSelectionChanged.connect(self._on_analysis_table_selection_changed)
         
-        if self.single_track_fit_widget: # [cite: 107]
+        if self.single_track_fit_widget:
             self.single_track_fit_widget.analysisSettingsToBeSaved.connect(self._handle_save_track_analysis)
             self.single_track_fit_widget.scaleToBeApplied.connect(self._handle_apply_track_scale)
-    # --- END MODIFICATION ---
 
     def _setup_analysis_tracks_table(self) -> None:
         if not self.analysis_tracks_table:
@@ -202,9 +232,9 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.analysis_tracks_table.setAlternatingRowColors(True)
         self.analysis_tracks_table.verticalHeader().setVisible(False)
         header = self.analysis_tracks_table.horizontalHeader()
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) 
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.Interactive)    
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)        
         header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
         self.analysis_tracks_table.setColumnWidth(1, 70)
 
@@ -356,90 +386,259 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             if not tracks: self.main_yt_plot.setTitle("No tracks to plot")
             self.main_yt_plot.autoRange(padding=0.05)
             logger.debug("Called autoRange on main_yt_plot after populating tracks table.")
+        
+        # --- BEGIN MODIFICATION: Call _update_ancillary_plots ---
+        self._update_ancillary_plots() #
+        # --- END MODIFICATION ---
 
     def update_on_project_or_video_change(self, is_project_or_video_loaded: bool) -> None:
         logger.debug(f"ScaleAnalysisView: update_on_project_or_video_change called. Loaded: {is_project_or_video_loaded}")
         if is_project_or_video_loaded:
-            self.populate_tracks_table()
+            self.populate_tracks_table() # This will also call _update_ancillary_plots
         else:
             if self.analysis_tracks_table: self.analysis_tracks_table.setRowCount(0)
             if PYQTGRAPH_AVAILABLE and hasattr(self, 'main_yt_plot') and self.main_yt_plot is not None:
                 self.main_yt_plot.clear(); self.main_yt_plot.setTitle("")
             self.track_plot_items.clear()
             self.current_selected_track_id_for_plot = None
-            # --- BEGIN MODIFICATION: Clear SingleTrackFitWidget ---
-            if self.single_track_fit_widget: # [cite: 100] (implicitly, as part of resetting the view)
+            if self.single_track_fit_widget:
                 self.single_track_fit_widget.clear_and_disable()
+            # --- BEGIN MODIFICATION: Clear ancillary plots when project/video closes ---
+            self._clear_all_ancillary_plots() #
             # --- END MODIFICATION ---
+
         self.setEnabled(is_project_or_video_loaded and PYQTGRAPH_AVAILABLE)
 
+    # ... (_on_analysis_table_selection_changed, _on_main_yt_plot_point_clicked remain unchanged) ...
     @QtCore.Slot()
-    def _on_analysis_table_selection_changed(self) -> None: # [cite: 101]
+    def _on_analysis_table_selection_changed(self) -> None: 
         if not self.analysis_tracks_table: return
         selected_items = self.analysis_tracks_table.selectedItems()
         newly_selected_track_id: Optional[int] = None
 
         if selected_items:
             selected_row = self.analysis_tracks_table.row(selected_items[0])
-            id_item = self.analysis_tracks_table.item(selected_row, 0)
+            id_item = self.analysis_tracks_table.item(selected_row, 0) 
             if id_item:
                 track_id_data = id_item.data(QtCore.Qt.ItemDataRole.UserRole)
                 if isinstance(track_id_data, int):
-                    newly_selected_track_id = track_id_data
+                    newly_selected_track_id = track_id_data 
         
         if self.current_selected_track_id_for_plot != newly_selected_track_id:
-            self.current_selected_track_id_for_plot = newly_selected_track_id
+            self.current_selected_track_id_for_plot = newly_selected_track_id 
             logger.debug(f"ScaleAnalysisView: Selected track for plot highlight changed to ID: {self.current_selected_track_id_for_plot}")
             self._update_main_yt_plot() 
 
-        # --- BEGIN MODIFICATION: Load data into SingleTrackFitWidget ---
-        if self.single_track_fit_widget and self.main_window_ref and self.main_window_ref.element_manager and self.main_window_ref.video_handler: # [cite: 101]
+        if self.single_track_fit_widget and self.main_window_ref and self.main_window_ref.element_manager and self.main_window_ref.video_handler:
             if newly_selected_track_id is not None:
                 track_to_load = None
                 for el in self.main_window_ref.element_manager.elements:
                     if el.get('id') == newly_selected_track_id and el.get('type') == ElementType.TRACK:
-                        track_to_load = el # [cite: 102]
+                        track_to_load = el
                         break
                 if track_to_load:
-                    self.single_track_fit_widget.load_track_data( # [cite: 102]
-                        copy.deepcopy(track_to_load), # Pass a copy
+                    self.single_track_fit_widget.load_track_data(
+                        copy.deepcopy(track_to_load),
                         self.main_window_ref.video_handler.fps,
                         self.main_window_ref.video_handler.frame_height
                     )
-                else: # Should not happen if table is synced with element_manager
+                else:
                     self.single_track_fit_widget.clear_and_disable()
-            else: # No track selected in table
-                self.single_track_fit_widget.clear_and_disable() # [cite: 100]
-        # --- END MODIFICATION ---
+            else:
+                self.single_track_fit_widget.clear_and_disable()
 
 
-    @QtCore.Slot(object, list)
-    def _on_main_yt_plot_point_clicked(self, scatter_plot_item: pg.ScatterPlotItem, spot_items: List[pg.SpotItem]) -> None:
-        if not spot_items or not self.analysis_tracks_table: return
-        clicked_spot_data = spot_items[0].data()
+    @QtCore.Slot(object, list) 
+    def _on_main_yt_plot_point_clicked(self, scatter_plot_item: pg.ScatterPlotItem, spot_items: List[pg.SpotItem]) -> None: 
+        if not spot_items or not self.analysis_tracks_table:
+            return
+        
+        clicked_spot_data = spot_items[0].data() 
         if not isinstance(clicked_spot_data, int):
             logger.warning(f"Clicked spot has non-integer data: {clicked_spot_data}")
             return
+            
         clicked_track_id = clicked_spot_data
         logger.debug(f"Point clicked on main_yt_plot for track ID: {clicked_track_id}")
+
         for r in range(self.analysis_tracks_table.rowCount()):
             id_item = self.analysis_tracks_table.item(r, 0)
             if id_item and id_item.data(QtCore.Qt.ItemDataRole.UserRole) == clicked_track_id:
-                if not self.analysis_tracks_table.item(r,0).isSelected():
+                if not self.analysis_tracks_table.item(r,0).isSelected(): 
                     self.analysis_tracks_table.selectRow(r)
                 break
-    
-    # --- BEGIN MODIFICATION: Slots to handle signals from SingleTrackFitWidget ---
+
+    def _get_track_fit_summary_data(self, track_element: Dict) -> Optional[Dict]:
+        if not (self.main_window_ref and self.main_window_ref.video_handler and self.main_window_ref.video_handler.is_loaded):
+            logger.warning("_get_track_fit_summary_data: Video not loaded, cannot calculate summary.")
+            return None
+
+        track_id = track_element.get('id')
+        analysis_state = track_element.get('analysis_state', {})
+        fit_results = analysis_state.get('fit_results', {})
+        fit_settings = analysis_state.get('fit_settings', {})
+        track_data = track_element.get('data', [])
+
+        derived_scale = fit_results.get('derived_scale_m_per_px')
+        coefficients = fit_results.get('coefficients_poly2')
+
+        if derived_scale is None or coefficients is None or not track_data:
+            logger.debug(f"Track ID {track_id}: No valid derived scale, coefficients, or no track data. Skipping summary.")
+            return None
+
+        excluded_frames = fit_settings.get('excluded_point_frames', [])
+        time_range_s_setting = fit_settings.get('time_range_s', None)
+
+        fitted_points_info = [] 
+
+        for point_tuple in track_data:
+            frame_idx, time_ms, x_tl_px, y_tl_px = point_tuple
+            if frame_idx in excluded_frames:
+                continue
+            
+            time_s = time_ms / 1000.0
+            if time_range_s_setting:
+                min_t, max_t = time_range_s_setting
+                if not (min_t <= time_s <= max_t):
+                    continue
+            
+            fitted_points_info.append((time_s, x_tl_px, y_tl_px))
+
+        if not fitted_points_info:
+            logger.debug(f"Track ID {track_id}: No points remained after filtering for exclusion and time range. Skipping summary.")
+            return None
+
+        times_s_fitted = np.array([p[0] for p in fitted_points_info])
+        x_tl_px_fitted = np.array([p[1] for p in fitted_points_info])
+        y_tl_px_fitted = np.array([p[2] for p in fitted_points_info])
+
+        avg_time_s = float(np.mean(times_s_fitted))
+        centroid_x_px = float(np.mean(x_tl_px_fitted))
+        centroid_y_px = float(np.mean(y_tl_px_fitted))
+
+        video_width = self.main_window_ref.video_handler.frame_width
+        video_height = self.main_window_ref.video_handler.frame_height
+        center_x_px = video_width / 2.0
+        center_y_px = video_height / 2.0
+
+        radial_pos_px = math.sqrt((centroid_x_px - center_x_px)**2 + (centroid_y_px - center_y_px)**2)
+
+        summary = {
+            'track_id': track_id,
+            'derived_scale': derived_scale,
+            'avg_time_s': avg_time_s,
+            'centroid_x_px': centroid_x_px,
+            'centroid_y_px': centroid_y_px,
+            'radial_pos_px': radial_pos_px
+        }
+        logger.debug(f"Track ID {track_id}: Fit summary calculated: {summary}")
+        return summary
+
+    # --- BEGIN MODIFICATION: Add _update_ancillary_plots and _on_ancillary_plot_point_clicked ---
+    def _clear_all_ancillary_plots(self) -> None:
+        """Clears all data from the ancillary plots."""
+        ancillary_plots = [
+            self.scale_vs_time_plot, self.scale_vs_centroid_x_plot,
+            self.scale_vs_centroid_y_plot, self.scale_vs_radial_pos_plot
+        ]
+        for plot in ancillary_plots:
+            if plot:
+                plot.clear() # Clears all items from the plot
+                # Optionally reset titles if they were set dynamically
+                # plot.setTitle("") 
+        logger.debug("Cleared all ancillary plots.")
+
+    def _update_ancillary_plots(self) -> None: # [cite: 125]
+        """Updates all ancillary diagnostic plots with current track fit data."""
+        if not PYQTGRAPH_AVAILABLE:
+            return
+        
+        logger.debug("ScaleAnalysisView: Updating ancillary diagnostic plots.")
+        self._clear_all_ancillary_plots() #
+
+        if not (self.main_window_ref and self.main_window_ref.element_manager):
+            logger.warning("Cannot update ancillary plots: ElementManager not available.")
+            return
+
+        fit_summaries: List[Dict] = [] # [cite: 126]
+        for track_element in self.main_window_ref.element_manager.elements:
+            if track_element.get('type') == ElementType.TRACK:
+                summary = self._get_track_fit_summary_data(track_element) # [cite: 127]
+                if summary:
+                    fit_summaries.append(summary)
+        
+        if not fit_summaries:
+            logger.debug("No valid fit summaries to display in ancillary plots.")
+            # Optionally set titles to "No data"
+            if self.scale_vs_time_plot: self.scale_vs_time_plot.setTitle("Scale vs Time (No Data)")
+            # ... and so on for other plots
+            return
+
+        # Prepare data arrays
+        track_ids = [s['track_id'] for s in fit_summaries]
+        scales = np.array([s['derived_scale'] for s in fit_summaries])
+        avg_times = np.array([s['avg_time_s'] for s in fit_summaries])
+        centroid_xs = np.array([s['centroid_x_px'] for s in fit_summaries])
+        centroid_ys = np.array([s['centroid_y_px'] for s in fit_summaries])
+        radial_positions = np.array([s['radial_pos_px'] for s in fit_summaries])
+
+        point_brushes = [self._get_plot_color_for_track(tid) for tid in track_ids]
+
+        # Plot 1: Scale vs. Time
+        if self.scale_vs_time_plot:
+            scatter_time = pg.ScatterPlotItem(x=avg_times, y=scales, data=track_ids, 
+                                              symbol='o', size=8, brush=point_brushes) # [cite: 128, 129]
+            scatter_time.sigClicked.connect(self._on_ancillary_plot_point_clicked) # [cite: 130]
+            self.scale_vs_time_plot.addItem(scatter_time)
+            self.scale_vs_time_plot.autoRange() # [cite: 130]
+
+        # Plot 2: Scale vs. Centroid X
+        if self.scale_vs_centroid_x_plot:
+            scatter_cx = pg.ScatterPlotItem(x=centroid_xs, y=scales, data=track_ids,
+                                            symbol='o', size=8, brush=point_brushes)
+            scatter_cx.sigClicked.connect(self._on_ancillary_plot_point_clicked)
+            self.scale_vs_centroid_x_plot.addItem(scatter_cx)
+            self.scale_vs_centroid_x_plot.autoRange()
+
+        # Plot 3: Scale vs. Centroid Y
+        if self.scale_vs_centroid_y_plot:
+            scatter_cy = pg.ScatterPlotItem(x=centroid_ys, y=scales, data=track_ids,
+                                            symbol='o', size=8, brush=point_brushes)
+            scatter_cy.sigClicked.connect(self._on_ancillary_plot_point_clicked)
+            self.scale_vs_centroid_y_plot.addItem(scatter_cy)
+            self.scale_vs_centroid_y_plot.autoRange()
+
+        # Plot 4: Scale vs. Radial Position
+        if self.scale_vs_radial_pos_plot:
+            scatter_rad = pg.ScatterPlotItem(x=radial_positions, y=scales, data=track_ids,
+                                             symbol='o', size=8, brush=point_brushes)
+            scatter_rad.sigClicked.connect(self._on_ancillary_plot_point_clicked)
+            self.scale_vs_radial_pos_plot.addItem(scatter_rad)
+            self.scale_vs_radial_pos_plot.autoRange()
+            
+        logger.debug(f"Updated ancillary plots with {len(fit_summaries)} data points.")
+
+
+    @QtCore.Slot(object, list)
+    def _on_ancillary_plot_point_clicked(self, plot_item: pg.ScatterPlotItem, points: List[pg.SpotItem]) -> None: # [cite: 132]
+        # Implementation for this will be added in the next step
+        logger.debug(f"Ancillary plot point clicked. Plot: {plot_item}, Points: {len(points)}")
+        pass # Placeholder
+    # --- END MODIFICATION ---
+
     @QtCore.Slot(int, dict)
-    def _handle_save_track_analysis(self, track_id: int, analysis_state_dict: Dict) -> None: # [cite: 103]
+    def _handle_save_track_analysis(self, track_id: int, analysis_state_dict: Dict) -> None:
         logger.info(f"ScaleAnalysisView: Received request to save analysis for Track ID {track_id}.")
         if self.main_window_ref and self.main_window_ref.element_manager:
-            success = self.main_window_ref.element_manager.update_track_analysis_state(track_id, analysis_state_dict) # [cite: 103]
+            success = self.main_window_ref.element_manager.update_track_analysis_state(track_id, analysis_state_dict)
             if success:
                 logger.info(f"Analysis state for Track ID {track_id} updated in ElementManager.")
-                self.populate_tracks_table() # [cite: 104]
-                self._update_main_yt_plot()  # [cite: 104]
-                # Optionally, provide user feedback via status bar or message box
+                self.populate_tracks_table() # This will call _update_ancillary_plots
+                self._update_main_yt_plot() 
+                # --- BEGIN MODIFICATION: Call _update_ancillary_plots (already called by populate_tracks_table) ---
+                # Redundant if populate_tracks_table calls it, but explicit here for clarity if needed.
+                # self._update_ancillary_plots() # [cite: 131] (No, populate_tracks_table now handles this)
+                # --- END MODIFICATION ---
                 if self.main_window_ref.statusBar():
                     self.main_window_ref.statusBar().showMessage(f"Analysis for Track {track_id} saved.", 3000)
             else:
@@ -448,14 +647,15 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         else:
             logger.error("Cannot save track analysis: MainWindow or ElementManager not available.")
 
+    # ... (_handle_apply_track_scale remains unchanged) ...
     @QtCore.Slot(int, float)
-    def _handle_apply_track_scale(self, track_id: int, derived_scale: float) -> None: # [cite: 103]
+    def _handle_apply_track_scale(self, track_id: int, derived_scale: float) -> None:
         logger.info(f"ScaleAnalysisView: Received request to apply scale {derived_scale:.6g} m/px from Track ID {track_id}.")
         if not (self.main_window_ref and self.main_window_ref.scale_manager and self.main_window_ref.element_manager):
             logger.error("Cannot apply track scale: Core managers not available.")
             return
 
-        reply = QtWidgets.QMessageBox.question( # [cite: 105]
+        reply = QtWidgets.QMessageBox.question(
             self, "Apply Scale to Project",
             f"Apply derived scale ({derived_scale:.6g} m/px) from Track {track_id} to the entire project?\n"
             "This will override any existing project scale and clear any manually drawn scale line.",
@@ -463,10 +663,9 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             QtWidgets.QMessageBox.StandardButton.No
         )
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
-            scale_source_desc = f"Track {track_id} Parabolic Fit" # More details could be added from fit_settings['g_value_ms2']
-            self.main_window_ref.scale_manager.set_scale(derived_scale, source_description=scale_source_desc) # [cite: 105]
+            scale_source_desc = f"Track {track_id} Parabolic Fit"
+            self.main_window_ref.scale_manager.set_scale(derived_scale, source_description=scale_source_desc)
             
-            # Update is_applied_to_project flags for all tracks [cite: 106]
             for el in self.main_window_ref.element_manager.elements:
                 if el.get('type') == ElementType.TRACK:
                     el_id = el.get('id')
@@ -474,10 +673,9 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                     current_analysis_state['fit_results']['is_applied_to_project'] = (el_id == track_id)
                     self.main_window_ref.element_manager.update_track_analysis_state(el_id, current_analysis_state)
             
-            self.populate_tracks_table() # [cite: 107]
-            self._update_main_yt_plot() # [cite: 107]
+            self.populate_tracks_table() # This will call _update_ancillary_plots
+            self._update_main_yt_plot() 
             if self.main_window_ref.statusBar():
                 self.main_window_ref.statusBar().showMessage(f"Scale from Track {track_id} applied to project.", 5000)
         else:
             logger.info("User cancelled applying scale from track to project.")
-    # --- END MODIFICATION ---
