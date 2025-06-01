@@ -785,15 +785,19 @@ class MainWindow(QtWidgets.QMainWindow):
             success = self.project_manager.save_project(current_path) 
             if success:
                 if status_bar: status_bar.showMessage(f"Project saved to {os.path.basename(current_path)}", 5000)
+                # --- BEGIN MODIFICATION: Update last project directory on direct save ---
+                current_project_dir = os.path.dirname(current_path)
+                settings_manager.set_setting(settings_manager.KEY_LAST_PROJECT_DIRECTORY, current_project_dir)
+                logger.info(f"Updated last project directory on direct save: {current_project_dir}")
+                # --- END MODIFICATION ---
             else:
                 if status_bar: status_bar.showMessage("Error saving project. See log.", 5000)
                 QtWidgets.QMessageBox.critical(self, "Save Project Error", f"Could not save project to {current_path}.\nPlease check the logs for details.")
         else:
             logger.info("'Save Project' triggered with no current path, deferring to 'Save Project As...'")
-            self._trigger_save_project_as()
+            self._trigger_save_project_as() # Save As will handle setting the path
         
         self._update_ui_state()
-
 
     @QtCore.Slot()
     def _trigger_export_tracks_data_csv(self) -> None:
@@ -1288,12 +1292,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         logger.info("'Save Project As...' action triggered.") 
         
-        current_project_path = self.project_manager.get_current_project_filepath()
-        default_dir = os.path.dirname(current_project_path) if current_project_path else \
-                      (os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd())
+        # --- BEGIN MODIFICATION: Determine starting directory for QFileDialog ---
+        last_project_dir = settings_manager.get_setting(settings_manager.KEY_LAST_PROJECT_DIRECTORY)
+        current_project_file_path = self.project_manager.get_current_project_filepath()
+        
+        default_dir = ""
+        if last_project_dir and os.path.isdir(last_project_dir):
+            default_dir = last_project_dir
+        elif current_project_file_path and os.path.isdir(os.path.dirname(current_project_file_path)):
+            default_dir = os.path.dirname(current_project_file_path)
+        elif self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)):
+            default_dir = os.path.dirname(self.video_filepath)
+        else:
+            default_dir = os.getcwd()
+        # --- END MODIFICATION ---
         
         base_video_name: str = os.path.splitext(os.path.basename(self.video_filepath))[0] if self.video_filepath else "untitled_project"
-        default_filename = os.path.basename(current_project_path) if current_project_path else f"{base_video_name}_project.json"
+        # Use current project name as default if available, otherwise generate from video name
+        default_filename = os.path.basename(current_project_file_path) if current_project_file_path else f"{base_video_name}_project.json"
         
         suggested_filepath: str = os.path.join(default_dir, default_filename)
         
@@ -1318,12 +1334,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if success:
             if status_bar: status_bar.showMessage(f"Project saved to {os.path.basename(save_path)}", 5000)
+            # --- BEGIN MODIFICATION: Save the new project directory ---
+            new_project_dir = os.path.dirname(save_path)
+            settings_manager.set_setting(settings_manager.KEY_LAST_PROJECT_DIRECTORY, new_project_dir)
+            logger.info(f"Saved last project directory: {new_project_dir}")
+            # --- END MODIFICATION ---
         else:
             if status_bar: status_bar.showMessage("Error saving project. See log.", 5000)
             QtWidgets.QMessageBox.critical(self, "Save Project Error", f"Could not save project to {save_path}.\nPlease check the logs for details.")
         
-        self._update_ui_state() 
-
+        self._update_ui_state()
     @QtCore.Slot()
     def _trigger_close_project(self) -> None:
         logger.info("'Close Project' action triggered.")
@@ -1382,7 +1402,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.view_menu_controller.sync_all_menu_items_from_settings_and_panels()
             return
     
-        start_dir = os.path.dirname(self.video_filepath) if self.video_filepath and os.path.isdir(os.path.dirname(self.video_filepath)) else os.getcwd()
+        # --- BEGIN MODIFICATION: Get last project directory for QFileDialog ---
+        last_project_dir = settings_manager.get_setting(settings_manager.KEY_LAST_PROJECT_DIRECTORY)
+        start_dir = last_project_dir if last_project_dir and os.path.isdir(last_project_dir) else os.getcwd()
+        # --- END MODIFICATION ---
+
         load_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Open Project File", start_dir, "PyroTracker Project Files (*.json);;All Files (*)"
         )
@@ -1461,6 +1485,11 @@ class MainWindow(QtWidgets.QMainWindow):
     
                 if project_applied_successfully:
                     self.project_manager.mark_project_as_loaded(load_path) 
+                    # --- BEGIN MODIFICATION: Save the new project directory ---
+                    new_project_dir = os.path.dirname(load_path)
+                    settings_manager.set_setting(settings_manager.KEY_LAST_PROJECT_DIRECTORY, new_project_dir)
+                    logger.info(f"Saved last project directory: {new_project_dir}")
+                    # --- END MODIFICATION ---
                     
                     final_status_message = f"Project loaded from {os.path.basename(load_path)}"
                     if self._project_load_warnings:
@@ -1509,20 +1538,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 logger.debug("MainWindow: ProjectManager._is_loading_project set to False.")
     
                 if project_applied_successfully:
-                    self.project_manager.unsavedChangesStateChanged.emit(self.project_manager.project_has_unsaved_changes())
+                    # Ensure the dirty state is correctly set to False and title updates
+                    # This call will only emit if state changes from True to False,
+                    # or it will re-emit False to ensure UI (like window title) is correct.
+                    self.project_manager.mark_project_as_loaded(load_path) 
                 else:
+                    # If load failed but we had a path, it's complex.
+                    # Simplest is to ensure UI reflects no valid project.
                     if loaded_state_dict is not None or load_path: 
                          if not self.video_loaded: 
                             self.project_manager.clear_project_state_for_close() 
+                         # For a failed load, it's probably best to consider it "dirty" if some data was partially processed
+                         # or if the user tried to load something. Or, clear it.
+                         # Let's assume a failed load might leave things in an inconsistent state that needs saving "as new".
                          self.project_manager.set_project_dirty(True) 
                          self.setWindowTitle(f"{config.APP_NAME} v{config.APP_VERSION} (Load Failed)")
     
-            # --- BEGIN MODIFICATION: Update ScaleAnalysisView after project load ---
             if self.scale_analysis_view:
-                self.scale_analysis_view.update_on_project_or_video_change(self.video_loaded or (self.project_manager and self.project_manager.get_current_project_filepath() is not None)) # [cite: 26]
-            # --- END MODIFICATION ---
+                self.scale_analysis_view.update_on_project_or_video_change(self.video_loaded or (self.project_manager and self.project_manager.get_current_project_filepath() is not None))
             logger.info("Project loading attempt finished in MainWindow.")
-
 
     @QtCore.Slot()
     def _show_preferences_dialog(self) -> None:

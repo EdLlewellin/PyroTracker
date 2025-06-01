@@ -5,6 +5,7 @@ and default values.
 """
 import logging
 from typing import Any, Optional
+import os # Import os for path operations
 
 from PySide6 import QtCore, QtGui
 
@@ -36,22 +37,17 @@ KEY_FEATURE_SCALE_LINE_TICK_LENGTH_FACTOR = f"{SCALES_GROUP}/featureScaleLineTic
 KEY_SCALE_BAR_RECT_HEIGHT = f"{SCALES_GROUP}/scaleBarRectHeight"
 KEY_SCALE_BAR_TEXT_FONT_SIZE = f"{SCALES_GROUP}/scaleBarTextFontSize"
 
-# --- Info Overlays Group and Keys ---
 INFO_OVERLAYS_GROUP = "info_overlays"
-# Visibility Keys
 KEY_INFO_OVERLAY_SHOW_FILENAME = f"{INFO_OVERLAYS_GROUP}/showFilename"
 KEY_INFO_OVERLAY_SHOW_TIME = f"{INFO_OVERLAYS_GROUP}/showTime"
 KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER = f"{INFO_OVERLAYS_GROUP}/showFrameNumber"
-# Appearance Keys (Color)
 KEY_INFO_OVERLAY_FILENAME_COLOR = f"{INFO_OVERLAYS_GROUP}/filenameColor"
 KEY_INFO_OVERLAY_TIME_COLOR = f"{INFO_OVERLAYS_GROUP}/timeColor"
 KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR = f"{INFO_OVERLAYS_GROUP}/frameNumberColor"
-# Appearance Keys (Font Size)
 KEY_INFO_OVERLAY_FILENAME_FONT_SIZE = f"{INFO_OVERLAYS_GROUP}/filenameFontSize"
 KEY_INFO_OVERLAY_TIME_FONT_SIZE = f"{INFO_OVERLAYS_GROUP}/timeFontSize"
 KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE = f"{INFO_OVERLAYS_GROUP}/frameNumberFontSize"
 
-# --- NEW: Measurement Lines Group and Keys --- [cite: 60, 137, 149]
 MEASUREMENT_LINES_GROUP = "measurement_lines_visuals"
 KEY_MEASUREMENT_LINE_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurementLineColor"
 KEY_MEASUREMENT_LINE_ACTIVE_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurementLineActiveColor"
@@ -59,6 +55,11 @@ KEY_MEASUREMENT_LINE_WIDTH = f"{MEASUREMENT_LINES_GROUP}/measurementLineWidth"
 KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurementLineLengthTextColor"
 KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE = f"{MEASUREMENT_LINES_GROUP}/measurementLineLengthTextFontSize"
 KEY_SHOW_MEASUREMENT_LINE_LENGTHS = f"{MEASUREMENT_LINES_GROUP}/showMeasurementLineLengths"
+
+# --- BEGIN MODIFICATION: Add key for last project directory ---
+PROJECT_STATE_GROUP = "project_state"
+KEY_LAST_PROJECT_DIRECTORY = f"{PROJECT_STATE_GROUP}/lastProjectDirectory"
+# --- END MODIFICATION ---
 
 
 DEFAULT_SETTINGS = {
@@ -83,24 +84,26 @@ DEFAULT_SETTINGS = {
     KEY_SCALE_BAR_RECT_HEIGHT: 4,
     KEY_SCALE_BAR_TEXT_FONT_SIZE: 10,
 
-    # Default values for Info Overlays
     KEY_INFO_OVERLAY_SHOW_FILENAME: True,
     KEY_INFO_OVERLAY_SHOW_TIME: True,
     KEY_INFO_OVERLAY_SHOW_FRAME_NUMBER: True,
     KEY_INFO_OVERLAY_FILENAME_COLOR: QtGui.QColor("white"),
     KEY_INFO_OVERLAY_TIME_COLOR: QtGui.QColor("white"),
     KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR: QtGui.QColor("white"),
-    KEY_INFO_OVERLAY_FILENAME_FONT_SIZE: 10, # pt
-    KEY_INFO_OVERLAY_TIME_FONT_SIZE: 10,     # pt
-    KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE: 10, # pt
+    KEY_INFO_OVERLAY_FILENAME_FONT_SIZE: 10, 
+    KEY_INFO_OVERLAY_TIME_FONT_SIZE: 10,     
+    KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE: 10, 
 
-    # --- NEW: Default values for Measurement Lines --- [cite: 60, 137, 149]
-    KEY_MEASUREMENT_LINE_COLOR: QtGui.QColor("lime"), # A distinct default color
-    KEY_MEASUREMENT_LINE_ACTIVE_COLOR: QtGui.QColor("aqua"), # Color when line is "active/selected"
-    KEY_MEASUREMENT_LINE_WIDTH: 1.5, # Similar to feature scale line width
-    KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR: QtGui.QColor("lime"), # Default to same as line
-    KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE: 12, # pt, slightly larger than scale bar
-    KEY_SHOW_MEASUREMENT_LINE_LENGTHS: True, # Default to showing lengths
+    KEY_MEASUREMENT_LINE_COLOR: QtGui.QColor("lime"), 
+    KEY_MEASUREMENT_LINE_ACTIVE_COLOR: QtGui.QColor("aqua"), 
+    KEY_MEASUREMENT_LINE_WIDTH: 1.5, 
+    KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR: QtGui.QColor("lime"), 
+    KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE: 12, 
+    KEY_SHOW_MEASUREMENT_LINE_LENGTHS: True, 
+
+    # --- BEGIN MODIFICATION: Add default for last project directory ---
+    KEY_LAST_PROJECT_DIRECTORY: "", # Default to empty string, logic in MainWindow will handle fallback to os.getcwd()
+    # --- END MODIFICATION ---
 }
 
 _settings_instance: Optional[QtCore.QSettings] = None
@@ -116,12 +119,11 @@ def _get_settings() -> QtCore.QSettings:
                  QtCore.QCoreApplication.setApplicationName(config.APP_NAME)
         else:
              logger.warning("QCoreApplication instance not found. Setting fallback names for QSettings.")
-             import os
              QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
              config_path = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.StandardLocation.AppConfigLocation)
              if not os.path.exists(config_path):
                  os.makedirs(config_path, exist_ok=True)
-             pass # QSettings will use fallback paths if AppConfigLocation is tricky
+             # QSettings will use fallback paths if AppConfigLocation is tricky
 
         _settings_instance = QtCore.QSettings(config.APP_ORGANIZATION, config.APP_NAME)
         logger.info(f"QSettings initialized. Path: {_settings_instance.fileName()} Status: {_settings_instance.status().name}")
@@ -134,61 +136,71 @@ def get_setting(key: str, default_override: Optional[Any] = None) -> Any:
     effective_default = default_override if default_override is not None else default_value_from_map
 
     if effective_default is None and key not in DEFAULT_SETTINGS:
-        logger.error(f"CRITICAL: No default defined anywhere for key '{key}'. This is a programming error.")
-        return None # Or raise an exception
+        # --- BEGIN MODIFICATION: Check if key starts with PROJECT_STATE_GROUP for string defaults ---
+        # Handle cases like KEY_LAST_PROJECT_DIRECTORY which might not have a complex type default in map
+        # but is expected to be a string.
+        if key.startswith(PROJECT_STATE_GROUP + "/"): # If it's a project state key not in map
+            effective_default = "" # Assume string default if not explicitly in DEFAULT_SETTINGS
+            logger.debug(f"Key '{key}' not in DEFAULT_SETTINGS map, but is project state. Using empty string as default.")
+        else: # --- END MODIFICATION ---
+            logger.error(f"CRITICAL: No default defined anywhere for key '{key}'. This is a programming error.")
+            return None 
 
     stored_value = settings.value(key)
 
-    # If the key has never been stored, settings.value() might return None.
-    # In this case, we should definitely use our effective_default.
     if stored_value is None:
-        # logger.debug(f"Setting key '{key}' not found in QSettings. Returning effective default: {effective_default}")
         return effective_default
 
-    # Determine the expected type from our DEFAULT_SETTINGS map.
-    # This is crucial for correct type conversion.
-    expected_type = type(effective_default)
-
-    # Type conversion logic
+    # --- BEGIN MODIFICATION: Ensure expected_type is determined correctly, especially for new string keys ---
+    expected_type = type(effective_default) if effective_default is not None else str
+    if key == KEY_LAST_PROJECT_DIRECTORY and effective_default == "": # Explicitly handle if default was empty string
+        expected_type = str
+    # --- END MODIFICATION ---
+    
     if expected_type is QtGui.QColor:
-        # QSettings stores QColor as string (its name()); we need to convert back.
         color = QtGui.QColor(str(stored_value))
         if color.isValid():
             return color
         else:
             logger.warning(f"Invalid color string '{stored_value}' retrieved for key '{key}'. Returning effective default.")
-            return effective_default # Use the QColor object from defaults
+            return effective_default 
     elif expected_type is float:
         try:
             return float(stored_value)
-        except (ValueError, TypeError): # Catches if stored_value is not convertible
+        except (ValueError, TypeError): 
             logger.warning(f"Cannot convert stored value '{stored_value}' to float for key '{key}'. Returning effective default.")
             return effective_default
     elif expected_type is int:
         try:
-            # Attempt conversion robustly, e.g., if it was stored as "10.0" for an int.
             return int(float(str(stored_value)))
         except (ValueError, TypeError):
             logger.warning(f"Cannot convert stored value '{stored_value}' to int for key '{key}'. Returning effective default.")
             return effective_default
     elif expected_type is bool:
-        # QSettings might store bools as "true"/"false" strings, or 0/1.
         if isinstance(stored_value, str):
             if stored_value.lower() == 'true': return True
             if stored_value.lower() == 'false': return False
         try:
-            # Try converting to int first, then to bool (0=False, non-zero=True)
             return bool(int(float(str(stored_value))))
-        except (ValueError, TypeError): # Fallback if conversion fails
+        except (ValueError, TypeError): 
             logger.warning(f"Could not convert stored value '{stored_value}' to bool via int for key '{key}'. Returning effective default.")
             return effective_default
+    # --- BEGIN MODIFICATION: Add handling for simple string types ---
+    elif expected_type is str:
+        if isinstance(stored_value, str):
+            return stored_value
+        else:
+            # Attempt to convert to string if it's not already, though QSettings usually stores strings.
+            try:
+                return str(stored_value)
+            except Exception:
+                logger.warning(f"Could not convert stored value '{stored_value}' to string for key '{key}'. Returning effective default (which is likely an empty string).")
+                return effective_default # This will be "" for KEY_LAST_PROJECT_DIRECTORY if conversion fails
+    # --- END MODIFICATION ---
 
-    # If no specific conversion was needed or successful,
-    # check if the retrieved type matches the expected type.
     if isinstance(stored_value, expected_type):
         return stored_value
     else:
-        # This case handles unexpected types not caught by specific conversions.
         logger.warning(f"Type mismatch for key '{key}'. Expected {expected_type}, got {type(stored_value)}. Value: '{stored_value}'. Returning effective default.")
         return effective_default
 
@@ -197,17 +209,18 @@ def set_setting(key: str, value: Any) -> None:
     settings = _get_settings()
     value_to_store = value
 
-    # Convert specific types to storable formats
     if isinstance(value, QtGui.QColor):
-        value_to_store = value.name() # QColor.name() gives string like "#RRGGBB"
+        value_to_store = value.name() 
     elif isinstance(value, bool):
-        # Store booleans as "true" or "false" strings for clarity in INI files
         value_to_store = "true" if value else "false"
-    # Floats and ints can often be stored directly, QSettings handles their string conversion.
+    # --- BEGIN MODIFICATION: Ensure strings are stored as strings ---
+    elif isinstance(value, str): # Explicitly handle strings
+        pass # value_to_store is already correct
+    # --- END MODIFICATION ---
 
     logger.debug(f"Saving setting '{key}' with value: {value_to_store} (Original type: {type(value)})")
     settings.setValue(key, value_to_store)
-    settings.sync() # Ensure changes are written to disk
+    settings.sync() 
     logger.debug(f"QSettings status after sync for '{key}': {settings.status().name}")
     if settings.status() != QtCore.QSettings.Status.NoError:
         logger.error(f"Error saving setting '{key}': {settings.status().name}")
