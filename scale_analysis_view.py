@@ -29,50 +29,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-class CustomZoomViewBox(pg.ViewBox):
-    # ... (CustomZoomViewBox class remains unchanged) ...
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._default_mouse_mode = self.PanMode
-        self.setMouseMode(self._default_mouse_mode)
-        self._is_temp_rect_mode = False
-
-    def wheelEvent(self, ev, axis=None):
-        modifiers = QtWidgets.QApplication.keyboardModifiers()
-        zoom_factor_increment = 1.1
-        if ev.delta() < 0:
-            s = zoom_factor_increment
-        else:
-            s = 1.0 / zoom_factor_increment
-        center = self.mapToView(ev.pos())
-        if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            self.scaleBy((s, 1), center=center)
-        elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
-            self.scaleBy((1, s), center=center)
-        else:
-            self.scaleBy((s, s), center=center)
-        ev.accept()
-
-    def mousePressEvent(self, ev):
-        modifiers = QtWidgets.QApplication.keyboardModifiers()
-        if ev.button() == QtCore.Qt.MouseButton.LeftButton and \
-           modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            self.setMouseMode(self.RectMode)
-            self._is_temp_rect_mode = True
-            logger.debug("CustomZoomViewBox: Switched to RectMode for Ctrl+Drag.")
-        super().mousePressEvent(ev)
-
-    def mouseReleaseEvent(self, ev):
-        super().mouseReleaseEvent(ev)
-        if self._is_temp_rect_mode:
-            if ev.button() == QtCore.Qt.MouseButton.LeftButton or not ev.buttons():
-                self.setMouseMode(self._default_mouse_mode)
-                self._is_temp_rect_mode = False
-                logger.debug("CustomZoomViewBox: Reverted to PanMode after Ctrl+Drag.")
-
-
 class ScaleAnalysisView(QtWidgets.QWidget):
-    # ... (__init__ remains mostly the same, ensure new UI attribute placeholders are None initially) ...
+
     def __init__(self, main_window_ref: 'MainWindow', parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.main_window_ref = main_window_ref
@@ -85,10 +43,13 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.scale_vs_centroid_x_plot: Optional[pg.PlotWidget] = None
         self.scale_vs_centroid_y_plot: Optional[pg.PlotWidget] = None
         self.scale_vs_radial_pos_plot: Optional[pg.PlotWidget] = None
+        self.scale_histogram_plot: Optional[pg.PlotWidget] = None
+        self.scale_cdf_plot: Optional[pg.PlotWidget] = None
         
         # For storing plot items if needed for dynamic updates beyond color/size
         self.track_plot_items: Dict[int, Dict[str, pg.PlotDataItem | pg.ScatterPlotItem]] = {}
         self.current_selected_track_id_for_plot: Optional[int] = None
+        self._do_not_autorange_main_plot_on_next_update: bool = False
         
         self._plot_colors: List[QtGui.QColor] = [
             QtGui.QColor("blue"), QtGui.QColor("red"), QtGui.QColor("green"),
@@ -117,6 +78,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.left_panel_splitter: Optional[QtWidgets.QSplitter] = None
         self.bottom_left_splitter: Optional[QtWidgets.QSplitter] = None
         self.right_panel_splitter: Optional[QtWidgets.QSplitter] = None
+        self.ancillary_global_splitter: Optional[QtWidgets.QSplitter] = None
 
 
         self._setup_ui()
@@ -130,28 +92,25 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         logger.info("ScaleAnalysisView initialized.")
 
     def _setup_ui(self) -> None:
-        # Point 4: Top-level splitter (Left/Right panels)
+        # Top-level splitter (Left/Right panels)
         self.top_level_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         main_layout = QtWidgets.QHBoxLayout(self) # Main layout for ScaleAnalysisView widget itself
         main_layout.addWidget(self.top_level_splitter)
-        main_layout.setContentsMargins(0,0,0,0) # Ensure splitter fills the view
+        main_layout.setContentsMargins(0,0,0,0)
 
-        # --- Left Panel Container ---
+        # --- Left Panel Container (Main Y(t) plot and bottom area with ancillary plots + global scale) ---
         left_panel_container_widget = QtWidgets.QWidget()
-        # Point 5: Left panel splitter (Top plot / Bottom tools)
         self.left_panel_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, left_panel_container_widget)
-        left_panel_outer_layout = QtWidgets.QVBoxLayout(left_panel_container_widget) # Layout for the container
+        left_panel_outer_layout = QtWidgets.QVBoxLayout(left_panel_container_widget)
         left_panel_outer_layout.setContentsMargins(0,0,0,0)
         left_panel_outer_layout.addWidget(self.left_panel_splitter)
 
-
         # Top part of the left panel: Main y(t) Plot
         if PYQTGRAPH_AVAILABLE and pg is not None:
-            view_box = CustomZoomViewBox()
+            view_box = pg.ViewBox()
             self.main_yt_plot = pg.PlotWidget(viewBox=view_box)
             self.main_yt_plot.setBackground('w')
             self.main_yt_plot.showGrid(x=True, y=True, alpha=0.3)
-            # Title for main_yt_plot will be set in _update_main_yt_plot
             
             axis_pen_main = pg.mkPen(color='k', width=1)
             text_color_main = 'k' 
@@ -162,7 +121,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.main_yt_plot.getAxis('bottom').setTextPen(axis_pen_main) 
             self.main_yt_plot.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
             self.main_yt_plot.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
-            # Point 1: Do NOT set main_yt_plot title to "" here. It's dynamic.
+            self.main_yt_plot.setTitle("") # Title is dynamic, set in _update_main_yt_plot
 
             self.left_panel_splitter.addWidget(self.main_yt_plot)
         else:
@@ -171,12 +130,16 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.main_yt_plot_placeholder.setStyleSheet("background-color: lightGray;")
             self.left_panel_splitter.addWidget(self.main_yt_plot_placeholder)
 
-        bottom_left_combined_widget = QtWidgets.QWidget()
-        self.bottom_left_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, bottom_left_combined_widget)
-        bottom_left_combined_layout = QtWidgets.QHBoxLayout(bottom_left_combined_widget) 
-        bottom_left_combined_layout.setContentsMargins(0,0,0,0)
-        bottom_left_combined_layout.addWidget(self.bottom_left_splitter)
-        
+        # Bottom part of the left panel: Ancillary plots and Global Scale, now with a splitter
+        bottom_area_widget = QtWidgets.QWidget() 
+        bottom_area_layout = QtWidgets.QHBoxLayout(bottom_area_widget)
+        bottom_area_layout.setContentsMargins(0,0,0,0) 
+        bottom_area_layout.setSpacing(0) # Splitter handle provides separation
+
+        # Create the horizontal splitter for ancillary plots and global scale panel
+        self.ancillary_global_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal) # NEW
+
+        # Widget for the 2x3 grid of ancillary plots
         diagnostic_plots_widget = QtWidgets.QWidget() 
         ancillary_plots_container_layout = QtWidgets.QGridLayout(diagnostic_plots_widget)
         ancillary_plots_container_layout.setContentsMargins(6, 6, 6, 6) 
@@ -185,21 +148,21 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         diagnostic_plots_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
 
         if PYQTGRAPH_AVAILABLE and pg is not None:
-            # Point 2: Update centroid x-axis labels
             plot_widgets_config = [
-                ("scale_vs_time_plot", "Average Fit Time (s)"),
-                ("scale_vs_centroid_x_plot", "Centroid X (px, BL)"), # Corrected
-                ("scale_vs_centroid_y_plot", "Centroid Y (px, BL)"), # Corrected
-                ("scale_vs_radial_pos_plot", "Radial Distance from Image Center (px)")
+                ("scale_vs_time_plot", "Average Fit Time (s)", "Fit Scale (m/px)"),
+                ("scale_vs_centroid_x_plot", "Centroid X (px, BL)", "Fit Scale (m/px)"),
+                ("scale_histogram_plot", "Fit Scale (m/px)", "Frequency"),
+                ("scale_vs_centroid_y_plot", "Centroid Y (px, BL)", "Fit Scale (m/px)"),
+                ("scale_vs_radial_pos_plot", "Radial Distance from Image Center (px)", "Fit Scale (m/px)"),
+                ("scale_cdf_plot", "Fit Scale (m/px)", "CDF")
             ]
-            plot_positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
-            # Point 3: Update shared Y-axis label text
-            shared_y_label_text = "Fit Scale (m/px)" 
+            plot_positions = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+            
             axis_pen_ancillary = pg.mkPen(color='k', width=1)
             text_color_ancillary = 'k' 
             label_style_ancillary = {'color': text_color_ancillary, 'font-size': '9pt'}
 
-            for i, (attr_name, x_label) in enumerate(plot_widgets_config):
+            for i, (attr_name, x_label, y_label) in enumerate(plot_widgets_config):
                 plot_widget = pg.PlotWidget()
                 plot_widget.setBackground('w')
                 plot_widget.showGrid(x=True, y=True, alpha=0.3)
@@ -210,15 +173,9 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 plot_widget.getAxis('bottom').setTextPen(axis_pen_ancillary) 
                 plot_widget.getAxis('top').setPen(axis_pen_ancillary) 
                 plot_widget.getAxis('right').setPen(axis_pen_ancillary)
-
-                if plot_positions[i][1] == 0: 
-                    plot_widget.setLabel('left', shared_y_label_text, units="m/px", **label_style_ancillary)
-                else:
-                    plot_widget.getAxis('left').setLabel(text=None) 
-                    plot_widget.getAxis('left').setWidth(None) 
-                    
+                
+                plot_widget.setLabel('left', y_label, **label_style_ancillary)
                 plot_widget.setLabel('bottom', x_label, **label_style_ancillary)
-                # Point 1: Remove titles from ancillary plots
                 plot_widget.setTitle("") 
                 plot_widget.setMinimumSize(150, 100)
                 setattr(self, attr_name, plot_widget)
@@ -226,10 +183,11 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         else: 
             placeholder_label_ancillary = QtWidgets.QLabel("PyQtGraph not available. Ancillary plots disabled.")
             placeholder_label_ancillary.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-            ancillary_plots_container_layout.addWidget(placeholder_label_ancillary, 0, 0, 2, 2)
+            ancillary_plots_container_layout.addWidget(placeholder_label_ancillary, 0, 0, 2, 3)
         
-        self.bottom_left_splitter.addWidget(diagnostic_plots_widget)
+        self.ancillary_global_splitter.addWidget(diagnostic_plots_widget) # Add plot grid to splitter
 
+        # Global Scale GroupBox
         self.global_scale_groupbox = QtWidgets.QGroupBox("Global Scale")
         global_scale_main_v_layout = QtWidgets.QVBoxLayout(self.global_scale_groupbox)
         global_scale_form_layout = QtWidgets.QFormLayout()
@@ -250,14 +208,21 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.show_constrained_fits_checkbox.setEnabled(False)
         global_scale_main_v_layout.addWidget(self.show_constrained_fits_checkbox)
         global_scale_main_v_layout.addStretch(1)
-        self.bottom_left_splitter.addWidget(self.global_scale_groupbox)
         
-        self.bottom_left_splitter.setStretchFactor(0, 2) 
-        self.bottom_left_splitter.setStretchFactor(1, 1) 
+        self.ancillary_global_splitter.addWidget(self.global_scale_groupbox) # Add global scale panel to splitter
         
-        self.left_panel_splitter.addWidget(bottom_left_combined_widget)
+        # Set initial sizes and stretch factors for the new splitter
+        # These values are examples; adjust them as needed.
+        self.ancillary_global_splitter.setStretchFactor(0, 2) # Give plot grid more space
+        self.ancillary_global_splitter.setStretchFactor(1, 1) # Global scale panel less space
+        # Optionally set initial sizes: self.ancillary_global_splitter.setSizes([initial_plot_width, initial_global_scale_width])
+
+        bottom_area_layout.addWidget(self.ancillary_global_splitter) # Add the new splitter to the layout
+        
+        self.left_panel_splitter.addWidget(bottom_area_widget) 
         self.left_panel_splitter.setSizes([int(self.height() * 0.6), int(self.height() * 0.4)]) 
 
+        # --- Right Panel Container (Track Table and Single Track Fit Widget) ---
         right_panel_container_widget = QtWidgets.QWidget()
         self.right_panel_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, right_panel_container_widget)
         right_panel_outer_layout = QtWidgets.QVBoxLayout(right_panel_container_widget)
@@ -265,7 +230,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         right_panel_outer_layout.addWidget(self.right_panel_splitter)
 
         self.analysis_tracks_table = QtWidgets.QTableWidget()
-        self._setup_analysis_tracks_table()
+        self._setup_analysis_tracks_table() # Assumes this method is defined
         self.right_panel_splitter.addWidget(self.analysis_tracks_table)
 
         single_track_details_widget = QtWidgets.QWidget() 
@@ -283,7 +248,8 @@ class ScaleAnalysisView(QtWidgets.QWidget):
 
         self.top_level_splitter.addWidget(left_panel_container_widget)
         self.top_level_splitter.addWidget(right_panel_container_widget)
-        self.top_level_splitter.setSizes([int(self.width() * 0.65), int(self.width() * 0.35)])
+        # Adjust initial sizes if needed due to wider ancillary plot area
+        self.top_level_splitter.setSizes([int(self.width() * 0.70), int(self.width() * 0.30)])
 
     def _connect_signals(self) -> None:
         if self.analysis_tracks_table:
@@ -305,7 +271,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
     def _setup_analysis_tracks_table(self) -> None:
         if not self.analysis_tracks_table:
             return
-        column_headers = ["Use for Global", "ID", "Fit Pts", "Fit Scale (m/px)", "R²", "Applied"]
+        column_headers = ["Apply", "ID", "Fit Pts", "Fit Scale (m/px)", "R²", "Applied"]
         self.analysis_tracks_table.setColumnCount(len(column_headers))
         self.analysis_tracks_table.setHorizontalHeaderLabels(column_headers)
         self.analysis_tracks_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -359,25 +325,25 @@ class ScaleAnalysisView(QtWidgets.QWidget):
 
         if not (self.main_window_ref and self.main_window_ref.element_manager and self.main_window_ref.video_handler and self.main_window_ref.video_handler.is_loaded):
             logger.warning("Cannot update main_yt_plot: ElementManager or VideoHandler not available/loaded.")
-            plot_item.setTitle("No video loaded or data available") # Point 1: Set title appropriately
+            plot_item.setTitle('<span style="color: black;">No video loaded or data available</span>')
             plot_item.getViewBox().autoRange() # Ensure plot is refreshed even if empty
             return
         
         video_height = self.main_window_ref.video_handler.frame_height
         if video_height <= 0:
             logger.warning("Cannot plot y(t): Video height is invalid.")
-            plot_item.setTitle("Invalid video height for y(t) plot") # Point 1
+            plot_item.setTitle('<span style="color: black;">Invalid video height for y(t) plot</span>')
             plot_item.getViewBox().autoRange()
             return
 
         tracks = [el for el in self.main_window_ref.element_manager.elements if el.get('type') == ElementType.TRACK]
         if not tracks:
-            plot_item.setTitle("No tracks to plot") # Point 1
+            plot_item.setTitle('<span style="color: black;">No tracks to plot</span>')
             plot_item.getViewBox().autoRange()
             return
         
         # Point 1: Set a descriptive title if there are tracks
-        plot_item.setTitle("Tracks y(t) - Select track in table to highlight")
+        plot_item.setTitle('<span style="color: black;">Tracks y(t) - Select track in table to highlight</span>')
         
         show_constrained = self.show_constrained_fits_checkbox.isChecked() if self.show_constrained_fits_checkbox else False
         global_project_scale = self.main_window_ref.scale_manager.get_scale_m_per_px() if self.main_window_ref.scale_manager else None
@@ -499,7 +465,13 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                     except Exception as e_constr:
                         logger.warning(f"Track {track_id}: Error plotting constrained fit: {e_constr}")
 
-        plot_item.getViewBox().autoRange(padding=0.05)
+        if self._do_not_autorange_main_plot_on_next_update:
+            logger.debug("Skipping autoRange for main_yt_plot due to direct plot click flag.")
+            self._do_not_autorange_main_plot_on_next_update = False # Reset the flag
+        else:
+            if plot_item and plot_item.getViewBox(): # Ensure plot_item and its viewBox exist
+                plot_item.getViewBox().autoRange(padding=0.05)
+
         logger.debug("Main y(t) plot updated with all tracks.")
 
 
@@ -508,10 +480,19 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         if not self.analysis_tracks_table:
             logger.warning("analysis_tracks_table is None, cannot populate.")
             return
-        self.analysis_tracks_table.setRowCount(0)
-        if not PYQTGRAPH_AVAILABLE: return
+        
+        self.analysis_tracks_table.setRowCount(0) # Clear existing rows before repopulating
+
+        if not PYQTGRAPH_AVAILABLE:
+            logger.warning("PyQtGraph not available, table population might be limited or affect dependent plots.")
+            # Decide if you want to return or allow table to populate without plot updates
+            # For now, let it proceed to populate table at least.
+
         if not (self.main_window_ref and self.main_window_ref.element_manager and self.main_window_ref.video_handler):
             logger.warning("ElementManager or VideoHandler not available in populate_tracks_table.")
+            self._update_main_yt_plot() # Still try to clear/update plots
+            self._update_ancillary_plots()
+            self._update_global_scale_buttons_enabled_state()
             return
 
         tracks = [el for el in self.main_window_ref.element_manager.elements if el.get('type') == ElementType.TRACK]
@@ -533,34 +514,68 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 num_fitted_pts = 0
                 if time_range_s and self.main_window_ref.video_handler.fps > 0:
                     min_t_fit, max_t_fit = time_range_s
-                    points_in_time_range_and_not_excluded = [p for p in potentially_fittable_points if min_t_fit <= (p[1] / 1000.0) <= max_t_fit]
+                    points_in_time_range_and_not_excluded = [
+                        p for p in potentially_fittable_points if min_t_fit <= (p[1] / 1000.0) <= max_t_fit
+                    ]
                     num_fitted_pts = len(points_in_time_range_and_not_excluded)
                 else:
                     num_fitted_pts = len(potentially_fittable_points)
                 fit_pts_str = f"{num_fitted_pts}/{total_points_in_track}"
-            elif track_data: fit_pts_str = f"-/{total_points_in_track}"
-            else: fit_pts_str = "-/0"
+            elif track_data:
+                fit_pts_str = f"-/{total_points_in_track}"
+            else:
+                fit_pts_str = "-/0"
             
             r_squared = fit_results.get('r_squared')
             r_squared_str = f"{r_squared:.4f}" if r_squared is not None else "N/A"
             derived_scale = fit_results.get('derived_scale_m_per_px')
             fit_scale_str = f"{derived_scale:.6g}" if derived_scale is not None else "N/A"
             
-            checkbox_widget_container = QtWidgets.QWidget()
-            checkbox_layout = QtWidgets.QHBoxLayout(checkbox_widget_container)
-            checkbox_layout.setContentsMargins(0,0,0,0)
-            checkbox_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            # --- Column 0: "Use for Global" Checkbox ---
             use_for_global_checkbox = QtWidgets.QCheckBox()
             use_for_global_checkbox.setChecked(self.track_global_scale_checkbox_states.get(track_id, False))
             use_for_global_checkbox.setProperty("track_id", track_id)
             use_for_global_checkbox.stateChanged.connect(
                 lambda state, tid=track_id: self._on_global_scale_checkbox_changed(state, tid)
             )
+
+            # --- Start of adapted centering logic for checkbox ---
+            checkbox_indicator_width = 18  # Approximate visual width of a checkbox indicator
+            use_for_global_checkbox.setMinimumWidth(checkbox_indicator_width)
+            # Let checkbox take preferred height, but fixed width for its core visual part
+            use_for_global_checkbox.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, 
+                                                  QtWidgets.QSizePolicy.Policy.Preferred)
+
+            checkbox_widget_container = QtWidgets.QWidget()
+            checkbox_layout = QtWidgets.QHBoxLayout(checkbox_widget_container)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0) # No internal margins for the layout itself
+            checkbox_layout.setSpacing(0)
+
+            checkbox_layout.addStretch(1) # Flexible space to the left
             checkbox_layout.addWidget(use_for_global_checkbox)
+            checkbox_layout.addStretch(1) # Flexible space to the right
+            
+            # Define a minimum sensible width for the container to ensure checkbox isn't squished
+            # This width allows for the checkbox indicator + some padding managed by stretches.
+            # The column's ResizeToContents will use the container's sizeHint.
+            effective_padding_each_side = 3 # Small visual padding
+            container_min_width = checkbox_indicator_width + (2 * effective_padding_each_side)
+            
+            checkbox_height_hint = use_for_global_checkbox.sizeHint().height()
+            if checkbox_height_hint <= 0: # Fallback if sizeHint is unusual
+                checkbox_height_hint = checkbox_indicator_width + 4 # Indicator + small vertical padding
+            
+            checkbox_widget_container.setMinimumSize(container_min_width, checkbox_height_hint)
+            # Policy.Minimum allows it to be larger if column is wider, but respects its minimum.
+            checkbox_widget_container.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, 
+                                                    QtWidgets.QSizePolicy.Policy.Preferred)
+            # --- End of adapted centering logic ---
+            
             self.analysis_tracks_table.setCellWidget(row_idx, 0, checkbox_widget_container)
 
+            # --- Other columns ---
             id_item = QtWidgets.QTableWidgetItem(str(track_id))
-            id_item.setData(QtCore.Qt.ItemDataRole.UserRole, track_id) # Store ID here
+            id_item.setData(QtCore.Qt.ItemDataRole.UserRole, track_id)
             self.analysis_tracks_table.setItem(row_idx, 1, id_item)
 
             self.analysis_tracks_table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(fit_pts_str))
@@ -572,24 +587,28 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             applied_item = QtWidgets.QTableWidgetItem(applied_str)
             self.analysis_tracks_table.setItem(row_idx, 5, applied_item)
 
+        # Set text alignment for relevant columns
         for r in range(self.analysis_tracks_table.rowCount()):
-            for c_idx, alignment in [(1, QtCore.Qt.AlignmentFlag.AlignCenter), 
-                                     (2, QtCore.Qt.AlignmentFlag.AlignCenter),  
-                                     (3, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter), 
-                                     (4, QtCore.Qt.AlignmentFlag.AlignCenter),
-                                     (5, QtCore.Qt.AlignmentFlag.AlignCenter)]:
+            for c_idx, alignment in [(1, QtCore.Qt.AlignmentFlag.AlignCenter),  # ID
+                                     (2, QtCore.Qt.AlignmentFlag.AlignCenter),  # Fit Pts
+                                     (3, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter),  # Fit Scale
+                                     (4, QtCore.Qt.AlignmentFlag.AlignCenter),  # R²
+                                     (5, QtCore.Qt.AlignmentFlag.AlignCenter)]: # Applied
                 item = self.analysis_tracks_table.item(r, c_idx)
-                if item: item.setTextAlignment(alignment)
+                if item:
+                    item.setTextAlignment(alignment)
         
         logger.info(f"Populated analysis_tracks_table with {len(tracks)} tracks.")
-        self._update_main_yt_plot()
-        if self.main_yt_plot and (self.track_plot_items or not tracks):
-            if not tracks: self.main_yt_plot.setTitle("No tracks to plot")
+        self._update_main_yt_plot() # Refresh main plot as track data/selection might implicitly change
+        
+        # Ensure main plot is autoranged correctly after potential data changes
+        if self.main_yt_plot:
+            if not tracks and PYQTGRAPH_AVAILABLE: # Check PYQTGRAPH_AVAILABLE here too
+                self.main_yt_plot.setTitle('<span style="color: black;">No tracks to plot</span>')
             self.main_yt_plot.autoRange(padding=0.05)
         
-        self._update_ancillary_plots()
-        self._update_global_scale_buttons_enabled_state()
-
+        self._update_ancillary_plots() # Refresh ancillary plots
+        self._update_global_scale_buttons_enabled_state() # Update button states
 
     def update_on_project_or_video_change(self, is_project_or_video_loaded: bool) -> None:
         logger.debug(f"ScaleAnalysisView: update_on_project_or_video_change called. Loaded: {is_project_or_video_loaded}")
@@ -774,13 +793,30 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         logger.debug(f"Point clicked on main_yt_plot for track ID: {clicked_track_id}")
 
         for r in range(self.analysis_tracks_table.rowCount()):
-            # Column 1 is 'ID' after 'Use for Global' (column 0)
-            id_item_in_table = self.analysis_tracks_table.item(r, 1) 
-            if id_item_in_table and id_item_in_table.data(QtCore.Qt.ItemDataRole.UserRole) == clicked_track_id:
-                # Check selection state using the ID item itself
-                if not id_item_in_table.isSelected(): 
-                    self.analysis_tracks_table.selectRow(r)
-                break
+            id_item = self.analysis_tracks_table.item(r, 1) # ID is in column 1
+            if id_item:
+                table_track_id = id_item.data(QtCore.Qt.ItemDataRole.UserRole) 
+                if table_track_id == clicked_track_id:
+                    current_selected_row = -1
+                    if self.analysis_tracks_table.selectedItems():
+                        current_selected_row = self.analysis_tracks_table.currentRow()
+                    
+                    if current_selected_row != r:
+                        # --- MODIFICATION: Set flag before changing table selection ---
+                        self._do_not_autorange_main_plot_on_next_update = True
+                        logger.debug("Setting _do_not_autorange_main_plot_on_next_update = True due to main_yt_plot click.")
+                        # --- END MODIFICATION ---
+                        self.analysis_tracks_table.selectRow(r)
+                    else:
+                        # If already selected, and user clicks again on the plot,
+                        # we still might want to prevent autorange if _update_main_yt_plot is called.
+                        # However, selectRow won't emit selectionChanged if already selected.
+                        # The highlight update path is through _on_analysis_table_selection_changed.
+                        # If the row is already selected, this method effectively does nothing more,
+                        # and the highlight state (which triggers _update_main_yt_plot) doesn't change.
+                        # This is fine, as no plot update means no unwanted autorange.
+                        logger.debug(f"Row {r} for track ID {clicked_track_id} is already selected.")
+                    break
 
     def _get_track_fit_summary_data(self, track_element: Dict) -> Optional[Dict]:
         if not (self.main_window_ref and self.main_window_ref.video_handler and self.main_window_ref.video_handler.is_loaded):
@@ -854,87 +890,146 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         }
         logger.debug(f"Track ID {track_id}: Fit summary calculated (Centroid for plot is BL): {summary}")
         return summary
+
     def _clear_all_ancillary_plots(self) -> None:
         """Clears all data from the ancillary plots."""
         ancillary_plots = [
             self.scale_vs_time_plot, self.scale_vs_centroid_x_plot,
-            self.scale_vs_centroid_y_plot, self.scale_vs_radial_pos_plot
+            self.scale_vs_centroid_y_plot, self.scale_vs_radial_pos_plot,
+            self.scale_histogram_plot, self.scale_cdf_plot # New plots added
         ]
         for plot in ancillary_plots:
             if plot:
                 plot.clear() 
         logger.debug("Cleared all ancillary plots.")
 
-    def _update_ancillary_plots(self) -> None: 
+    def _update_ancillary_plots(self) -> None:
         if not PYQTGRAPH_AVAILABLE:
             return
         
         logger.debug("ScaleAnalysisView: Updating ancillary diagnostic plots.")
-        self._clear_all_ancillary_plots() 
+        self._clear_all_ancillary_plots()
 
         if not (self.main_window_ref and self.main_window_ref.element_manager):
             logger.warning("Cannot update ancillary plots: ElementManager not available.")
+            for plot in [self.scale_vs_time_plot, self.scale_vs_centroid_x_plot,
+                         self.scale_vs_centroid_y_plot, self.scale_vs_radial_pos_plot,
+                         self.scale_histogram_plot, self.scale_cdf_plot]:
+                if plot: plot.autoRange()
             return
 
-        fit_summaries: List[Dict] = [] 
+        fit_summaries: List[Dict] = []
         for track_element in self.main_window_ref.element_manager.elements:
             if track_element.get('type') == ElementType.TRACK:
-                summary = self._get_track_fit_summary_data(track_element) 
-                if summary:
+                summary = self._get_track_fit_summary_data(track_element)
+                if summary and summary.get('derived_scale') is not None:
                     fit_summaries.append(summary)
         
         if not fit_summaries:
             logger.debug("No valid fit summaries to display in ancillary plots.")
-            if self.scale_vs_time_plot: self.scale_vs_time_plot.setTitle("")
-            if self.scale_vs_centroid_x_plot: self.scale_vs_centroid_x_plot.setTitle("")
-            if self.scale_vs_centroid_y_plot: self.scale_vs_centroid_y_plot.setTitle("")
-            if self.scale_vs_radial_pos_plot: self.scale_vs_radial_pos_plot.setTitle("")
+            for plot in [self.scale_vs_time_plot, self.scale_vs_centroid_x_plot,
+                         self.scale_vs_centroid_y_plot, self.scale_vs_radial_pos_plot,
+                         self.scale_histogram_plot, self.scale_cdf_plot]:
+                if plot: plot.autoRange()
             return
-        else: # Reset titles if there is data
-            if self.scale_vs_time_plot: self.scale_vs_time_plot.setLabel('bottom', "Average Fit Time (s)"); self.scale_vs_time_plot.setLabel('left', "Fit Scale (m/px)")
-            if self.scale_vs_centroid_x_plot: self.scale_vs_centroid_x_plot.setLabel('bottom', "Centroid X (px, BL)"); self.scale_vs_centroid_x_plot.setLabel('left', "Fit Scale (m/px)")
-            if self.scale_vs_centroid_y_plot: self.scale_vs_centroid_y_plot.setLabel('bottom', "Centroid Y (px, BL)"); self.scale_vs_centroid_y_plot.setLabel('left', "Fit Scale (m/px)")
-            if self.scale_vs_radial_pos_plot: self.scale_vs_radial_pos_plot.setLabel('bottom', "Radial Distance from Image Center (px)"); self.scale_vs_radial_pos_plot.setLabel('left', "Fit Scale (m/px)")
-
-
-        track_ids = [s['track_id'] for s in fit_summaries]
-        scales = np.array([s['derived_scale'] for s in fit_summaries])
+        
+        track_ids_all = [s['track_id'] for s in fit_summaries]
+        scales_all = np.array([s['derived_scale'] for s in fit_summaries])
         avg_times = np.array([s['avg_time_s'] for s in fit_summaries])
         centroid_xs = np.array([s['centroid_x_px'] for s in fit_summaries])
         centroid_ys = np.array([s['centroid_y_px'] for s in fit_summaries])
         radial_positions = np.array([s['radial_pos_px'] for s in fit_summaries])
 
-        point_brushes = [self._get_plot_color_for_track(tid) for tid in track_ids]
+        point_brushes_all = [self._get_plot_color_for_track(tid) for tid in track_ids_all]
 
+        # Existing scatter plots
         if self.scale_vs_time_plot:
-            scatter_time = pg.ScatterPlotItem(x=avg_times, y=scales, data=track_ids, 
-                                              symbol='o', size=8, brush=point_brushes) 
-            scatter_time.sigClicked.connect(self._on_ancillary_plot_point_clicked) 
+            scatter_time = pg.ScatterPlotItem(x=avg_times, y=scales_all, data=track_ids_all,
+                                              symbol='o', size=8, brush=point_brushes_all)
+            scatter_time.sigClicked.connect(self._on_ancillary_plot_point_clicked)
             self.scale_vs_time_plot.addItem(scatter_time)
-            self.scale_vs_time_plot.autoRange() 
+            self.scale_vs_time_plot.autoRange()
 
         if self.scale_vs_centroid_x_plot:
-            scatter_cx = pg.ScatterPlotItem(x=centroid_xs, y=scales, data=track_ids,
-                                            symbol='o', size=8, brush=point_brushes)
+            scatter_cx = pg.ScatterPlotItem(x=centroid_xs, y=scales_all, data=track_ids_all,
+                                            symbol='o', size=8, brush=point_brushes_all)
             scatter_cx.sigClicked.connect(self._on_ancillary_plot_point_clicked)
             self.scale_vs_centroid_x_plot.addItem(scatter_cx)
             self.scale_vs_centroid_x_plot.autoRange()
 
         if self.scale_vs_centroid_y_plot:
-            scatter_cy = pg.ScatterPlotItem(x=centroid_ys, y=scales, data=track_ids,
-                                            symbol='o', size=8, brush=point_brushes)
+            scatter_cy = pg.ScatterPlotItem(x=centroid_ys, y=scales_all, data=track_ids_all,
+                                            symbol='o', size=8, brush=point_brushes_all)
             scatter_cy.sigClicked.connect(self._on_ancillary_plot_point_clicked)
             self.scale_vs_centroid_y_plot.addItem(scatter_cy)
             self.scale_vs_centroid_y_plot.autoRange()
 
         if self.scale_vs_radial_pos_plot:
-            scatter_rad = pg.ScatterPlotItem(x=radial_positions, y=scales, data=track_ids,
-                                             symbol='o', size=8, brush=point_brushes)
+            scatter_rad = pg.ScatterPlotItem(x=radial_positions, y=scales_all, data=track_ids_all,
+                                             symbol='o', size=8, brush=point_brushes_all)
             scatter_rad.sigClicked.connect(self._on_ancillary_plot_point_clicked)
             self.scale_vs_radial_pos_plot.addItem(scatter_rad)
             self.scale_vs_radial_pos_plot.autoRange()
             
-        logger.debug(f"Updated ancillary plots with {len(fit_summaries)} data points.")
+        # Histogram Plot
+        if self.scale_histogram_plot and len(scales_all) > 0:
+            num_bins = min(max(5, int(np.sqrt(len(scales_all)))), 20)
+            hist_counts, bin_edges = np.histogram(scales_all, bins=num_bins)
+            bin_width = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1.0
+            bar_item = pg.BarGraphItem(x=bin_edges[:-1], height=hist_counts, width=bin_width * 0.9, brush='cornflowerblue')
+            self.scale_histogram_plot.addItem(bar_item)
+            self.scale_histogram_plot.autoRange()
+
+        # --- MODIFIED CDF Plot with separate line and scatter items ---
+        if self.scale_cdf_plot and len(scales_all) > 0:
+            combined_scale_trackid = sorted(zip(scales_all, track_ids_all), key=lambda pair: pair[0])
+            
+            sorted_individual_scales = np.array([pair[0] for pair in combined_scale_trackid])
+            track_ids_for_cdf_points = [pair[1] for pair in combined_scale_trackid]
+
+            y_cdf_individual = np.arange(1, len(sorted_individual_scales) + 1) / len(sorted_individual_scales)
+
+            # 1. Create PlotDataItem for the dot-to-dot line
+            # Using a neutral color like gray for the line to let point colors stand out.
+            connecting_line_pen = pg.mkPen(color=(150, 150, 150, 200), width=1.5, style=QtCore.Qt.PenStyle.DotLine)
+            cdf_line_item = pg.PlotDataItem(
+                x=sorted_individual_scales,
+                y=y_cdf_individual,
+                pen=connecting_line_pen,
+                # stepMode can be used for a more traditional ECDF step plot if desired,
+                # but for dot-to-dot, direct plotting is fine.
+            )
+            self.scale_cdf_plot.addItem(cdf_line_item)
+
+            # 2. Create ScatterPlotItem for the clickable, colored points
+            cdf_point_brushes = [self._get_plot_color_for_track(tid) for tid in track_ids_for_cdf_points]
+            cdf_scatter_points_item = pg.ScatterPlotItem(
+                x=sorted_individual_scales, 
+                y=y_cdf_individual, 
+                data=track_ids_for_cdf_points,  # Store track_id with each point
+                symbol='o', 
+                size=8,                         # Use 'size' instead of 'symbolSize' for ScatterPlotItem
+                pen=None,                       # No connecting pen for the scatter item itself
+                brush=cdf_point_brushes         # Use per-track colors for symbol fill
+            )
+            cdf_scatter_points_item.sigClicked.connect(self._on_ancillary_plot_point_clicked)
+            self.scale_cdf_plot.addItem(cdf_scatter_points_item)
+            
+            # Range setting
+            self.scale_cdf_plot.setYRange(0, 1.05, padding=0)
+            if len(sorted_individual_scales) > 0:
+                min_x_cdf = min(sorted_individual_scales)
+                max_x_cdf = max(sorted_individual_scales)
+                if min_x_cdf == max_x_cdf:
+                    padding_cdf = 0.1 * abs(min_x_cdf) if abs(min_x_cdf) > 1e-9 else 0.1
+                    self.scale_cdf_plot.setXRange(min_x_cdf - padding_cdf, max_x_cdf + padding_cdf, padding=0)
+                else:
+                    self.scale_cdf_plot.setXRange(min_x_cdf, max_x_cdf, padding=0.05)
+            else:
+                self.scale_cdf_plot.autoRange()
+        # --- END MODIFIED CDF Plot ---
+
+        logger.debug(f"Updated ancillary plots with {len(fit_summaries)} data points, including histogram and CDF.")
 
 
     @QtCore.Slot(object, list)

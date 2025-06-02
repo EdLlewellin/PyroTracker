@@ -245,8 +245,9 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             self.raw_frame_indices_for_plotted_points.append(frame_idx)
 
         if not self.plot_data_y_vs_t:
-            if self.plot_widget: self.plot_widget.setTitle(f"Track {self.track_id} - No valid points")
-            self.clear_and_disable() # This will also reset refit_button text
+            if self.plot_widget:
+                self.plot_widget.setTitle(f'<span style="color: black;">Track {self.track_id} - No valid points</span>')
+            self.clear_and_disable() 
             if self.track_id_label: self.track_id_label.setText(f"<b>Track ID: {self.track_id or 'N/A'} (No Valid Pts)</b>")
             return
 
@@ -279,7 +280,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if self.plot_widget:
             self.plot_widget.setLabel('bottom', "Time (s)")
             self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)")
-            self.plot_widget.setTitle(f"Track {self.track_id} y(t) (Shift+Click to Exclude)")
+            self.plot_widget.setTitle(f'<span style="color: black;">Track {self.track_id} y(t) (Shift+Click to Exclude/Include pts)</span>')
         
         self._fit_parabola() # Call fit after data is prepared
 
@@ -310,7 +311,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
                 self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
                 self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
-                self.plot_widget.setTitle("No data to plot" if not self.plot_data_y_vs_t else f"Track {self.track_id} y(t) (Shift+Click to Exclude)")
+                self.plot_widget.setTitle("No data to plot" if not self.plot_data_y_vs_t else f"Track {self.track_id} y(t) (Shift+Click to Exclude/Include pts)")
                 self.plot_widget.autoRange(padding=0.05)
             return
 
@@ -344,7 +345,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
                 self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
                 self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
-                self.plot_widget.setTitle(f"Track {self.track_id} y(t) (Shift+Click to Exclude) - Invalid g")
+                self.plot_widget.setTitle(f"Track {self.track_id} y(t) (Shift+Click to Exclude/Include pts) - Invalid g")
                 self.plot_widget.autoRange(padding=0.05)
             return
 
@@ -397,13 +398,15 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
             self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
             
-            title_text = f"Track {self.track_id} y(t) (Shift+Click to Exclude)" if self.track_id is not None else "Track y(t) Analysis"
+            title_text_raw = f"Track {self.track_id} y(t) (Shift+Click to Exclude/Include pts)" if self.track_id is not None else "Track y(t) Analysis"
             if not self.plot_data_y_vs_t:
-                title_text = "No data to plot"
+                title_text_raw = "No data to plot"
             elif len(times_s_to_fit) < 3 and self.fit_coeffs is None:
-                title_text += " - Insufficient points for fit"
+                title_text_raw += " - Insufficient points for fit"
+            elif self.current_g_value_ms2 <=0 and self.g_input_lineedit and self.g_input_lineedit.text() != str(DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']): # Check if it was an invalid user input for g
+                title_text_raw += " - Invalid g value"
 
-            self.plot_widget.setTitle(title_text)
+            self.plot_widget.setTitle(f'<span style="color: black;">{title_text_raw}</span>')
             self.plot_widget.autoRange(padding=0.05)
             logger.debug("SingleTrackFitWidget: Axes styled and autoRange called in _fit_parabola.")
 
