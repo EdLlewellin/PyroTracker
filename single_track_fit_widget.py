@@ -5,13 +5,13 @@ for a single track.
 """
 import logging
 import copy
-import math # Ensure math is imported
+import math 
 from typing import TYPE_CHECKING, Optional, Dict, Any, List, Tuple
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from element_manager import DEFAULT_ANALYSIS_STATE # For default g value
+from element_manager import DEFAULT_ANALYSIS_STATE 
 
 try:
     import pyqtgraph as pg
@@ -25,27 +25,21 @@ except ImportError:
 
 if TYPE_CHECKING:
     from main_window import MainWindow
-    from scale_analysis_view import ScaleAnalysisView # For parent_view type hint
+    from scale_analysis_view import ScaleAnalysisView 
 
 logger = logging.getLogger(__name__)
 
 class SingleTrackFitWidget(QtWidgets.QWidget):
-    """
-    A widget that encapsulates the UI and logic for analyzing a single track's
-    y(t) data, including plotting, interactive point exclusion, time range
-    selection, and parabolic fitting.
-    """
-
     analysisSettingsToBeSaved = QtCore.Signal(int, dict)
     scaleToBeApplied = QtCore.Signal(int, float)
 
     def __init__(self,
                  main_window_ref: 'MainWindow',
-                 parent_view: 'ScaleAnalysisView',
+                 parent_view: 'ScaleAnalysisView', # This is correct for type hinting
                  parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.main_window_ref = main_window_ref
-        self.parent_view_ref = parent_view
+        self.parent_view_ref = parent_view 
 
         self.track_id: Optional[int] = None
         self.track_element_copy: Optional[Dict[str, Any]] = None
@@ -70,7 +64,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
         self.track_id_label: Optional[QtWidgets.QLabel] = None
         self.g_input_lineedit: Optional[QtWidgets.QLineEdit] = None
-        self.refit_button: Optional[QtWidgets.QPushButton] = None
+        self.refit_button: Optional[QtWidgets.QPushButton] = None 
 
         self.coeff_A_label: Optional[QtWidgets.QLabel] = None
         self.derived_scale_label: Optional[QtWidgets.QLabel] = None
@@ -86,13 +80,17 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         self.clear_and_disable()
         logger.info("SingleTrackFitWidget initialized.")
 
+
     def _setup_ui(self) -> None:
         main_layout = QtWidgets.QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(0, 0, 0, 0) 
         main_layout.setSpacing(6)
 
-        controls_group_box = QtWidgets.QGroupBox("Fit Configuration")
-        controls_layout = QtWidgets.QHBoxLayout(controls_group_box)
+        # Fit Configuration (No cartouche)
+        fit_config_widget = QtWidgets.QWidget()
+        controls_layout = QtWidgets.QHBoxLayout(fit_config_widget)
+        controls_layout.setContentsMargins(0,0,0,0)
+
         self.track_id_label = QtWidgets.QLabel("<b>Track ID: N/A</b>")
         controls_layout.addWidget(self.track_id_label)
         controls_layout.addStretch(1)
@@ -102,17 +100,31 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         self.g_input_lineedit.setToolTip("Gravitational acceleration (default: 9.80665 m/s²)")
         self.g_input_lineedit.setMaximumWidth(80)
         controls_layout.addWidget(self.g_input_lineedit)
-        self.refit_button = QtWidgets.QPushButton("Re-Fit Selected Track")
+        self.refit_button = QtWidgets.QPushButton("Re-Fit Track") 
         self.refit_button.setToolTip("Fit/Re-fit parabola to the currently selected data range and points")
         controls_layout.addWidget(self.refit_button)
-        main_layout.addWidget(controls_group_box)
+        main_layout.addWidget(fit_config_widget)
 
+        # Interactive Plot
         if PYQTGRAPH_AVAILABLE and pg is not None:
             self.plot_widget = pg.PlotWidget()
             self.plot_widget.setBackground('w')
             self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-            self.plot_widget.setLabel('bottom', "Time (s)")
-            self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)")
+            
+            # Point 4 (for this widget): Style analysis plot axes
+            axis_pen = pg.mkPen(color='k', width=1)
+            text_color = 'k'
+            label_style = {'color': text_color, 'font-size': '10pt'}
+
+            self.plot_widget.getAxis('left').setPen(axis_pen)
+            self.plot_widget.getAxis('left').setTextPen(axis_pen)
+            self.plot_widget.getAxis('bottom').setPen(axis_pen)
+            self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
+            self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
+            self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
+            self.plot_widget.setTitle("") # Ensure no title on this plot either
+
+            self.plot_widget.setMinimumHeight(150)
             self.scatter_plot_item = pg.ScatterPlotItem()
             self.plot_widget.addItem(self.scatter_plot_item)
             self.fitted_curve_item = pg.PlotDataItem(pen=pg.mkPen('r', width=2))
@@ -130,6 +142,12 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             fallback_label.setWordWrap(True)
             main_layout.addWidget(fallback_label, stretch=1)
 
+        # Fit Results and Buttons side-by-side
+        results_and_buttons_container = QtWidgets.QWidget()
+        results_and_buttons_layout = QtWidgets.QHBoxLayout(results_and_buttons_container)
+        results_and_buttons_layout.setContentsMargins(0,0,0,0)
+        results_and_buttons_layout.setSpacing(10)
+
         results_group_box = QtWidgets.QGroupBox("Fit Results")
         results_layout = QtWidgets.QFormLayout(results_group_box)
         results_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -140,21 +158,28 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         results_layout.addRow("Derived Scale (m/px):", self.derived_scale_label)
         self.r_squared_label = QtWidgets.QLabel("N/A")
         results_layout.addRow("R² (Goodness of Fit):", self.r_squared_label)
-        main_layout.addWidget(results_group_box)
+        results_and_buttons_layout.addWidget(results_group_box, stretch=2)
 
-        action_buttons_layout = QtWidgets.QHBoxLayout()
-        self.reset_fit_settings_button = QtWidgets.QPushButton("Reset Fit Settings")
-        self.reset_fit_settings_button.setToolTip("Reset time range and point exclusions to default (all points, full time range).")
-        action_buttons_layout.addWidget(self.reset_fit_settings_button)
-        action_buttons_layout.addStretch()
-        self.save_analysis_button = QtWidgets.QPushButton("Save Analysis for This Track")
-        self.save_analysis_button.setToolTip("Save the current fit settings (g, time range, excluded points) and results to this track.")
-        action_buttons_layout.addWidget(self.save_analysis_button)
-        self.apply_scale_button = QtWidgets.QPushButton("Apply Scale from This Track to Project")
-        self.apply_scale_button.setToolTip("Apply the currently derived scale (m/px) from this track to the entire project.")
-        action_buttons_layout.addWidget(self.apply_scale_button)
-        main_layout.addLayout(action_buttons_layout)
+        action_buttons_container_widget = QtWidgets.QWidget()
+        action_buttons_v_layout = QtWidgets.QVBoxLayout(action_buttons_container_widget)
+        action_buttons_v_layout.setContentsMargins(0,0,0,0)
+        action_buttons_v_layout.setSpacing(5)
 
+        self.reset_fit_settings_button = QtWidgets.QPushButton("Reset Fit")
+        self.reset_fit_settings_button.setToolTip("Reset time range and point exclusions to default for this track.")
+        action_buttons_v_layout.addWidget(self.reset_fit_settings_button)
+        self.save_analysis_button = QtWidgets.QPushButton("Save Analysis")
+        self.save_analysis_button.setToolTip("Save the current fit settings and results to this track.")
+        action_buttons_v_layout.addWidget(self.save_analysis_button)
+        self.apply_scale_button = QtWidgets.QPushButton("Apply Project Scale")
+        self.apply_scale_button.setToolTip("Apply the derived scale from this track to the entire project.")
+        action_buttons_v_layout.addWidget(self.apply_scale_button)
+        action_buttons_v_layout.addStretch(1)
+        results_and_buttons_layout.addWidget(action_buttons_container_widget, stretch=1)
+
+        main_layout.addWidget(results_and_buttons_container)
+
+        
     def _connect_signals(self) -> None:
         if PYQTGRAPH_AVAILABLE:
             if self.refit_button:
@@ -185,6 +210,9 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
         if self.track_id_label:
             self.track_id_label.setText(f"<b>Track ID: {self.track_id or 'N/A'}</b>")
+        if self.refit_button: # Update button text
+            self.refit_button.setText(f"Re-Fit Track {self.track_id or 'N/A'}")
+
 
         analysis_state = self.track_element_copy.get('analysis_state', copy.deepcopy(DEFAULT_ANALYSIS_STATE))
         fit_settings = analysis_state.get('fit_settings', DEFAULT_ANALYSIS_STATE['fit_settings'])
@@ -204,7 +232,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if not track_point_data_list:
             logger.warning(f"No point data found for track ID: {self.track_id}")
             if self.plot_widget: self.plot_widget.setTitle("No data to plot")
-            self.clear_and_disable()
+            self.clear_and_disable() # This will also reset refit_button text
             if self.track_id_label: self.track_id_label.setText(f"<b>Track ID: {self.track_id or 'N/A'} (No Data)</b>")
             return
 
@@ -218,7 +246,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
         if not self.plot_data_y_vs_t:
             if self.plot_widget: self.plot_widget.setTitle(f"Track {self.track_id} - No valid points")
-            self.clear_and_disable()
+            self.clear_and_disable() # This will also reset refit_button text
             if self.track_id_label: self.track_id_label.setText(f"<b>Track ID: {self.track_id or 'N/A'} (No Valid Pts)</b>")
             return
 
@@ -228,29 +256,32 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.included_point_indices_mask[i] = False
         
         times_s_all = np.array([item[0] for item in self.plot_data_y_vs_t])
-        min_t_data, max_t_data = min(times_s_all), max(times_s_all)
-
-        if initial_fit_time_range_s:
-            min_t_init = max(min_t_data, initial_fit_time_range_s[0])
-            max_t_init = min(max_t_data, initial_fit_time_range_s[1])
-            self.fit_time_range_s = (min_t_init, max_t_init) if min_t_init < max_t_init else (min_t_data, max_t_data)
+        if len(times_s_all) == 0: # Should be caught by "if not self.plot_data_y_vs_t"
+            self.fit_time_range_s = None
         else:
-            self.fit_time_range_s = (min_t_data, max_t_data)
+            min_t_data, max_t_data = min(times_s_all), max(times_s_all)
+            if initial_fit_time_range_s:
+                min_t_init = max(min_t_data, initial_fit_time_range_s[0])
+                max_t_init = min(max_t_data, initial_fit_time_range_s[1])
+                self.fit_time_range_s = (min_t_init, max_t_init) if min_t_init < max_t_init else (min_t_data, max_t_data)
+            else:
+                self.fit_time_range_s = (min_t_data, max_t_data)
 
         if self.linear_region_item and self.fit_time_range_s:
              self.linear_region_item.setRegion(self.fit_time_range_s)
              self.linear_region_item.setVisible(True)
-        
-        self._update_point_visuals() # This sets the scatter data
+        elif self.linear_region_item: # No valid time range
+            self.linear_region_item.setRegion((0,0)) # Reset or hide
+            self.linear_region_item.setVisible(False)
 
-        # Don't call autoRange here yet, _fit_parabola will do it after curve is also plotted
+        self._update_point_visuals() 
+
         if self.plot_widget:
             self.plot_widget.setLabel('bottom', "Time (s)")
             self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)")
             self.plot_widget.setTitle(f"Track {self.track_id} y(t) (Shift+Click to Exclude)")
-            # self.plot_widget.autoRange() # Moved to end of _fit_parabola
-
-        self._fit_parabola()
+        
+        self._fit_parabola() # Call fit after data is prepared
 
         if self.g_input_lineedit: self.g_input_lineedit.setEnabled(True)
         if self.refit_button: self.refit_button.setEnabled(True)
@@ -262,12 +293,25 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
     def _fit_parabola(self) -> None:
         if not PYQTGRAPH_AVAILABLE or not self.plot_data_y_vs_t:
             logger.warning("Cannot fit parabola: PyQtGraph not available or no data points.")
-            self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
+            self.fit_coeffs = None
+            self.fit_derived_scale_m_per_px = None
+            self.fit_r_squared = None
             self._update_results_display()
-            if self.fitted_curve_item: self.fitted_curve_item.clear()
-            # --- BEGIN MODIFICATION ---
-            if self.plot_widget: self.plot_widget.autoRange(padding=0.05) #
-            # --- END MODIFICATION ---
+            if self.fitted_curve_item:
+                self.fitted_curve_item.clear()
+            if self.plot_widget:
+                # Style axes even if no fit, then autoRange
+                axis_pen = pg.mkPen(color='k', width=1)
+                text_color = 'k'
+                label_style = {'color': text_color, 'font-size': '10pt'}
+                self.plot_widget.getAxis('left').setPen(axis_pen)
+                self.plot_widget.getAxis('left').setTextPen(axis_pen)
+                self.plot_widget.getAxis('bottom').setPen(axis_pen)
+                self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
+                self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
+                self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
+                self.plot_widget.setTitle("No data to plot" if not self.plot_data_y_vs_t else f"Track {self.track_id} y(t) (Shift+Click to Exclude)")
+                self.plot_widget.autoRange(padding=0.05)
             return
 
         try:
@@ -281,12 +325,27 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.g_input_lineedit.setText(str(DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']))
             self.current_g_value_ms2 = DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']
             logger.warning(f"Invalid g value. Using default {self.current_g_value_ms2}.")
-            self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
+            if self.g_input_lineedit: # Ensure UI reflects the g value actually used
+                 self.g_input_lineedit.setText(str(self.current_g_value_ms2))
+
+            self.fit_coeffs = None
+            self.fit_derived_scale_m_per_px = None
+            self.fit_r_squared = None
             self._update_results_display()
-            if self.fitted_curve_item: self.fitted_curve_item.clear()
-            # --- BEGIN MODIFICATION ---
-            if self.plot_widget: self.plot_widget.autoRange(padding=0.05) #
-            # --- END MODIFICATION ---
+            if self.fitted_curve_item:
+                self.fitted_curve_item.clear()
+            if self.plot_widget: # Style and autorange even on invalid g
+                axis_pen = pg.mkPen(color='k', width=1)
+                text_color = 'k'
+                label_style = {'color': text_color, 'font-size': '10pt'}
+                self.plot_widget.getAxis('left').setPen(axis_pen)
+                self.plot_widget.getAxis('left').setTextPen(axis_pen)
+                self.plot_widget.getAxis('bottom').setPen(axis_pen)
+                self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
+                self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
+                self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
+                self.plot_widget.setTitle(f"Track {self.track_id} y(t) (Shift+Click to Exclude) - Invalid g")
+                self.plot_widget.autoRange(padding=0.05)
             return
 
         filtered_times_s = []
@@ -303,7 +362,9 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
         if len(times_s_to_fit) < 3:
             logger.warning(f"Cannot fit parabola: Only {len(times_s_to_fit)} points selected for fitting.")
-            self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
+            self.fit_coeffs = None
+            self.fit_derived_scale_m_per_px = None
+            self.fit_r_squared = None
         else:
             try:
                 coeffs = np.polyfit(times_s_to_fit, y_pixels_to_fit, 2)
@@ -318,16 +379,33 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 logger.info(f"Fit: A={A_px_s2:.3g}, Scale={self.fit_derived_scale_m_per_px if self.fit_derived_scale_m_per_px else 'N/A'}, R2={self.fit_r_squared:.4f}")
             except Exception as e:
                 logger.exception(f"Error during fitting: {e}")
-                self.fit_coeffs = None; self.fit_derived_scale_m_per_px = None; self.fit_r_squared = None
+                self.fit_coeffs = None
+                self.fit_derived_scale_m_per_px = None
+                self.fit_r_squared = None
 
         self._update_results_display()
-        self._plot_fitted_curve()
-        # --- BEGIN MODIFICATION ---
-        if self.plot_widget:
-            self.plot_widget.autoRange(padding=0.05) # Add padding for better visuals
-            logger.debug("Called autoRange at the end of _fit_parabola.")
-        # --- END MODIFICATION ---
+        self._plot_fitted_curve() # This plots the curve based on self.fit_coeffs
 
+        if self.plot_widget:
+            axis_pen = pg.mkPen(color='k', width=1)
+            text_color = 'k'
+            label_style = {'color': text_color, 'font-size': '10pt'}
+            self.plot_widget.getAxis('left').setPen(axis_pen)
+            self.plot_widget.getAxis('left').setTextPen(axis_pen) # For numbers
+            self.plot_widget.getAxis('bottom').setPen(axis_pen)
+            self.plot_widget.getAxis('bottom').setTextPen(axis_pen) # For numbers
+            self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
+            self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
+            
+            title_text = f"Track {self.track_id} y(t) (Shift+Click to Exclude)" if self.track_id is not None else "Track y(t) Analysis"
+            if not self.plot_data_y_vs_t:
+                title_text = "No data to plot"
+            elif len(times_s_to_fit) < 3 and self.fit_coeffs is None:
+                title_text += " - Insufficient points for fit"
+
+            self.plot_widget.setTitle(title_text)
+            self.plot_widget.autoRange(padding=0.05)
+            logger.debug("SingleTrackFitWidget: Axes styled and autoRange called in _fit_parabola.")
 
     def _plot_fitted_curve(self) -> None:
         if not PYQTGRAPH_AVAILABLE or not self.fitted_curve_item: return
@@ -356,6 +434,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
     def _update_results_display(self) -> None:
         if self.coeff_A_label:
             self.coeff_A_label.setText(f"{self.fit_coeffs[0]:.4g}" if self.fit_coeffs else "N/A")
+        # Removed B and C label updates as per plan (they are not shown)
         if self.derived_scale_label:
             self.derived_scale_label.setText(f"{self.fit_derived_scale_m_per_px:.6g}" if self.fit_derived_scale_m_per_px is not None else "N/A")
         if self.r_squared_label:
@@ -489,6 +568,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
     @QtCore.Slot(object)
     def _on_time_range_changed(self, region_item: pg.LinearRegionItem) -> None:
         if self.linear_region_item is None: return
+        
         current_region = self.linear_region_item.getRegion()
         if self.fit_time_range_s is None or \
            abs(current_region[0] - self.fit_time_range_s[0]) > 1e-6 or \
@@ -513,16 +593,26 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
         if self.track_id_label: self.track_id_label.setText("<b>Track ID: N/A</b>")
         if self.g_input_lineedit: self.g_input_lineedit.setText(str(self.current_g_value_ms2))
+        if self.refit_button: self.refit_button.setText("Re-Fit Track")
+
 
         if self.plot_widget:
             if self.scatter_plot_item: self.scatter_plot_item.clear()
             if self.fitted_curve_item: self.fitted_curve_item.clear()
             if self.linear_region_item: self.linear_region_item.setRegion((0,0)); self.linear_region_item.setVisible(False)
+            
+            # Style axes even when cleared
+            axis_pen = pg.mkPen(color='k', width=1)
+            text_color = 'k'
+            label_style = {'color': text_color, 'font-size': '10pt'}
+            self.plot_widget.getAxis('left').setPen(axis_pen)
+            self.plot_widget.getAxis('left').setTextPen(axis_pen)
+            self.plot_widget.getAxis('bottom').setPen(axis_pen)
+            self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
+            self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
+            self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
             self.plot_widget.setTitle("No track selected for analysis")
-            # --- BEGIN MODIFICATION ---
-            self.plot_widget.autoRange(padding=0.05) # Ensure view resets
-            # --- END MODIFICATION ---
-
+            self.plot_widget.autoRange(padding=0.05) 
 
         if self.coeff_A_label: self.coeff_A_label.setText("N/A")
         if self.derived_scale_label: self.derived_scale_label.setText("N/A")
@@ -533,5 +623,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if self.save_analysis_button: self.save_analysis_button.setEnabled(False)
         if self.apply_scale_button: self.apply_scale_button.setEnabled(False)
         if self.reset_fit_settings_button: self.reset_fit_settings_button.setEnabled(False)
+        
+        self.setEnabled(False)
         
         self.setEnabled(False)
