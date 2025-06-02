@@ -728,8 +728,11 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         )
         if reply == QtWidgets.QMessageBox.StandardButton.Yes:
             scale_source_desc = f"Global Fit ({self.num_tracks_for_global_scale} tracks)" #
-            self.main_window_ref.scale_manager.set_scale(self.calculated_global_mean_scale, source_description=scale_source_desc) # [cite: 157]
-            
+            self.main_window_ref.scale_manager.set_scale(
+                self.calculated_global_mean_scale,
+                source_description=scale_source_desc,
+                std_dev=self.calculated_global_std_dev # ADD THIS ARGUMENT
+            )            
             # Mark all tracks as not 'is_applied_to_project' since the global scale is not from one specific track [cite: 157]
             for el in self.main_window_ref.element_manager.elements:
                 if el.get('type') == ElementType.TRACK:

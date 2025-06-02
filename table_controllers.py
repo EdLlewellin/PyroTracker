@@ -489,10 +489,9 @@ class TrackDataViewController(QtCore.QObject):
         selected_row_to_restore = -1
 
         self._lines_table.blockSignals(True)
-        # Clearing and rebuilding groups for lines too. Ensure _element_visibility_button_groups handles IDs correctly.
-        # If track IDs and line IDs can overlap, this might need refinement (e.g., separate dicts or prefixed keys).
-        # Assuming unique IDs across all element types for now.
-        # _clear_internal_visibility_button_groups() # Already called by update_tracks_table_ui if it runs first
+        # _clear_internal_visibility_button_groups() is called by update_tracks_table_ui,
+        # but if only lines are updated, we might need to ensure groups related to lines are cleared
+        # or manage them more granularly if IDs could overlap. Assuming unique IDs for now.
 
         line_elements_to_display = []
         for el_idx, el in enumerate(self._element_manager.elements): 
@@ -503,6 +502,10 @@ class TrackDataViewController(QtCore.QObject):
         style = self._main_window_ref.style() 
         link_color = QtGui.QColor("blue")
         link_tooltip = "Click to jump to this frame"
+
+        # --- BEGIN MODIFICATION: Fetch scale SD once ---
+        scale_sd_m_per_px = self._scale_manager.get_scale_m_per_px_std_dev()
+        # --- END MODIFICATION ---
 
         for row_idx, line_info in enumerate(line_elements_to_display):
             line_element = line_info['element']
@@ -540,9 +543,9 @@ class TrackDataViewController(QtCore.QObject):
             frame_item = QtWidgets.QTableWidgetItem(frame_str) 
             frame_item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             item_flags_frame = frame_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
-            if frame_str.isdigit(): # Only make it a link if it's a valid frame number
+            if frame_str.isdigit(): 
                 frame_item.setForeground(link_color); frame_item.setToolTip(link_tooltip)
-            else: # Not a link, ensure it's not selectable if "Defining..."
+            else: 
                 item_flags_frame &= ~QtCore.Qt.ItemFlag.ItemIsSelectable
             frame_item.setFlags(item_flags_frame)
             self._lines_table.setItem(row_idx, config.COL_LINE_FRAME, frame_item)
@@ -550,40 +553,44 @@ class TrackDataViewController(QtCore.QObject):
             # Length and Angle
             length_str = "N/A"
             angle_str = "N/A"
-            if len(element_data) == 2: # Line is fully defined
+            if len(element_data) == 2: 
                 p1_data, p2_data = element_data[0], element_data[1]
                 _, _, x1_px_internal, y1_px_internal = p1_data
                 _, _, x2_px_internal, y2_px_internal = p2_data
-
-                # Transform points to the current display coordinate system (without scaling yet)
                 x1_cs, y1_cs = self._coord_transformer.transform_point_for_display(x1_px_internal, y1_px_internal)
                 x2_cs, y2_cs = self._coord_transformer.transform_point_for_display(x2_px_internal, y2_px_internal)
-                
-                # Calculate pixel length in the current coordinate system
                 dx_cs_px = x2_cs - x1_cs
                 dy_cs_px = y2_cs - y1_cs
                 pixel_length_cs = math.sqrt(dx_cs_px**2 + dy_cs_px**2)
-
-                # Get display unit and scaled length
                 scaled_length, unit = self._scale_manager.transform_value_for_display(pixel_length_cs)
                 
-                # Use ElementManager's formatter for consistency if desired, or a local one
-                # For now, using ScaleManager's direct output which includes unit.
-                if self._scale_manager.get_scale_m_per_px() is not None and unit == "m":
-                     # If we have ElementManager's _format_length_for_display, use it:
-                    if hasattr(self._element_manager, '_format_length_for_display'):
-                        length_str = self._element_manager._format_length_for_display(scaled_length) # scaled_length is already in meters
-                    else: # Fallback
-                        length_str = f"{scaled_length:.3f} {unit}"
+                # --- BEGIN MODIFICATION: Format length with uncertainty if SD is available ---
+                if unit == "m" and scale_sd_m_per_px is not None and scale_sd_m_per_px > 0:
+                    length_uncertainty_m = pixel_length_cs * scale_sd_m_per_px
+                    # Determine precision for uncertainty: typically 1-2 significant figures
+                    # Let's use 2 decimal places for uncertainty for now, or match scaled_length's implied precision.
+                    # For simplicity, using a fixed precision for uncertainty here.
+                    # A more sophisticated approach would format based on magnitude of uncertainty.
+                    if scaled_length >= 10: # e.g. 12.345 m
+                        scaled_length_str = f"{scaled_length:.2f}" # Match to cm
+                        uncertainty_str = f"{length_uncertainty_m:.2f}"
+                    elif scaled_length >= 0.1: # e.g. 0.1234 m
+                        scaled_length_str = f"{scaled_length:.3f}" # Match to mm
+                        uncertainty_str = f"{length_uncertainty_m:.3f}"
+                    else: # e.g. 0.0123 m
+                        scaled_length_str = f"{scaled_length:.4f}" # Match to 0.1 mm
+                        uncertainty_str = f"{length_uncertainty_m:.4f}"
+
+                    length_str = f"{scaled_length_str} ± {uncertainty_str} {unit}"
+                elif unit == "m": # Meters, but no SD
+                    length_str = f"{scaled_length:.3f} {unit}"
                 else: # Pixels
                     length_str = f"{scaled_length:.1f} {unit}"
+                # --- END MODIFICATION ---
 
-                # Angle: 0-360 degrees, 0 to the right. Y increases downwards in scene, but display transform handles it.
-                # Use dx_cs_px, dy_cs_px as they are in the current display coordinate system
-                angle_rad = math.atan2(-dy_cs_px, dx_cs_px) # Negative dy because y typically increases upwards in math angles
+                angle_rad = math.atan2(-dy_cs_px, dx_cs_px) 
                 angle_deg = math.degrees(angle_rad)
-                if angle_deg < 0:
-                    angle_deg += 360
+                if angle_deg < 0: angle_deg += 360
                 angle_str = f"{angle_deg:.1f}°"
 
             length_item = QtWidgets.QTableWidgetItem(length_str)
@@ -604,7 +611,7 @@ class TrackDataViewController(QtCore.QObject):
             rb_line_incremental.setProperty("visibility_mode", ElementVisibilityMode.INCREMENTAL); rb_line_incremental.setProperty("element_index", element_index_in_manager)
             rb_line_always.setProperty("visibility_mode", ElementVisibilityMode.ALWAYS_VISIBLE); rb_line_always.setProperty("element_index", element_index_in_manager)
             line_button_group = QtWidgets.QButtonGroup(self); line_button_group.addButton(rb_line_hidden); line_button_group.addButton(rb_line_home_frame); line_button_group.addButton(rb_line_incremental); line_button_group.addButton(rb_line_always); line_button_group.setExclusive(True)
-            self._element_visibility_button_groups[element_id] = line_button_group # Store by element_id
+            self._element_visibility_button_groups[element_id] = line_button_group
             line_button_group.blockSignals(True)
             if current_mode == ElementVisibilityMode.HIDDEN: rb_line_hidden.setChecked(True)
             elif current_mode == ElementVisibilityMode.HOME_FRAME: rb_line_home_frame.setChecked(True)
