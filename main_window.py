@@ -1060,8 +1060,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line'):
             is_setting_scale_by_line = self.scale_panel_controller._is_setting_scale_by_line
         
-        is_defining_any_line = is_setting_scale_by_line or self._is_defining_measurement_line
-        nav_enabled_during_action = not is_defining_any_line
+        is_setting_origin = False
+        if self.coord_panel_controller and hasattr(self.coord_panel_controller, 'is_setting_origin_mode'):
+            is_setting_origin = self.coord_panel_controller.is_setting_origin_mode()
+
+        is_defining_any_specific_geometry = is_setting_scale_by_line or self._is_defining_measurement_line or is_setting_origin
+        nav_enabled_during_action = not is_defining_any_specific_geometry
 
         if self.frameSlider: self.frameSlider.setEnabled(is_video_loaded and nav_enabled_during_action)
         if self.prevFrameButton: self.prevFrameButton.setEnabled(is_video_loaded and nav_enabled_during_action)
@@ -1078,7 +1082,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.zoomLevelLineEdit.setEnabled(is_video_loaded and nav_enabled_during_action)
             if not is_video_loaded: self.zoomLevelLineEdit.setText("---.-")
 
-        can_create_new_element = is_video_loaded and not is_defining_any_line
+        can_create_new_element = is_video_loaded and not is_defining_any_specific_geometry
         if self.newTrackAction: 
             self.newTrackAction.setEnabled(can_create_new_element)
         if hasattr(self, 'newMeasurementLineAction') and self.newMeasurementLineAction:
@@ -1096,9 +1100,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'generateKymographAction') and self.generateKymographAction:
             can_generate_kymograph = (
                 is_video_loaded and
-                not is_defining_any_line and 
+                not is_defining_any_specific_geometry and 
                 self.element_manager is not None and 
-                self.element_manager.get_active_element_type() == ElementType.MEASUREMENT_LINE
+                self.element_manager.get_active_element_type() == ElementType.MEASUREMENT_LINE and
+                len(self.element_manager.elements[self.element_manager.active_element_index].get('data', [])) == 2
             )
             self.generateKymographAction.setEnabled(can_generate_kymograph)
 
@@ -1169,6 +1174,31 @@ class MainWindow(QtWidgets.QMainWindow):
         
         if self.project_manager:
              self._handle_unsaved_changes_state_changed(self.project_manager.project_has_unsaved_changes())
+
+        # --- BEGIN CURSOR LOGIC MODIFICATION ---
+        if self.imageView:
+            current_image_view_mode = self.imageView._current_mode 
+            
+            if current_image_view_mode == InteractionMode.NORMAL:
+                # Check if we are in a state to add track points
+                is_ready_to_add_track_point = (
+                    self.video_loaded and
+                    self.element_manager.get_active_element_type() == ElementType.TRACK and
+                    not self._is_defining_measurement_line and # Not defining a measurement line
+                    not is_setting_scale_by_line and          # Not defining a scale line
+                    not is_setting_origin                     # Not setting origin
+                )
+                if is_ready_to_add_track_point:
+                    self.imageView.setCursor(QtCore.Qt.CursorShape.CrossCursor)
+                else:
+                    self.imageView.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+            # else:
+                # For other modes (SET_ORIGIN, SET_SCALE_LINE_START, etc.),
+                # InteractiveImageView.set_interaction_mode() already sets the cursor,
+                # so no need to override here. We only manage NORMAL mode's cursor conditions here.
+                pass
+        # --- END CURSOR LOGIC MODIFICATION ---
+
     def _update_ui_for_frame(self, frame_index: int) -> None:
         if not self.video_loaded:
             if hasattr(self, 'currentFrameLineEdit'): self.currentFrameLineEdit.blockSignals(True); self.currentFrameLineEdit.setReadOnly(True); self.currentFrameLineEdit.setText("-"); self.currentFrameLineEdit.deselect(); self.currentFrameLineEdit.blockSignals(False)
