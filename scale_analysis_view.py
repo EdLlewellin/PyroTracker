@@ -907,25 +907,36 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.main_window_ref.project_manager.set_project_dirty(True)
     
     def _update_global_scale_display_labels(self) -> None: 
-        stale_suffix = " (Stale)" if self._global_scale_is_stale else "" # [cite: 51]
+        stale_suffix = " (Stale)" if self._global_scale_is_stale else "" #
         
         if self.mean_global_scale_label: 
-            mean_text = f"{self.calculated_global_mean_scale:.6g}{stale_suffix}" if self.calculated_global_mean_scale is not None else f"N/A{stale_suffix if self.calculated_global_mean_scale is not None else ''}" # [cite: 51]
+            mean_text = f"{self.calculated_global_mean_scale:.6g}{stale_suffix}" if self.calculated_global_mean_scale is not None else f"N/A{stale_suffix if self.calculated_global_mean_scale is not None else ''}" #
             self.mean_global_scale_label.setText(mean_text)
         if self.std_dev_global_scale_label: 
-            std_text = f"{self.calculated_global_std_dev:.2g}{stale_suffix}" if self.calculated_global_std_dev is not None else f"N/A{stale_suffix if self.calculated_global_std_dev is not None else ''}" # [cite: 51]
+            std_text = f"{self.calculated_global_std_dev:.2g}{stale_suffix}" if self.calculated_global_std_dev is not None else f"N/A{stale_suffix if self.calculated_global_std_dev is not None else ''}" #
             self.std_dev_global_scale_label.setText(std_text)
-        if self.n_tracks_global_scale_label: 
-            self.n_tracks_global_scale_label.setText(f"{str(self.num_tracks_for_global_scale)}{stale_suffix if self.num_tracks_for_global_scale > 0 else ''}") # [cite: 51]
+        
+        # --- BEGIN MODIFICATION: Update N Tracks Used label format ---
+        if self.n_tracks_global_scale_label:
+            total_fittable_tracks = 0
+            if self.main_window_ref and self.main_window_ref.element_manager:
+                for track_element in self.main_window_ref.element_manager.elements:
+                    if track_element.get('type') == ElementType.TRACK:
+                        analysis_state = track_element.get('analysis_state', {})
+                        fit_results = analysis_state.get('fit_results', {})
+                        derived_scale = fit_results.get('derived_scale_m_per_px')
+                        if derived_scale is not None and isinstance(derived_scale, (float, int)) and derived_scale > 0:
+                            total_fittable_tracks += 1
+            
+            n_tracks_text = f"{self.num_tracks_for_global_scale} / {total_fittable_tracks}"
+            if self.num_tracks_for_global_scale > 0 and self._global_scale_is_stale: # Only show stale if tracks are used
+                n_tracks_text += stale_suffix
+            elif self.num_tracks_for_global_scale == 0 and total_fittable_tracks == 0 and self._global_scale_is_stale:
+                # If no tracks are fittable, but something else made it stale (e.g. project load with old stale data)
+                n_tracks_text = f"0 / 0{stale_suffix}"
 
-        # Optional: Change stylesheet for stale labels (e.g., grey out text)
-        # This requires more complex stylesheet management or direct property setting.
-        # For now, appending text is simpler. Example:
-        # style_sheet_normal = "" # Or load default from a theme
-        # style_sheet_stale = "color: gray;"
-        # if self.mean_global_scale_label:
-        #     self.mean_global_scale_label.setStyleSheet(style_sheet_stale if self._global_scale_is_stale else style_sheet_normal)
-        # (Similar for std_dev_global_scale_label and n_tracks_global_scale_label)
+
+            self.n_tracks_global_scale_label.setText(n_tracks_text)
 
     def _update_global_scale_buttons_enabled_state(self) -> None:
         can_calculate_from_checkboxes = any(self.track_global_scale_checkbox_states.values())
