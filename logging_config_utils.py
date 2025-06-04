@@ -121,6 +121,27 @@ def setup_logging_from_settings() -> None:
     else:
         logging.info("File logging is disabled in settings.")
 
+def shutdown_logging() -> None:
+    """
+    Safely shuts down the custom file logger, if one was configured.
+    This should be called before application exit to ensure log files are closed.
+    """
+    global _custom_file_handler
+    logger_instance = logging.getLogger() # Get the root logger
+
+    if _custom_file_handler is not None:
+        logging.info(f"Shutting down custom file handler for: {_custom_file_handler.baseFilename}")
+        try:
+            logger_instance.removeHandler(_custom_file_handler)
+            _custom_file_handler.close()
+        except Exception as e:
+            # Use a basic print here as logging might be shutting down
+            print(f"ERROR: Exception during logging shutdown: {e}", file=sys.stderr)
+        finally:
+            _custom_file_handler = None
+    else:
+        logging.info("No custom file handler to shut down.")
+
 class LoggingSettingsDialog(QtWidgets.QDialog):
     """
     Dialog for users to configure application logging settings, including

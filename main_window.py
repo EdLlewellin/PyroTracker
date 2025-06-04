@@ -30,7 +30,7 @@ import settings_manager as sm_module
 import graphics_utils
 from file_io import UnitSelectionDialog
 from kymograph_handler import KymographHandler
-from logging_config_utils import LoggingSettingsDialog
+from logging_config_utils import LoggingSettingsDialog, shutdown_logging
 
 logger = logging.getLogger(__name__)
 
@@ -2551,11 +2551,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.StandardButton.Cancel,
                 QtWidgets.QMessageBox.StandardButton.Cancel
             )
-
+    
             if reply == QtWidgets.QMessageBox.StandardButton.Save:
                 self._trigger_save_project_direct() 
-                if not self.project_manager.project_has_unsaved_changes():
-                    self._release_video() 
+                if not self.project_manager.project_has_unsaved_changes(): # Check if save was successful
+                    self._release_video()
+                    # --- BEGIN MODIFICATION: Call shutdown_logging before accepting event ---
+                    logger.info("Shutting down logging from MainWindow.closeEvent (after save).")
+                    shutdown_logging()
+                    # --- END MODIFICATION ---
                     event.accept()
                 else:
                     event.ignore() 
@@ -2563,8 +2567,11 @@ class MainWindow(QtWidgets.QMainWindow):
             elif reply == QtWidgets.QMessageBox.StandardButton.Cancel:
                 event.ignore() 
                 return
-            
-        self._release_video() 
+            # If Discard, proceed to shutdown
+    
+        self._release_video()
+        logger.info("Shutting down logging from MainWindow.closeEvent.")
+        shutdown_logging()
         super().closeEvent(event)
         
     def _format_time(self, ms: float) -> str:

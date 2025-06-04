@@ -17,9 +17,8 @@ from PySide6 import QtWidgets, QtCore
 # Import application components AFTER basic logging is configured
 import config
 from main_window import MainWindow
-# --- BEGIN MODIFICATION: Import logging utility ---
-import logging_config_utils # [cite: 18]
-# --- END MODIFICATION ---
+import logging_config_utils
+from logging_config_utils import shutdown_logging
 
 # --- Basic Logging Setup ---
 # Configure logging level and format
@@ -124,4 +123,7 @@ if __name__ == "__main__":
             error_box.setWindowTitle("Critical Error")
             error_box.setText(f"A critical error occurred:\n{e}\n\nPlease check the logs.")
             error_box.exec()
+    finally:
+        logger.info("Application is preparing to exit. Shutting down logging.")
+        shutdown_logging()
         sys.exit(1)
