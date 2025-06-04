@@ -16,8 +16,6 @@ from element_manager import DEFAULT_ANALYSIS_STATE
 try:
     import pyqtgraph as pg
     PYQTGRAPH_AVAILABLE = True
-    pg.setConfigOption('useOpenGL', False)
-    pg.setConfigOption('enableExperimental', False)
 except ImportError:
     pg = None
     PYQTGRAPH_AVAILABLE = False

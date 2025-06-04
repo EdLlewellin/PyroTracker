@@ -13,8 +13,6 @@ import cv2 # For BGR to RGB conversion
 try:
     import pyqtgraph as pg
     PYQTGRAPH_AVAILABLE = True
-    pg.setConfigOption('useOpenGL', False)
-    pg.setConfigOption('enableExperimental', False)
 except ImportError:
     pg = None 
     PYQTGRAPH_AVAILABLE = False
