@@ -436,7 +436,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageView.scaleLinePoint1Clicked.connect(self._handle_scale_or_measurement_line_first_point)
             self.imageView.scaleLinePoint2Clicked.connect(self._handle_scale_or_measurement_line_second_point)
             self.imageView.scaleLinePoint2Clicked.connect(lambda: self.project_manager.set_project_dirty(True))
-
+            self.imageView.panGestureFinished.connect(self._update_ui_state)
+            logger.debug("Connected imageView.panGestureFinished to _update_ui_state.")
 
         if self.table_data_controller:
             self.element_manager.elementListChanged.connect(self.table_data_controller.update_tracks_table_ui)

@@ -36,6 +36,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
     scaleLinePoint1Clicked = QtCore.Signal(float, float) 
     scaleLinePoint2Clicked = QtCore.Signal(float, float, float, float)
+    panGestureFinished = QtCore.Signal()
 
     _BASE_SNAP_ANGLES_DEG: List[float] = [0.0, 30.0, 45.0, 60.0, 90.0, 
                                           120.0, 135.0, 150.0, 180.0,
@@ -876,6 +877,10 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
                     self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
                 else: # For NORMAL or any other mode, default back to Arrow, MainWindow will override if needed.
                     self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+                
+                # --- BEGIN NEW SIGNAL EMISSION ---
+                self.panGestureFinished.emit() # Emit signal after pan
+                # --- END NEW SIGNAL EMISSION ---
 
             elif is_click_intent and self._pixmap_item and self._left_button_press_pos is not None:
                 final_click_scene_pos: QtCore.QPointF
