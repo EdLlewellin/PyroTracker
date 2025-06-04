@@ -56,9 +56,14 @@ KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR = f"{MEASUREMENT_LINES_GROUP}/measurement
 KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE = f"{MEASUREMENT_LINES_GROUP}/measurementLineLengthTextFontSize"
 KEY_SHOW_MEASUREMENT_LINE_LENGTHS = f"{MEASUREMENT_LINES_GROUP}/showMeasurementLineLengths"
 
-# --- BEGIN MODIFICATION: Add key for last project directory ---
 PROJECT_STATE_GROUP = "project_state"
 KEY_LAST_PROJECT_DIRECTORY = f"{PROJECT_STATE_GROUP}/lastProjectDirectory"
+
+# --- BEGIN MODIFICATION: Logging Setting Keys --- [cite: 5]
+LOGGING_GROUP = "logging"
+KEY_LOGGING_ENABLED = f"{LOGGING_GROUP}/enabled"
+KEY_LOGGING_FILE_PATH = f"{LOGGING_GROUP}/filePath"
+KEY_LOGGING_LEVEL = f"{LOGGING_GROUP}/level"
 # --- END MODIFICATION ---
 
 
@@ -90,19 +95,23 @@ DEFAULT_SETTINGS = {
     KEY_INFO_OVERLAY_FILENAME_COLOR: QtGui.QColor("white"),
     KEY_INFO_OVERLAY_TIME_COLOR: QtGui.QColor("white"),
     KEY_INFO_OVERLAY_FRAME_NUMBER_COLOR: QtGui.QColor("white"),
-    KEY_INFO_OVERLAY_FILENAME_FONT_SIZE: 10, 
-    KEY_INFO_OVERLAY_TIME_FONT_SIZE: 10,     
-    KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE: 10, 
+    KEY_INFO_OVERLAY_FILENAME_FONT_SIZE: 10,
+    KEY_INFO_OVERLAY_TIME_FONT_SIZE: 10,
+    KEY_INFO_OVERLAY_FRAME_NUMBER_FONT_SIZE: 10,
 
-    KEY_MEASUREMENT_LINE_COLOR: QtGui.QColor("lime"), 
-    KEY_MEASUREMENT_LINE_ACTIVE_COLOR: QtGui.QColor("aqua"), 
-    KEY_MEASUREMENT_LINE_WIDTH: 1.5, 
-    KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR: QtGui.QColor("lime"), 
-    KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE: 12, 
-    KEY_SHOW_MEASUREMENT_LINE_LENGTHS: True, 
+    KEY_MEASUREMENT_LINE_COLOR: QtGui.QColor("lime"),
+    KEY_MEASUREMENT_LINE_ACTIVE_COLOR: QtGui.QColor("aqua"),
+    KEY_MEASUREMENT_LINE_WIDTH: 1.5,
+    KEY_MEASUREMENT_LINE_LENGTH_TEXT_COLOR: QtGui.QColor("lime"),
+    KEY_MEASUREMENT_LINE_LENGTH_TEXT_FONT_SIZE: 12,
+    KEY_SHOW_MEASUREMENT_LINE_LENGTHS: True,
 
-    # --- BEGIN MODIFICATION: Add default for last project directory ---
-    KEY_LAST_PROJECT_DIRECTORY: "", # Default to empty string, logic in MainWindow will handle fallback to os.getcwd()
+    KEY_LAST_PROJECT_DIRECTORY: "",
+
+    # --- BEGIN MODIFICATION: Logging Default Settings --- [cite: 6]
+    KEY_LOGGING_ENABLED: False,
+    KEY_LOGGING_FILE_PATH: "", # Default to empty, setup_logging will use get_default_log_path
+    KEY_LOGGING_LEVEL: "INFO", # Default logging level
     # --- END MODIFICATION ---
 }
 
@@ -135,39 +144,44 @@ def get_setting(key: str, default_override: Optional[Any] = None) -> Any:
 
     effective_default = default_override if default_override is not None else default_value_from_map
 
+    # --- BEGIN MODIFICATION: Handle new LOGGING_GROUP keys explicitly if needed ---
     if effective_default is None and key not in DEFAULT_SETTINGS:
-        # --- BEGIN MODIFICATION: Check if key starts with PROJECT_STATE_GROUP for string defaults ---
-        # Handle cases like KEY_LAST_PROJECT_DIRECTORY which might not have a complex type default in map
-        # but is expected to be a string.
-        if key.startswith(PROJECT_STATE_GROUP + "/"): # If it's a project state key not in map
-            effective_default = "" # Assume string default if not explicitly in DEFAULT_SETTINGS
-            logger.debug(f"Key '{key}' not in DEFAULT_SETTINGS map, but is project state. Using empty string as default.")
-        else: # --- END MODIFICATION ---
+        if key.startswith(PROJECT_STATE_GROUP + "/") or key.startswith(LOGGING_GROUP + "/"): # Adjusted to include LOGGING_GROUP
+            effective_default = "" # Assume string default for these groups if not explicitly in DEFAULT_SETTINGS
+            logger.debug(f"Key '{key}' not in DEFAULT_SETTINGS map, but is project_state or logging. Using empty string as default.")
+        else:
+    # --- END MODIFICATION ---
             logger.error(f"CRITICAL: No default defined anywhere for key '{key}'. This is a programming error.")
-            return None 
+            return None
 
     stored_value = settings.value(key)
 
     if stored_value is None:
         return effective_default
 
-    # --- BEGIN MODIFICATION: Ensure expected_type is determined correctly, especially for new string keys ---
     expected_type = type(effective_default) if effective_default is not None else str
-    if key == KEY_LAST_PROJECT_DIRECTORY and effective_default == "": # Explicitly handle if default was empty string
+    # --- BEGIN MODIFICATION: Ensure correct expected_type for new keys ---
+    if key == KEY_LAST_PROJECT_DIRECTORY and effective_default == "":
         expected_type = str
+    elif key == KEY_LOGGING_FILE_PATH and effective_default == "":
+        expected_type = str
+    elif key == KEY_LOGGING_LEVEL and effective_default == "INFO": # Example default
+        expected_type = str
+    elif key == KEY_LOGGING_ENABLED and effective_default is False: # Check boolean default
+        expected_type = bool
     # --- END MODIFICATION ---
-    
+
     if expected_type is QtGui.QColor:
         color = QtGui.QColor(str(stored_value))
         if color.isValid():
             return color
         else:
             logger.warning(f"Invalid color string '{stored_value}' retrieved for key '{key}'. Returning effective default.")
-            return effective_default 
+            return effective_default
     elif expected_type is float:
         try:
             return float(stored_value)
-        except (ValueError, TypeError): 
+        except (ValueError, TypeError):
             logger.warning(f"Cannot convert stored value '{stored_value}' to float for key '{key}'. Returning effective default.")
             return effective_default
     elif expected_type is int:
@@ -181,22 +195,20 @@ def get_setting(key: str, default_override: Optional[Any] = None) -> Any:
             if stored_value.lower() == 'true': return True
             if stored_value.lower() == 'false': return False
         try:
+            # Try to convert to float first, then int, then bool, to handle "0.0" or "1.0" etc.
             return bool(int(float(str(stored_value))))
-        except (ValueError, TypeError): 
+        except (ValueError, TypeError):
             logger.warning(f"Could not convert stored value '{stored_value}' to bool via int for key '{key}'. Returning effective default.")
             return effective_default
-    # --- BEGIN MODIFICATION: Add handling for simple string types ---
     elif expected_type is str:
         if isinstance(stored_value, str):
             return stored_value
         else:
-            # Attempt to convert to string if it's not already, though QSettings usually stores strings.
             try:
                 return str(stored_value)
             except Exception:
-                logger.warning(f"Could not convert stored value '{stored_value}' to string for key '{key}'. Returning effective default (which is likely an empty string).")
-                return effective_default # This will be "" for KEY_LAST_PROJECT_DIRECTORY if conversion fails
-    # --- END MODIFICATION ---
+                logger.warning(f"Could not convert stored value '{stored_value}' to string for key '{key}'. Returning effective default.")
+                return effective_default
 
     if isinstance(stored_value, expected_type):
         return stored_value
@@ -210,17 +222,17 @@ def set_setting(key: str, value: Any) -> None:
     value_to_store = value
 
     if isinstance(value, QtGui.QColor):
-        value_to_store = value.name() 
+        value_to_store = value.name()
     elif isinstance(value, bool):
+        # --- BEGIN MODIFICATION: Ensure boolean settings (like KEY_LOGGING_ENABLED) are stored as "true"/"false" for clarity ---
         value_to_store = "true" if value else "false"
-    # --- BEGIN MODIFICATION: Ensure strings are stored as strings ---
-    elif isinstance(value, str): # Explicitly handle strings
+        # --- END MODIFICATION ---
+    elif isinstance(value, str):
         pass # value_to_store is already correct
-    # --- END MODIFICATION ---
 
     logger.debug(f"Saving setting '{key}' with value: {value_to_store} (Original type: {type(value)})")
     settings.setValue(key, value_to_store)
-    settings.sync() 
+    settings.sync()
     logger.debug(f"QSettings status after sync for '{key}': {settings.status().name}")
     if settings.status() != QtCore.QSettings.Status.NoError:
         logger.error(f"Error saving setting '{key}': {settings.status().name}")

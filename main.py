@@ -17,18 +17,23 @@ from PySide6 import QtWidgets, QtCore
 # Import application components AFTER basic logging is configured
 import config
 from main_window import MainWindow
+# --- BEGIN MODIFICATION: Import logging utility ---
+import logging_config_utils # [cite: 18]
+# --- END MODIFICATION ---
 
 # --- Basic Logging Setup ---
 # Configure logging level and format
-# Consider changing level to logging.INFO for release distribution
+# This initial setup is for very early messages.
+# The full configuration will be applied by setup_logging_from_settings().
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(filename)s:%(lineno)d - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    level=logging.DEBUG, # Keep DEBUG for initial startup, setup_logging_from_settings will override
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', # Simplified format for initial
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)] # Ensure it goes to console [cite: 17]
 )
 # Get the logger for this module
 logger = logging.getLogger(__name__) # Use module-specific logger for consistency
-logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION}")
+logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION} (initial log setup)")
 # --------------------------
 
 # --- Determine base directory for resource loading ---
@@ -79,17 +84,20 @@ if __name__ == "__main__":
         app.setApplicationVersion(config.APP_VERSION)
         logger.debug(f"Application details set: Name={config.APP_NAME}, Org={config.APP_ORGANIZATION}, Version={config.APP_VERSION}")
 
+        # --- BEGIN MODIFICATION: Apply full logging configuration ---
+        # Call setup_logging_from_settings() after QApplication is initialized
+        # and QSettings can be reliably accessed by settings_manager.
+        logging_config_utils.setup_logging_from_settings() # [cite: 18]
+        logger.info(f"{config.APP_NAME} v{config.APP_VERSION} started with full logging configuration.") # Re-log start with full config
+        # --- END MODIFICATION ---
+
         # --- Load External Stylesheet ---
         # Path to QSS is now relative to basedir (which is correct for both modes)
         qss_file_path = os.path.join(basedir, "collapsible_panel.qss")
-        
+
         try:
             with open(qss_file_path, "r") as f:
                 stylesheet_content = f.read()
-                # NO LONGER NEEDED if QSS uses relative paths like "icons/arrow_right.svg"
-                # stylesheet_content = stylesheet_content.replace(
-                # "PYTHON_PATH_TO_YOUR_ICONS_DIR", icons_dir.replace("\\", "/") 
-                # )
                 app.setStyleSheet(stylesheet_content)
                 logger.info(f"Loaded stylesheet from {qss_file_path}")
         except FileNotFoundError:

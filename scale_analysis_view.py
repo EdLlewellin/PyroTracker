@@ -35,13 +35,6 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         super().__init__(parent)
         self.main_window_ref = main_window_ref
 
-#temp
-        if PYQTGRAPH_AVAILABLE:
-            QtWidgets.QMessageBox.information(self, "Debug", "PyQtGraph is AVAILABLE")
-        else:
-            QtWidgets.QMessageBox.warning(self, "Debug", "PyQtGraph is NOT AVAILABLE")
-
-
         self.main_yt_plot: Optional[pg.PlotWidget] = None
         self.analysis_tracks_table: Optional[QtWidgets.QTableWidget] = None
         self.single_track_fit_widget: Optional[SingleTrackFitWidget] = None

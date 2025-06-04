@@ -30,6 +30,7 @@ import settings_manager as sm_module
 import graphics_utils
 from file_io import UnitSelectionDialog
 from kymograph_handler import KymographHandler
+from logging_config_utils import LoggingSettingsDialog
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,7 @@ class MainWindow(QtWidgets.QMainWindow):
     
     manualAction: Optional[QtGui.QAction] = None
     aboutAction: Optional[QtGui.QAction] = None
+    loggingSettingsAction: Optional[QtGui.QAction] = None
 
     pen_origin_marker: QtGui.QPen
     pen_marker_active_current: QtGui.QPen
@@ -288,6 +290,11 @@ class MainWindow(QtWidgets.QMainWindow):
                  self.manualAction.setStatusTip("Open the PyroTracker user manual (PDF)")
                  self.manualAction.triggered.connect(self._trigger_show_manual)
                  help_menu.addAction(self.manualAction)
+
+                 self.loggingSettingsAction = QtGui.QAction("Logging Settings...", self) # [cite: 30]
+                 self.loggingSettingsAction.setStatusTip("Configure application logging options") # [cite: 30]
+                 self.loggingSettingsAction.triggered.connect(self._show_logging_settings_dialog) # [cite: 31]
+                 help_menu.addAction(self.loggingSettingsAction) # [cite: 30]
                  
                  app_icon_for_menu = self.windowIcon()
                  self.aboutAction = QtGui.QAction(app_icon_for_menu, "&About PyroTracker", self)
@@ -1612,6 +1619,16 @@ class MainWindow(QtWidgets.QMainWindow):
     @QtCore.Slot()
     def _show_preferences_dialog(self) -> None:
         dialog = PreferencesDialog(self); dialog.settingsApplied.connect(self._handle_settings_applied); dialog.exec()
+
+    @QtCore.Slot()
+    def _show_logging_settings_dialog(self) -> None: # [cite: 31]
+        """
+        Instantiates and shows the LoggingSettingsDialog.
+        """
+        logger.debug("Showing Logging Settings dialog...") # [cite: 31]
+        dialog = LoggingSettingsDialog(self) # [cite: 31]
+        # Further connections for applying settings will be handled in later phases.
+        dialog.exec()
 
     @QtCore.Slot()
     def _handle_settings_applied(self) -> None:
