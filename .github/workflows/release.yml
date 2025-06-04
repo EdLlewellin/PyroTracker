@@ -39,12 +39,14 @@ jobs:
         pip install pyinstaller
 
     - name: Build with PyInstaller
-      # Run PyInstaller. --noconfirm prevents prompts. --onefile bundles everything.
-      # --windowed prevents console window on Windows/macOS. --name sets output name.
-      # --icon sets the application icon.
-      run: pyinstaller --noconfirm --onefile --windowed --icon=PyroTracker.ico --name=PyroTracker --add-data "PyroTracker.ico:." main.py
-      # Note: PyInstaller might sometimes need extra flags (--hidden-import=...) for complex libraries
-      # like OpenCV or PySide6. If builds fail, this is the first place to investigate.
+      run: |
+        pyinstaller --noconfirm --onefile --windowed \
+        --icon=PyroTracker.ico \
+        --name=PyroTracker \
+        --add-data "PyroTracker.ico:." \
+        --add-data "collapsible_panel.qss:." \
+        --add-data "icons:icons" \
+        main.py
 
     - name: Prepare Artifact Name (Windows)
       if: runner.os == 'Windows'

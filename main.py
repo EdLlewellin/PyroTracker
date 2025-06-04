@@ -32,7 +32,18 @@ logger.info(f"Starting {config.APP_NAME} v{config.APP_VERSION}")
 # --------------------------
 
 # --- Determine base directory for resource loading ---
-basedir = os.path.dirname(os.path.abspath(__file__))
+# This logic correctly determines the base directory whether running from source
+# or as a PyInstaller bundle.
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Running in a PyInstaller bundle
+    basedir = sys._MEIPASS
+    logger.info(f"Running in PyInstaller bundle. Basedir: {basedir}")
+else:
+    # Running as a normal Python script
+    basedir = os.path.dirname(os.path.abspath(__file__))
+    logger.info(f"Running from source. Basedir: {basedir}")
+# --- END Determine base directory ---
+
 
 # Standard Python entry point check
 if __name__ == "__main__":
@@ -46,7 +57,6 @@ if __name__ == "__main__":
         if app is None:
             logger.debug("No existing QApplication found, creating a new one.")
             # --- High DPI Handling ---
-            # Use newer methods if available (PySide6 >= 6.4)
             try:
                 QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
                     QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
@@ -54,7 +64,6 @@ if __name__ == "__main__":
                 QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps)
                 logger.debug("High DPI attributes set (PySide6 >= 6.4 method).")
             except AttributeError:
-                # Fallback for older versions
                 logger.warning("Using fallback High DPI settings (older PySide6?).")
                 QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
                 QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
@@ -65,26 +74,22 @@ if __name__ == "__main__":
         else:
             logger.info("Reusing existing QApplication instance.")
 
-        # Set application details (using constants from config)
-        # Required for QSettings and helps identify the app.
         app.setApplicationName(config.APP_NAME)
         app.setOrganizationName(config.APP_ORGANIZATION)
         app.setApplicationVersion(config.APP_VERSION)
         logger.debug(f"Application details set: Name={config.APP_NAME}, Org={config.APP_ORGANIZATION}, Version={config.APP_VERSION}")
 
         # --- Load External Stylesheet ---
-        # Construct path to icons directory (assuming it's a subdir of where main.py is)
-        icons_dir = os.path.join(basedir, "icons") # <--- For resolving icon paths
-
-        qss_file_path = os.path.join(basedir, "collapsible_panel.qss") # <--- Path to QSS
+        # Path to QSS is now relative to basedir (which is correct for both modes)
+        qss_file_path = os.path.join(basedir, "collapsible_panel.qss")
+        
         try:
             with open(qss_file_path, "r") as f:
                 stylesheet_content = f.read()
-                # Replace placeholders in QSS content with actual icon paths
-                # This is a simple approach; Qt Resource system is more robust
-                stylesheet_content = stylesheet_content.replace(
-                    "PYTHON_PATH_TO_YOUR_ICONS_DIR", icons_dir.replace("\\", "/") # Ensure forward slashes for URLs
-                )
+                # NO LONGER NEEDED if QSS uses relative paths like "icons/arrow_right.svg"
+                # stylesheet_content = stylesheet_content.replace(
+                # "PYTHON_PATH_TO_YOUR_ICONS_DIR", icons_dir.replace("\\", "/") 
+                # )
                 app.setStyleSheet(stylesheet_content)
                 logger.info(f"Loaded stylesheet from {qss_file_path}")
         except FileNotFoundError:
@@ -92,27 +97,23 @@ if __name__ == "__main__":
         except Exception as e:
             logger.error(f"Error loading stylesheet {qss_file_path}: {e}")
 
-        # Instantiate and show the main window
         logger.debug("Instantiating MainWindow...")
         window = MainWindow()
         logger.debug("MainWindow instantiated.")
         window.show()
         logger.info("MainWindow shown.")
 
-        # Start the Qt event loop
         logger.info("Starting Qt event loop...")
         exit_code = app.exec()
         logger.info(f"Qt event loop finished with exit code {exit_code}.")
         sys.exit(exit_code)
 
     except Exception as e:
-        # Log any critical errors during startup
         logger.critical(f"An unhandled exception occurred during startup: {e}", exc_info=True)
-        # Optionally show a simple error message box if Qt was initialized enough
         if app:
             error_box = QtWidgets.QMessageBox()
             error_box.setIcon(QtWidgets.QMessageBox.Icon.Critical)
             error_box.setWindowTitle("Critical Error")
             error_box.setText(f"A critical error occurred:\n{e}\n\nPlease check the logs.")
             error_box.exec()
-        sys.exit(1) # Exit with a non-zero status code indicates error
+        sys.exit(1)

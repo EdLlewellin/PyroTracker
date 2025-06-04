@@ -37,17 +37,17 @@ QGroupBox[collapsible="true"]::indicator {
 }
 
 QGroupBox[collapsible="true"]::indicator:unchecked {
-    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_right.svg);
+    image: url(icons/arrow_right.svg); /* Relative path */
 }
 
 QGroupBox[collapsible="true"]::indicator:unchecked:hover {
-    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_right_hover.svg);
+    image: url(icons/arrow_right_hover.svg); /* Relative path */
 }
 
 QGroupBox[collapsible="true"]::indicator:checked {
-    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_down.svg);
+    image: url(icons/arrow_down.svg); /* Relative path */
 }
 
 QGroupBox[collapsible="true"]::indicator:checked:hover {
-    image: url(PYTHON_PATH_TO_YOUR_ICONS_DIR/arrow_down_hover.svg);
+    image: url(icons/arrow_down_hover.svg); /* Relative path */
 }

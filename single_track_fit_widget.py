@@ -35,7 +35,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
     def __init__(self,
                  main_window_ref: 'MainWindow',
-                 parent_view: 'ScaleAnalysisView', # This is correct for type hinting
+                 parent_view: 'ScaleAnalysisView', 
                  parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.main_window_ref = main_window_ref
@@ -111,7 +111,6 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             self.plot_widget.setBackground('w')
             self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
             
-            # Point 4 (for this widget): Style analysis plot axes
             axis_pen = pg.mkPen(color='k', width=1)
             text_color = 'k'
             label_style = {'color': text_color, 'font-size': '10pt'}
@@ -122,7 +121,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             self.plot_widget.getAxis('bottom').setTextPen(axis_pen)
             self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
             self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
-            self.plot_widget.setTitle("") # Ensure no title on this plot either
+            self.plot_widget.setTitle("") 
 
             self.plot_widget.setMinimumHeight(150)
             self.scatter_plot_item = pg.ScatterPlotItem()
@@ -142,7 +141,6 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             fallback_label.setWordWrap(True)
             main_layout.addWidget(fallback_label, stretch=1)
 
-        # Fit Results and Buttons side-by-side
         results_and_buttons_container = QtWidgets.QWidget()
         results_and_buttons_layout = QtWidgets.QHBoxLayout(results_and_buttons_container)
         results_and_buttons_layout.setContentsMargins(0,0,0,0)
@@ -198,6 +196,21 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if self.reset_fit_settings_button:
             self.reset_fit_settings_button.clicked.connect(self._on_reset_fit_settings_button_clicked)
 
+    # --- BEGIN NEW METHOD ---
+    def set_apply_scale_button_visibility(self, visible: bool) -> None:
+        """
+        Sets the visibility of the 'Apply Project Scale' button.
+        This is typically called by the parent view (ScaleAnalysisView or TrackAnalysisDialog)
+        to control whether this specific action should be available to the user
+        in the current context.
+        """
+        if self.apply_scale_button:
+            logger.debug(f"SingleTrackFitWidget: Setting 'Apply Project Scale' button visibility to: {visible}")
+            self.apply_scale_button.setVisible(visible)
+        else:
+            logger.warning("SingleTrackFitWidget: 'Apply Project Scale' button not initialized, cannot set visibility.")
+    # --- END NEW METHOD ---
+
     def load_track_data(self,
                         track_element_copy: Dict[str, Any],
                         video_fps: float,
@@ -210,7 +223,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
 
         if self.track_id_label:
             self.track_id_label.setText(f"<b>Track ID: {self.track_id or 'N/A'}</b>")
-        if self.refit_button: # Update button text
+        if self.refit_button: 
             self.refit_button.setText(f"Re-Fit Track {self.track_id or 'N/A'}")
 
 
@@ -232,7 +245,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if not track_point_data_list:
             logger.warning(f"No point data found for track ID: {self.track_id}")
             if self.plot_widget: self.plot_widget.setTitle("No data to plot")
-            self.clear_and_disable() # This will also reset refit_button text
+            self.clear_and_disable() 
             if self.track_id_label: self.track_id_label.setText(f"<b>Track ID: {self.track_id or 'N/A'} (No Data)</b>")
             return
 
@@ -257,7 +270,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.included_point_indices_mask[i] = False
         
         times_s_all = np.array([item[0] for item in self.plot_data_y_vs_t])
-        if len(times_s_all) == 0: # Should be caught by "if not self.plot_data_y_vs_t"
+        if len(times_s_all) == 0: 
             self.fit_time_range_s = None
         else:
             min_t_data, max_t_data = min(times_s_all), max(times_s_all)
@@ -271,8 +284,8 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if self.linear_region_item and self.fit_time_range_s:
              self.linear_region_item.setRegion(self.fit_time_range_s)
              self.linear_region_item.setVisible(True)
-        elif self.linear_region_item: # No valid time range
-            self.linear_region_item.setRegion((0,0)) # Reset or hide
+        elif self.linear_region_item: 
+            self.linear_region_item.setRegion((0,0)) 
             self.linear_region_item.setVisible(False)
 
         self._update_point_visuals() 
@@ -282,12 +295,12 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             self.plot_widget.setLabel('left', "Vertical Position (px, bottom-up)")
             self.plot_widget.setTitle(f'<span style="color: black;">Track {self.track_id} y(t) (Shift+Click to Exclude/Include pts)</span>')
         
-        self._fit_parabola() # Call fit after data is prepared
+        self._fit_parabola() 
 
         if self.g_input_lineedit: self.g_input_lineedit.setEnabled(True)
         if self.refit_button: self.refit_button.setEnabled(True)
         if self.save_analysis_button: self.save_analysis_button.setEnabled(True)
-        if self.apply_scale_button: self.apply_scale_button.setEnabled(True)
+        # Apply scale button visibility is handled by the parent context via set_apply_scale_button_visibility
         if self.reset_fit_settings_button: self.reset_fit_settings_button.setEnabled(True)
         self.setEnabled(True)
 
@@ -301,7 +314,6 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             if self.fitted_curve_item:
                 self.fitted_curve_item.clear()
             if self.plot_widget:
-                # Style axes even if no fit, then autoRange
                 axis_pen = pg.mkPen(color='k', width=1)
                 text_color = 'k'
                 label_style = {'color': text_color, 'font-size': '10pt'}
@@ -326,7 +338,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.g_input_lineedit.setText(str(DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']))
             self.current_g_value_ms2 = DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']
             logger.warning(f"Invalid g value. Using default {self.current_g_value_ms2}.")
-            if self.g_input_lineedit: # Ensure UI reflects the g value actually used
+            if self.g_input_lineedit: 
                  self.g_input_lineedit.setText(str(self.current_g_value_ms2))
 
             self.fit_coeffs = None
@@ -335,7 +347,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             self._update_results_display()
             if self.fitted_curve_item:
                 self.fitted_curve_item.clear()
-            if self.plot_widget: # Style and autorange even on invalid g
+            if self.plot_widget: 
                 axis_pen = pg.mkPen(color='k', width=1)
                 text_color = 'k'
                 label_style = {'color': text_color, 'font-size': '10pt'}
@@ -385,16 +397,16 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 self.fit_r_squared = None
 
         self._update_results_display()
-        self._plot_fitted_curve() # This plots the curve based on self.fit_coeffs
+        self._plot_fitted_curve() 
 
         if self.plot_widget:
             axis_pen = pg.mkPen(color='k', width=1)
             text_color = 'k'
             label_style = {'color': text_color, 'font-size': '10pt'}
             self.plot_widget.getAxis('left').setPen(axis_pen)
-            self.plot_widget.getAxis('left').setTextPen(axis_pen) # For numbers
+            self.plot_widget.getAxis('left').setTextPen(axis_pen) 
             self.plot_widget.getAxis('bottom').setPen(axis_pen)
-            self.plot_widget.getAxis('bottom').setTextPen(axis_pen) # For numbers
+            self.plot_widget.getAxis('bottom').setTextPen(axis_pen) 
             self.plot_widget.getAxis('left').setLabel(text="Vertical Position (px, bottom-up)", units="px", **label_style)
             self.plot_widget.getAxis('bottom').setLabel(text="Time (s)", units="s", **label_style)
             
@@ -403,7 +415,7 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
                 title_text_raw = "No data to plot"
             elif len(times_s_to_fit) < 3 and self.fit_coeffs is None:
                 title_text_raw += " - Insufficient points for fit"
-            elif self.current_g_value_ms2 <=0 and self.g_input_lineedit and self.g_input_lineedit.text() != str(DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']): # Check if it was an invalid user input for g
+            elif self.current_g_value_ms2 <=0 and self.g_input_lineedit and self.g_input_lineedit.text() != str(DEFAULT_ANALYSIS_STATE['fit_settings']['g_value_ms2']): 
                 title_text_raw += " - Invalid g value"
 
             self.plot_widget.setTitle(f'<span style="color: black;">{title_text_raw}</span>')
@@ -437,7 +449,6 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
     def _update_results_display(self) -> None:
         if self.coeff_A_label:
             self.coeff_A_label.setText(f"{self.fit_coeffs[0]:.4g}" if self.fit_coeffs else "N/A")
-        # Removed B and C label updates as per plan (they are not shown)
         if self.derived_scale_label:
             self.derived_scale_label.setText(f"{self.fit_derived_scale_m_per_px:.6g}" if self.fit_derived_scale_m_per_px is not None else "N/A")
         if self.r_squared_label:
@@ -604,7 +615,6 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
             if self.fitted_curve_item: self.fitted_curve_item.clear()
             if self.linear_region_item: self.linear_region_item.setRegion((0,0)); self.linear_region_item.setVisible(False)
             
-            # Style axes even when cleared
             axis_pen = pg.mkPen(color='k', width=1)
             text_color = 'k'
             label_style = {'color': text_color, 'font-size': '10pt'}
@@ -626,7 +636,5 @@ class SingleTrackFitWidget(QtWidgets.QWidget):
         if self.save_analysis_button: self.save_analysis_button.setEnabled(False)
         if self.apply_scale_button: self.apply_scale_button.setEnabled(False)
         if self.reset_fit_settings_button: self.reset_fit_settings_button.setEnabled(False)
-        
-        self.setEnabled(False)
         
         self.setEnabled(False)

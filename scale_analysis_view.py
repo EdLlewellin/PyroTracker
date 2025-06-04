@@ -103,6 +103,10 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         main_layout.addWidget(self.top_level_splitter)
         main_layout.setContentsMargins(0,0,0,0)
 
+        # ... (rest of the left_panel_container_widget and plot setup remains the same) ...
+        # (Keep existing code for left_panel_container_widget, main_yt_plot, ancillary_global_splitter, etc.)
+        
+        # --- This part is for the right panel containing the table and SingleTrackFitWidget ---
         left_panel_container_widget = QtWidgets.QWidget()
         self.left_panel_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, left_panel_container_widget)
         left_panel_outer_layout = QtWidgets.QVBoxLayout(left_panel_container_widget)
@@ -178,12 +182,10 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         global_scale_main_v_layout = QtWidgets.QVBoxLayout(self.global_scale_groupbox)
         global_scale_main_v_layout.setContentsMargins(6, 6, 6, 6); global_scale_main_v_layout.setSpacing(8)
         
-        # --- BEGIN Phase 1 MODIFICATION ---
-        self.fit_all_new_button = QtWidgets.QPushButton("Fit All New/Unfitted Tracks") # [cite: 5]
-        self.fit_all_new_button.setToolTip("Perform a default fit on all tracks without existing valid fit results.") # [cite: 6]
-        self.fit_all_new_button.setEnabled(False) # [cite: 6]
-        global_scale_main_v_layout.addWidget(self.fit_all_new_button) # [cite: 7]
-        # --- END Phase 1 MODIFICATION ---
+        self.fit_all_new_button = QtWidgets.QPushButton("Fit All New/Unfitted Tracks") 
+        self.fit_all_new_button.setToolTip("Perform a default fit on all tracks without existing valid fit results.") 
+        self.fit_all_new_button.setEnabled(False) 
+        global_scale_main_v_layout.addWidget(self.fit_all_new_button) 
         
         global_scale_form_layout = QtWidgets.QFormLayout()
         global_scale_form_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
@@ -227,6 +229,13 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         single_track_outer_layout = QtWidgets.QVBoxLayout(single_track_details_widget)
         single_track_outer_layout.setContentsMargins(0,6,0,0); single_track_outer_layout.setSpacing(0)
         self.single_track_fit_widget = SingleTrackFitWidget(main_window_ref=self.main_window_ref, parent_view=self)
+        
+        # --- BEGIN MODIFICATION ---
+        # Hide the "Apply This Scale to Project" button in the embedded SingleTrackFitWidget
+        if self.single_track_fit_widget:
+            self.single_track_fit_widget.set_apply_scale_button_visibility(False)
+        # --- END MODIFICATION ---
+            
         single_track_outer_layout.addWidget(self.single_track_fit_widget)
         single_track_details_widget.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Expanding)
         self.right_panel_splitter.addWidget(single_track_details_widget)
@@ -253,8 +262,10 @@ class ScaleAnalysisView(QtWidgets.QWidget):
 
     def _setup_analysis_tracks_table(self) -> None:
         if not self.analysis_tracks_table: return
-        column_headers = ["Use", "ID", "Fit Pts", "Fit Scale (m/px)", "R²", "Applied"]
+        # --- BEGIN MODIFICATION ---
+        column_headers = ["Use", "ID", "Fit Pts", "Fit Scale (m/px)", "R²"] # "Applied" column removed
         self.analysis_tracks_table.setColumnCount(len(column_headers))
+        # --- END MODIFICATION ---
         self.analysis_tracks_table.setHorizontalHeaderLabels(column_headers)
         self.analysis_tracks_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.analysis_tracks_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -262,13 +273,15 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.analysis_tracks_table.setAlternatingRowColors(True)
         self.analysis_tracks_table.verticalHeader().setVisible(False)
         header = self.analysis_tracks_table.horizontalHeader()
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
-        self.analysis_tracks_table.setColumnWidth(2, 70)
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # Use
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # ID
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Interactive)      # Fit Pts
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.Stretch)         # Fit Scale
+        header.setSectionResizeMode(4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents) # R²
+        # --- BEGIN MODIFICATION ---
+        # No need to set resize mode for the removed column 5 (Applied)
+        # --- END MODIFICATION ---
+        self.analysis_tracks_table.setColumnWidth(2, 70) # Fit Pts column width
         header.model().setHeaderData(0, QtCore.Qt.Orientation.Horizontal, "Check to include this track's fit in global scale calculations.", QtCore.Qt.ItemDataRole.ToolTipRole)
 
     def set_scale_analysis_data_from_project(self, data: Dict[str, Any]) -> None:
@@ -553,10 +566,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         tracks = [el for el in self.main_window_ref.element_manager.elements if el.get('type') == ElementType.TRACK]
         self.analysis_tracks_table.setRowCount(len(tracks))
         
-        # --- BEGIN Phase 1 MODIFICATION ---
-        # Track if any checkbox state changed due to default logic
         any_checkbox_defaulted_on = False
-        # --- END Phase 1 MODIFICATION ---
 
         for row_idx, track_element in enumerate(tracks):
             track_id = track_element.get('id', -1)
@@ -584,21 +594,14 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             derived_scale = fit_results.get('derived_scale_m_per_px')
             fit_scale_str = f"{derived_scale:.6g}" if derived_scale is not None else "N/A"
             
-            # --- BEGIN Phase 1 MODIFICATION for checkbox default ---
             use_for_global_checkbox = QtWidgets.QCheckBox()
-            is_checked_by_default = derived_scale is not None and derived_scale > 0 # [cite: 20]
+            is_checked_by_default = derived_scale is not None and derived_scale > 0 
+            current_check_state = self.track_global_scale_checkbox_states.get(track_id, is_checked_by_default) 
+            use_for_global_checkbox.setChecked(current_check_state) 
             
-            # If track_id is not in states, it's a new track or first time seeing it after reset.
-            # Use the default based on valid scale.
-            # Otherwise, use the stored state.
-            current_check_state = self.track_global_scale_checkbox_states.get(track_id, is_checked_by_default) # [cite: 19, 20]
-            use_for_global_checkbox.setChecked(current_check_state) # [cite: 20]
-            
-            # Update the stored state immediately to ensure consistency, especially if it was defaulted [cite: 20]
             if track_id not in self.track_global_scale_checkbox_states and is_checked_by_default:
-                any_checkbox_defaulted_on = True # Track if any checkbox was defaulted ON
-            self.track_global_scale_checkbox_states[track_id] = current_check_state # [cite: 20]
-            # --- END Phase 1 MODIFICATION for checkbox default ---
+                any_checkbox_defaulted_on = True 
+            self.track_global_scale_checkbox_states[track_id] = current_check_state 
             
             use_for_global_checkbox.setProperty("track_id", track_id)
             use_for_global_checkbox.stateChanged.connect(lambda state, tid=track_id: self._on_global_scale_checkbox_changed(state, tid))
@@ -617,20 +620,28 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             if checkbox_height_hint <= 0: checkbox_height_hint = checkbox_indicator_width + 4
             checkbox_widget_container.setMinimumSize(container_min_width, checkbox_height_hint)
             checkbox_widget_container.setSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Preferred)
-            self.analysis_tracks_table.setCellWidget(row_idx, 0, checkbox_widget_container)
+            self.analysis_tracks_table.setCellWidget(row_idx, 0, checkbox_widget_container) # Use
             id_item = QtWidgets.QTableWidgetItem(str(track_id)); id_item.setData(QtCore.Qt.ItemDataRole.UserRole, track_id)
-            self.analysis_tracks_table.setItem(row_idx, 1, id_item)
-            self.analysis_tracks_table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(fit_pts_str))
-            self.analysis_tracks_table.setItem(row_idx, 3, QtWidgets.QTableWidgetItem(fit_scale_str))
-            self.analysis_tracks_table.setItem(row_idx, 4, QtWidgets.QTableWidgetItem(r_squared_str))
-            is_applied = fit_results.get('is_applied_to_project', False)
-            applied_str = "Yes" if is_applied else "No"
-            applied_item = QtWidgets.QTableWidgetItem(applied_str)
-            self.analysis_tracks_table.setItem(row_idx, 5, applied_item)
+            self.analysis_tracks_table.setItem(row_idx, 1, id_item) # ID
+            self.analysis_tracks_table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(fit_pts_str)) # Fit Pts
+            self.analysis_tracks_table.setItem(row_idx, 3, QtWidgets.QTableWidgetItem(fit_scale_str)) # Fit Scale
+            self.analysis_tracks_table.setItem(row_idx, 4, QtWidgets.QTableWidgetItem(r_squared_str)) # R²
+            
+            # --- BEGIN MODIFICATION ---
+            # Removed logic for "Applied" column (column 5)
+            # is_applied = fit_results.get('is_applied_to_project', False)
+            # applied_str = "Yes" if is_applied else "No"
+            # applied_item = QtWidgets.QTableWidgetItem(applied_str)
+            # self.analysis_tracks_table.setItem(row_idx, 5, applied_item)
+            # --- END MODIFICATION ---
+
         for r in range(self.analysis_tracks_table.rowCount()):
+            # --- BEGIN MODIFICATION ---
+            # Adjusted column indices for alignment due to removal of "Applied" column
             for c_idx, alignment in [(1, QtCore.Qt.AlignmentFlag.AlignCenter), (2, QtCore.Qt.AlignmentFlag.AlignCenter),
                                      (3, QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter),
-                                     (4, QtCore.Qt.AlignmentFlag.AlignCenter), (5, QtCore.Qt.AlignmentFlag.AlignCenter)]:
+                                     (4, QtCore.Qt.AlignmentFlag.AlignCenter)]: 
+            # --- END MODIFICATION ---
                 item = self.analysis_tracks_table.item(r, c_idx)
                 if item: item.setTextAlignment(alignment)
         logger.info(f"Populated analysis_tracks_table with {len(tracks)} tracks.")
@@ -640,15 +651,10 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.main_yt_plot.autoRange(padding=0.05)
         self._update_ancillary_plots(); self._update_global_scale_buttons_enabled_state()
 
-        # --- BEGIN Phase 1 MODIFICATION ---
-        # If any checkbox was defaulted to ON due to a valid fit, mark project as dirty
-        # This happens if a track had a fit but wasn't in track_global_scale_checkbox_states,
-        # and its checkbox was then set to True.
         if any_checkbox_defaulted_on:
              if self.main_window_ref and hasattr(self.main_window_ref, 'project_manager') and self.main_window_ref.project_manager:
                 logger.debug("Marking project dirty as one or more 'Use' checkboxes were defaulted to ON.")
                 self.main_window_ref.project_manager.set_project_dirty(True)
-        # --- END Phase 1 MODIFICATION ---
 
     def update_on_project_or_video_change(self, is_project_or_video_loaded: bool) -> None:
         logger.debug(f"ScaleAnalysisView: update_on_project_or_video_change called. Loaded: {is_project_or_video_loaded}")
