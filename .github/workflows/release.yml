@@ -39,6 +39,7 @@ jobs:
         pip install pyinstaller
 
     - name: Build with PyInstaller
+      shell: bash # Use bash for all OS for this step
       run: |
         pyinstaller --noconfirm --onefile --windowed \
         --icon=PyroTracker.ico \
