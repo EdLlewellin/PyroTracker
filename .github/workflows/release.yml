@@ -39,15 +39,8 @@ jobs:
         pip install pyinstaller
 
     - name: Build with PyInstaller
-      shell: bash # Use bash for all OS for this step
       run: |
-        pyinstaller --noconfirm --onefile --windowed \
-        --icon=PyroTracker.ico \
-        --name=PyroTracker \
-        --add-data "PyroTracker.ico:." \
-        --add-data "collapsible_panel.qss:." \
-        --add-data "icons:icons" \
-        main.py
+        pyinstaller --noconfirm --onefile --windowed --icon=PyroTracker.ico --name=PyroTracker --add-data "PyroTracker.ico:." --add-data "collapsible_panel.qss:." --add-data "icons:icons" main.py
 
     - name: Prepare Artifact Name (Windows)
       if: runner.os == 'Windows'
