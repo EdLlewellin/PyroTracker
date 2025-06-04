@@ -178,7 +178,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
         self.zoomInButton = QtWidgets.QPushButton("+", self)
         self.zoomInButton.setFixedSize(button_size)
-        self.zoomInButton.setToolTip("Zoom In (Ctrl+Scroll Up)")
+        self.zoomInButton.setToolTip("Zoom In (Scroll Up)")
         self.zoomInButton.setStyleSheet(button_style)
         self.zoomInButton.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.zoomInButton.clicked.connect(self._zoomIn)
@@ -186,7 +186,7 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
 
         self.zoomOutButton = QtWidgets.QPushButton("-", self)
         self.zoomOutButton.setFixedSize(button_size)
-        self.zoomOutButton.setToolTip("Zoom Out (Ctrl+Scroll Down)")
+        self.zoomOutButton.setToolTip("Zoom Out (Scroll Down)")
         self.zoomOutButton.setStyleSheet(button_style)
         self.zoomOutButton.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self.zoomOutButton.clicked.connect(self._zoomOut)
@@ -626,31 +626,40 @@ class InteractiveImageView(QtWidgets.QGraphicsView):
         angle_delta: QtCore.QPoint = event.angleDelta()
         mouse_pos_in_viewport: QtCore.QPoint = event.position().toPoint()
 
+        # --- BEGIN MODIFIED LOGIC for scroll/zoom during line definition ---
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            logger.debug(f"Ctrl+Scroll detected: Performing zoom at viewport pos {mouse_pos_in_viewport}.")
+            # Ctrl + Scroll is for Frame Step
+            # Prevent frame stepping if in a line definition mode
+            if self._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
+                logger.debug(f"Ctrl+Scroll (frame step) ignored during {self._current_mode.name} mode.")
+                event.accept() # Absorb the event, do nothing
+            else:
+                # Perform Frame Step
+                logger.debug("Ctrl+Scroll detected: Requesting frame step.")
+                scroll_amount_y: int = angle_delta.y()
+                if scroll_amount_y == 0:
+                    event.ignore()
+                    return
+                step: int = -1 if scroll_amount_y > 0 else 1
+                logger.debug(f"Emitting frameStepRequested signal with step: {step}")
+                self.frameStepRequested.emit(step)
+                event.accept()
+        else:
+            # Plain Scroll (no Ctrl, or other modifiers) is for Zoom
+            # Allow zoom in most modes, including line definition.
+            # If specific modes are added later where zoom is undesirable, they would need an explicit check here.
+            logger.debug(f"Scroll detected (no Ctrl, current mode: {self._current_mode.name}): Performing zoom at viewport pos {mouse_pos_in_viewport}.")
             scroll_amount: int = angle_delta.y()
             if scroll_amount == 0:
                 event.ignore()
                 return
             zoom_factor_base: float = 1.15
-            if scroll_amount > 0:
+            if scroll_amount > 0: # Scroll Up/Away zooms in
                 self._zoom(zoom_factor_base, mouse_pos_in_viewport)
-            else:
+            else: # Scroll Down/Towards zooms out
                 self._zoom(1.0 / zoom_factor_base, mouse_pos_in_viewport)
             event.accept()
-        elif self._current_mode in [InteractionMode.SET_SCALE_LINE_START, InteractionMode.SET_SCALE_LINE_END]:
-            logger.debug(f"Wheel event ignored (frame stepping disabled) during {self._current_mode.name} mode.")
-            event.accept()
-        else: 
-            logger.debug("Scroll detected (no/other modifier): Requesting frame step.")
-            scroll_amount_y: int = angle_delta.y()
-            if scroll_amount_y == 0:
-                event.ignore()
-                return
-            step: int = -1 if scroll_amount_y > 0 else 1 
-            logger.debug(f"Emitting frameStepRequested signal with step: {step}")
-            self.frameStepRequested.emit(step)
-            event.accept()
+        # --- END MODIFIED LOGIC ---
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         logger.debug(f"Resize event detected. New viewport size: {event.size()}")
