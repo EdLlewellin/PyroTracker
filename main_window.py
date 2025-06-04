@@ -30,6 +30,7 @@ import settings_manager as sm_module
 import graphics_utils
 from file_io import UnitSelectionDialog
 from kymograph_handler import KymographHandler
+from kymograph_options_dialog import KymographOptionsDialog
 from logging_config_utils import LoggingSettingsDialog, shutdown_logging
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,7 @@ class MainWindow(QtWidgets.QMainWindow):
     pen_measurement_line_active: QtGui.QPen
 
     _export_progress_dialog: Optional[QtWidgets.QProgressDialog] = None
+    _kymograph_progress_dialog: Optional[QtWidgets.QProgressDialog] = None
 
     def __init__(self) -> None:
         super().__init__()
@@ -525,6 +527,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._export_handler.exportStarted.connect(self._on_export_started)
             self._export_handler.exportProgress.connect(self._on_export_progress)
             self._export_handler.exportFinished.connect(self._on_export_finished)
+
+        if self._kymograph_handler:
+            self._kymograph_handler.kymographGenerationStarted.connect(self._on_kymograph_generation_started)
+            self._kymograph_handler.kymographGenerationProgress.connect(self._on_kymograph_generation_progress)
+            self._kymograph_handler.kymographGenerationFinished.connect(self._on_kymograph_generation_finished)
+        else:
+            logger.error("MainWindow __init__: _kymograph_handler is None, cannot connect signals.")
 
         if hasattr(self, 'saveTracksTableButton') and self.saveTracksTableButton:
             self.saveTracksTableButton.clicked.connect(self._trigger_save_tracks_table_data)
@@ -2079,6 +2088,31 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.imageView and self.imageView.viewport():
                 self.imageView.viewport().update()
 
+    def _can_enable_kymograph_action(self) -> bool:
+        """Checks if conditions are met to enable the generate kymograph action."""
+        if not self.video_loaded:
+            return False
+        
+        is_defining_any_specific_geometry = False
+        if self.scale_panel_controller and hasattr(self.scale_panel_controller, '_is_setting_scale_by_line'):
+            is_defining_any_specific_geometry = is_defining_any_specific_geometry or self.scale_panel_controller._is_setting_scale_by_line
+        is_defining_any_specific_geometry = is_defining_any_specific_geometry or self._is_defining_measurement_line
+        if self.coord_panel_controller and hasattr(self.coord_panel_controller, 'is_setting_origin_mode'):
+            is_defining_any_specific_geometry = is_defining_any_specific_geometry or self.coord_panel_controller.is_setting_origin_mode()
+
+        if is_defining_any_specific_geometry:
+            return False
+
+        active_element_idx = self.element_manager.active_element_index
+        if active_element_idx == -1 or \
+           self.element_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE:
+            return False
+
+        active_line_data = self.element_manager.elements[active_element_idx].get('data')
+        if not active_line_data or len(active_line_data) != 2:
+            return False
+            
+        return True
 
     def _get_export_resolution_choice(self) -> Optional[ExportResolutionMode]:
         dialog = QtWidgets.QDialog(self); dialog.setWindowTitle("Choose Export Resolution"); dialog.setModal(True)
@@ -2097,7 +2131,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     @QtCore.Slot()
     def _trigger_generate_kymograph(self) -> None:
-        """Handles the 'Generate Kymograph' menu action."""
+        """Handles the 'Generate Kymograph' menu action, including options dialog."""
         logger.info("Generate Kymograph action triggered.")
         status_bar = self.statusBar()
 
@@ -2126,67 +2160,31 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Kymograph Error", "The selected measurement line does not have valid endpoint data.")
             return
 
-        if status_bar: status_bar.showMessage("Generating kymograph... please wait.", 0) 
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
-        QtWidgets.QApplication.processEvents() 
+        # --- BEGIN MODIFICATION: Show KymographOptionsDialog ---
+        options_dialog = KymographOptionsDialog(
+            total_frames=self.total_frames,
+            fps=self.fps,
+            current_frame_idx=self.current_frame_index,
+            parent=self
+        )
 
-        kymo_data_np: Optional[np.ndarray] = None
-        try:
-            kymo_data_np = self._kymograph_handler.generate_kymograph_data(
-                line_points_data=active_line_data, # type: ignore
-                video_handler=self.video_handler
-            )
-        except Exception as e:
-            logger.exception("Exception during kymograph data generation.")
-            if status_bar: status_bar.showMessage(f"Error generating kymograph: {e}", 5000)
-            QtWidgets.QMessageBox.critical(self, "Kymograph Generation Error", f"An error occurred while generating kymograph data:\n{e}")
-            kymo_data_np = None 
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            if status_bar and status_bar.currentMessage() == "Generating kymograph... please wait.":
-                status_bar.clearMessage()
+        if options_dialog.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            start_frame_idx, end_frame_idx = options_dialog.get_selected_range_0_based()
+            logger.info(f"Kymograph options accepted. Range: {start_frame_idx} - {end_frame_idx}")
 
-
-        if kymo_data_np is not None:
-            if status_bar: status_bar.showMessage("Kymograph generated. Opening display...", 2000)
-            logger.info(f"Kymograph data generated successfully (shape: {kymo_data_np.shape}).")
-            
-            if KymographDisplayDialog is not None:
-                line_id = self.element_manager.get_active_element_id()
-                video_filename = os.path.basename(self.video_filepath) if self.video_filepath else "Untitled Video"
-                
-                p1_tl_x, p1_tl_y = active_line_data[0][2], active_line_data[0][3]
-                p2_tl_x, p2_tl_y = active_line_data[1][2], active_line_data[1][3]
-                
-                p1_cs_x, p1_cs_y = self.coord_transformer.transform_point_for_display(p1_tl_x, p1_tl_y)
-                p2_cs_x, p2_cs_y = self.coord_transformer.transform_point_for_display(p2_tl_x, p2_tl_y)
-                
-                line_pixel_length_cs = math.sqrt((p2_cs_x - p1_cs_x)**2 + (p2_cs_y - p1_cs_y)**2)
-                
-                total_line_dist_val, dist_units_str = self.scale_manager.transform_value_for_display(line_pixel_length_cs)
-                
-                total_vid_duration_s = self.total_duration_ms / 1000.0
-
-                kymo_dialog = KymographDisplayDialog(
-                    kymograph_data=kymo_data_np,
-                    line_id=line_id,
-                    video_filename=video_filename,
-                    total_line_distance=total_line_dist_val,
-                    distance_units=dist_units_str,
-                    total_video_duration_seconds=total_vid_duration_s,
-                    total_frames_in_kymo=kymo_data_np.shape[0],      
-                    num_distance_points_in_kymo=kymo_data_np.shape[1],
-                    parent=self
+            # Call KymographHandler, results will be emitted via signals
+            # No need for try-finally here for cursor, as it's handled by start/finish slots now.
+            if self._kymograph_handler:
+                 self._kymograph_handler.generate_kymograph_data(
+                    line_points_data=active_line_data, # type: ignore
+                    video_handler=self.video_handler,
+                    start_frame_idx=start_frame_idx,
+                    end_frame_idx=end_frame_idx
                 )
-                kymo_dialog.show()
-            else:
-                logger.warning("KymographDisplayDialog is not available. Cannot display kymograph.")
-                QtWidgets.QMessageBox.information(self, "Kymograph Generated",
-                                                 "Kymograph data generated, but display dialog is not yet implemented.")
+            # The rest of the logic (displaying dialog) is now in _on_kymograph_generation_finished
         else:
-            if status_bar and not status_bar.currentMessage().startswith("Error generating kymograph"): 
-                status_bar.showMessage("Kymograph generation failed or produced no data.", 4000)
-            logger.warning("Kymograph data is None after generation attempt.")
+            if status_bar: status_bar.showMessage("Kymograph generation cancelled by user (options dialog).", 3000)
+            logger.info("Kymograph generation cancelled by user in options dialog.")
 
     @QtCore.Slot()
     def _trigger_open_track_analysis_dialog(self) -> None:
@@ -2329,6 +2327,112 @@ class MainWindow(QtWidgets.QMainWindow):
                     elif self.imageView._scale_bar_widget.isVisible(): self.imageView._update_overlay_widget_positions()
             else: self.imageView.set_scale_bar_visibility(False)
         elif self.imageView : self.imageView.set_scale_bar_visibility(False)
+
+    @QtCore.Slot()
+    def _on_kymograph_generation_started(self) -> None:
+        """Handles the start of kymograph generation."""
+        logger.info("Kymograph generation started.")
+        if self.generateKymographAction:
+            self.generateKymographAction.setEnabled(False)
+        
+        self._kymograph_progress_dialog = QtWidgets.QProgressDialog(
+            "Generating kymograph...", "Cancel", 0, 100, self
+        )
+        self._kymograph_progress_dialog.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        self._kymograph_progress_dialog.setWindowTitle("Kymograph Generation")
+        self._kymograph_progress_dialog.setValue(0)
+        self._kymograph_progress_dialog.show()
+        
+        status_bar = self.statusBar()
+        if status_bar:
+            status_bar.showMessage("Generating kymograph...", 0) # Persistent message
+        
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.CursorShape.WaitCursor)
+        QtWidgets.QApplication.processEvents()
+
+    @QtCore.Slot(str, int, int)
+    def _on_kymograph_generation_progress(self, message: str, current_value: int, max_value: int) -> None:
+        """Updates the kymograph generation progress dialog."""
+        if self._kymograph_progress_dialog:
+            if self._kymograph_progress_dialog.maximum() != max_value:
+                self._kymograph_progress_dialog.setMaximum(max_value)
+            self._kymograph_progress_dialog.setValue(current_value)
+            self._kymograph_progress_dialog.setLabelText(message)
+            
+            if self._kymograph_progress_dialog.wasCanceled():
+                # Basic cancellation handling; KymographHandler itself doesn't yet support early termination
+                logger.info("Kymograph generation cancelled by user via progress dialog (effect after current step).")
+                # More sophisticated cancellation would require KymographHandler to check a flag.
+        QtWidgets.QApplication.processEvents()
+
+    @QtCore.Slot(object, str) # object is for Optional[np.ndarray]
+    def _on_kymograph_generation_finished(self, kymo_data_np: Optional[np.ndarray], message: str) -> None:
+        """Handles the completion of kymograph generation."""
+        logger.info(f"Kymograph generation finished. Message: {message}")
+        
+        was_cancelled = False
+        if self._kymograph_progress_dialog:
+            was_cancelled = self._kymograph_progress_dialog.wasCanceled()
+            self._kymograph_progress_dialog.close()
+            self._kymograph_progress_dialog = None
+        
+        QtWidgets.QApplication.restoreOverrideCursor()
+        
+        status_bar = self.statusBar()
+        if status_bar:
+            status_bar.showMessage(message, 5000)
+
+        if self.generateKymographAction:
+            self.generateKymographAction.setEnabled(self._can_enable_kymograph_action()) # Re-evaluate based on state
+
+        if was_cancelled:
+            logger.info("Kymograph generation was cancelled. No kymograph will be displayed.")
+            if status_bar: status_bar.showMessage("Kymograph generation cancelled.", 3000)
+            return
+
+        if kymo_data_np is not None:
+            logger.info(f"Kymograph data received successfully (shape: {kymo_data_np.shape}). Opening display.")
+            if KymographDisplayDialog is not None:
+                active_element_idx = self.element_manager.active_element_index
+                active_line_data = self.element_manager.elements[active_element_idx].get('data')
+                if not active_line_data or len(active_line_data) != 2: # Should not happen if checks in _trigger pass
+                    logger.error("Error in _on_kymograph_generation_finished: Active line data became invalid.")
+                    QtWidgets.QMessageBox.critical(self, "Kymograph Error", "Internal error: Line data became invalid during generation.")
+                    return
+
+                line_id = self.element_manager.get_active_element_id()
+                video_filename = os.path.basename(self.video_filepath) if self.video_filepath else "Untitled Video"
+                
+                p1_tl_x, p1_tl_y = active_line_data[0][2], active_line_data[0][3]
+                p2_tl_x, p2_tl_y = active_line_data[1][2], active_line_data[1][3]
+                
+                p1_cs_x, p1_cs_y = self.coord_transformer.transform_point_for_display(p1_tl_x, p1_tl_y)
+                p2_cs_x, p2_cs_y = self.coord_transformer.transform_point_for_display(p2_tl_x, p2_tl_y)
+                
+                line_pixel_length_cs = math.sqrt((p2_cs_x - p1_cs_x)**2 + (p2_cs_y - p1_cs_y)**2)
+                total_line_dist_val, dist_units_str = self.scale_manager.transform_value_for_display(line_pixel_length_cs)
+                total_vid_duration_s = kymo_data_np.shape[0] * (1.0 / self.fps) if self.fps > 0 else 0.0 # Use actual kymo frames for duration
+                
+                kymo_dialog = KymographDisplayDialog(
+                    kymograph_data=kymo_data_np,
+                    line_id=line_id,
+                    video_filename=video_filename,
+                    total_line_distance=total_line_dist_val,
+                    distance_units=dist_units_str,
+                    total_video_duration_seconds=total_vid_duration_s,
+                    total_frames_in_kymo=kymo_data_np.shape[0],      
+                    num_distance_points_in_kymo=kymo_data_np.shape[1],
+                    parent=self
+                )
+                kymo_dialog.show()
+            else:
+                logger.warning("KymographDisplayDialog is not available. Cannot display kymograph.")
+                QtWidgets.QMessageBox.information(self, "Kymograph Generated", "Kymograph data generated, but display dialog is not available.")
+        else:
+            if not was_cancelled: # Only show error if not explicitly cancelled by user
+                logger.warning("Kymograph data is None after generation attempt (and not cancelled).")
+                QtWidgets.QMessageBox.warning(self, "Kymograph Error", f"Kymograph generation failed: {message}")
+
 
     @QtCore.Slot()
     def _trigger_save_tracks_table_data(self) -> None:
