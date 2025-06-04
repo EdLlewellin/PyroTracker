@@ -1,7 +1,7 @@
 # scale_analysis_view.py
 """
 Provides the ScaleAnalysisView class, a QWidget for displaying multi-track
-y(t) data, analysis summaries, and fitting controls.
+y(t) data, analysis summaries, and fitting controls.PYQTGRAPH_AVAILABLE
 """
 import logging
 import copy
@@ -34,7 +34,14 @@ class ScaleAnalysisView(QtWidgets.QWidget):
     def __init__(self, main_window_ref: 'MainWindow', parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.main_window_ref = main_window_ref
-        
+
+#temp
+        if PYQTGRAPH_AVAILABLE:
+            QtWidgets.QMessageBox.information(self, "Debug", "PyQtGraph is AVAILABLE")
+        else:
+            QtWidgets.QMessageBox.warning(self, "Debug", "PyQtGraph is NOT AVAILABLE")
+
+
         self.main_yt_plot: Optional[pg.PlotWidget] = None
         self.analysis_tracks_table: Optional[QtWidgets.QTableWidget] = None
         self.single_track_fit_widget: Optional[SingleTrackFitWidget] = None

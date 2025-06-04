@@ -727,27 +727,47 @@ class MainWindow(QtWidgets.QMainWindow):
         github_repo_url = "https://github.com/EdLlewellin/PyroTracker"
         releases_page_url = f"{github_repo_url}/releases"
 
-        if os.path.exists(manual_path):
-            success = QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(manual_path))
+        # Determine the directory of the running executable
+        if getattr(sys, 'frozen', False): # Running as a bundle
+            app_dir = os.path.dirname(sys.executable)
+        else: # Running as a script
+            app_dir = basedir # basedir is defined in main.py and should be accessible or re-derived
+        
+        manual_path_alongside_exe = os.path.join(app_dir, manual_filename)
+        manual_path_in_basedir = os.path.join(basedir, manual_filename) # For development or if bundled with --add-data
+        
+        logger.info(f"Attempting to find manual. Alongside exe: '{manual_path_alongside_exe}'. In basedir (MEIPASS for bundle): '{manual_path_in_basedir}'.")
+        
+        final_manual_path_to_try = ""
+        
+        if os.path.exists(manual_path_alongside_exe):
+            final_manual_path_to_try = manual_path_alongside_exe
+            logger.info(f"Found manual alongside executable: {final_manual_path_to_try}")
+        elif os.path.exists(manual_path_in_basedir) and getattr(sys, 'frozen', False):
+            # This case is for if you ever decide to bundle it with --add-data
+            final_manual_path_to_try = manual_path_in_basedir
+            logger.info(f"Found manual in PyInstaller MEIPASS directory: {final_manual_path_to_try}")
+        # Add a case for development (running from source) explicitly if needed, though app_dir should cover it.
+        
+        if final_manual_path_to_try:
+            success = QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(final_manual_path_to_try))
             if not success:
-                QtWidgets.QMessageBox.warning(self, "Open Manual Error", 
-                                              f"Could not open the manual at:\n{manual_path}\n\n"
+                QtWidgets.QMessageBox.warning(self, "Open Manual Error",
+                                              f"Could not open the manual at:\n{final_manual_path_to_try}\n\n"
                                               "Please ensure you have a PDF viewer installed.")
-                logger.error(f"Failed to open manual PDF: {manual_path}")
+                logger.error(f"Failed to open manual PDF: {final_manual_path_to_try}")
         else:
+            # Fallback to showing the GitHub link as currently implemented
             msg_box = QtWidgets.QMessageBox(self)
-            msg_box.setIcon(QtWidgets.QMessageBox.Icon.Information)
-            msg_box.setWindowTitle("Manual Not Found")
-            msg_box.setTextFormat(QtCore.Qt.TextFormat.RichText)
+            # ... (rest of your existing GitHub link message box) ...
             msg_box.setText(
-                f"The PyroTracker Manual (<i>{manual_filename}</i>) could not be found in the application directory:<br>"
-                f"<i>{basedir}</i><br><br>"
+                f"The PyroTracker Manual (<i>{manual_filename}</i>) could not be found alongside the application or in its resources.<br><br>"
                 f"You can download it from the latest release page on GitHub:"
             )
-            msg_box.setInformativeText(f"<a href='{releases_page_url}'>{releases_page_url}</a>")
-            msg_box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Ok)
+            # ...
             msg_box.exec()
-            logger.warning(f"Manual PDF not found at: {manual_path}")
+            logger.warning(f"Manual PDF not found at expected locations. Displayed download link.")
+
 
 
     @QtCore.Slot(bool)
