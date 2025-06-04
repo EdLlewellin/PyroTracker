@@ -38,6 +38,12 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
+    - name: Compile Qt Resources
+      run: |
+        pyside6-rcc resources.qrc -o resources_rc.py
+        # Verify the file was created (optional, for debugging CI)
+        ls -l resources_rc.py
+
     - name: Build with PyInstaller
       run: |
         pyinstaller --noconfirm --onefile --windowed --icon=PyroTracker.ico --name=PyroTracker --add-data "PyroTracker.ico:." main.py
