@@ -342,49 +342,68 @@ class ElementManager(QtCore.QObject):
         new_point_data: PointData = (frame_index, time_ms, x_coord, y_coord)
 
         if element_type == ElementType.TRACK:
-            # ... (existing track point addition logic) ...
             existing_point_data_tuple: Optional[PointData] = None; existing_point_idx_in_list: int = -1
             for i, p_data in enumerate(element_data):
                 if p_data[0] == frame_index: existing_point_data_tuple, existing_point_idx_in_list = p_data, i; break
+            
             self._last_action_details = {"element_index": self.active_element_index, "frame_index": frame_index, "time_ms": time_ms}
-            if existing_point_data_tuple: self._last_action_type = UndoActionType.POINT_MODIFIED; self._last_action_details["previous_point_data"] = existing_point_data_tuple
-            else: self._last_action_type = UndoActionType.POINT_ADDED
-            if existing_point_idx_in_list != -1: element_data[existing_point_idx_in_list] = new_point_data
-            else: element_data.append(new_point_data); element_data.sort(key=lambda p: p[0])
+            if existing_point_data_tuple: 
+                self._last_action_type = UndoActionType.POINT_MODIFIED
+                self._last_action_details["previous_point_data"] = existing_point_data_tuple
+            else: 
+                self._last_action_type = UndoActionType.POINT_ADDED
+            
+            if existing_point_idx_in_list != -1: 
+                element_data[existing_point_idx_in_list] = new_point_data
+            else: 
+                element_data.append(new_point_data)
+                element_data.sort(key=lambda p: p[0])
+
+            # --- BEGIN Phase 2 MODIFICATION ---
+            if 'analysis_state' in active_element and \
+               active_element['analysis_state'].get('fit_results', {}).get('coefficients_poly2') is not None: #
+                logger.info(f"Invalidating fit for Track ID {element_id} due to point addition/modification.") #
+                active_element['analysis_state']['fit_results']['coefficients_poly2'] = None #
+                active_element['analysis_state']['fit_results']['r_squared'] = None #
+                active_element['analysis_state']['fit_results']['derived_scale_m_per_px'] = None #
+                # Optionally reset fit_settings as well, or leave them for user reference
+                # active_element['analysis_state']['fit_settings']['time_range_s'] = None
+                # active_element['analysis_state']['fit_settings']['excluded_point_frames'] = []
+                # active_element['analysis_state']['fit_results']['is_applied_to_project'] = False # Consider if this should be reset
+            # --- END Phase 2 MODIFICATION ---
+
             self.undoStateChanged.emit(True); self.activeElementDataChanged.emit(); self.elementListChanged.emit()
             if active_element['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
             return True
         elif element_type == ElementType.MEASUREMENT_LINE and self._is_defining_element_type == ElementType.MEASUREMENT_LINE and active_element['id'] == self.get_active_element_id():
-            if self._defining_element_first_point_data is None: # Defining first point of the line
+            if self._defining_element_first_point_data is None: 
                 self._defining_element_first_point_data = new_point_data
-                self._defining_element_frame_index = frame_index # Store the frame for the line
+                self._defining_element_frame_index = frame_index 
                 logger.info(f"Measurement Line (ID: {element_id}): First point set at frame {frame_index}. Awaiting second point.")
-                self.visualsNeedUpdate.emit() # To show the first temporary marker if any
+                self.visualsNeedUpdate.emit() 
                 return True
-            else: # Defining second point of the line
-                if self._defining_element_frame_index == frame_index: # Second point must be on the same frame
-                    element_data.clear() # Clear any previous attempts if re-clicked
+            else: 
+                if self._defining_element_frame_index == frame_index: 
+                    element_data.clear() 
                     element_data.append(self._defining_element_first_point_data)
                     element_data.append(new_point_data)
                     logger.info(f"Measurement Line (ID: {element_id}): Second point set at frame {frame_index}. Line defined.")
                     
                     defining_element_id_before_reset = self.get_active_element_id()
-                    self._reset_defining_state() # Line definition complete
-                    self._clear_last_action() # Line creation is a single conceptual action, not undone point-by-point here yet
+                    self._reset_defining_state() 
+                    self._clear_last_action() 
 
-                    # Emit signals after state is fully updated
                     if self.active_element_index != -1 and \
                        0 <= self.active_element_index < len(self.elements) and \
                        self.elements[self.active_element_index]['id'] == defining_element_id_before_reset :
-                        self.activeElementDataChanged.emit() # Update points table for this line
+                        self.activeElementDataChanged.emit() 
 
-                    self.elementListChanged.emit() # Update lines table (e.g., with length/angle later)
+                    self.elementListChanged.emit() 
                     if active_element['visibility_mode'] != ElementVisibilityMode.HIDDEN:
                         self.visualsNeedUpdate.emit()
                     return True
                 else:
                     logger.warning(f"Measurement Line (ID: {element_id}): Second point must be on the same frame as the first (expected frame {self._defining_element_frame_index}, got {frame_index}). Action ignored.")
-                    # Do not clear defining state here, user might click again on the correct frame.
                     return False
         else:
             logger.warning(f"add_point: Active element (ID: {element_id}) is type {element_type.name}, or not in defining state for it. Cannot add point in current context.")
@@ -393,22 +412,54 @@ class ElementManager(QtCore.QObject):
             self._clear_last_action(); return False
 
     def delete_point(self, element_index_for_point_delete: int, frame_index: int) -> bool:
-        # ... (existing track point deletion logic, no changes here for now) ...
-        if not (0 <= element_index_for_point_delete < len(self.elements)): self._clear_last_action(); return False
+        if not (0 <= element_index_for_point_delete < len(self.elements)): 
+            self._clear_last_action()
+            return False
+        
         target_element = self.elements[element_index_for_point_delete]
-        if target_element['type'] != ElementType.TRACK: self._clear_last_action(); return False
-        track_data_list: ElementData = target_element['data']; point_to_remove_idx: int = -1; deleted_point_data_tuple: Optional[PointData] = None
+        if target_element['type'] != ElementType.TRACK: 
+            self._clear_last_action()
+            return False
+            
+        track_data_list: ElementData = target_element['data']
+        point_to_remove_idx: int = -1
+        deleted_point_data_tuple: Optional[PointData] = None
         for i, p_data in enumerate(track_data_list):
-            if p_data[0] == frame_index: point_to_remove_idx = i; deleted_point_data_tuple = p_data; break
+            if p_data[0] == frame_index: 
+                point_to_remove_idx = i
+                deleted_point_data_tuple = p_data
+                break
+                
         if point_to_remove_idx != -1 and deleted_point_data_tuple is not None:
-            self._last_action_type = UndoActionType.POINT_DELETED; self._last_action_details = {"element_index": element_index_for_point_delete, "frame_index": frame_index, "deleted_point_data": deleted_point_data_tuple}
-            del track_data_list[point_to_remove_idx]; logger.info(f"Deleted point from element ID {target_element['id']} at frame {frame_index}")
+            self._last_action_type = UndoActionType.POINT_DELETED
+            self._last_action_details = {
+                "element_index": element_index_for_point_delete, 
+                "frame_index": frame_index, 
+                "deleted_point_data": deleted_point_data_tuple
+            }
+            del track_data_list[point_to_remove_idx]
+            logger.info(f"Deleted point from element ID {target_element['id']} at frame {frame_index}")
+
+            # --- BEGIN Phase 2 MODIFICATION ---
+            if 'analysis_state' in target_element and \
+               target_element['analysis_state'].get('fit_results', {}).get('coefficients_poly2') is not None: #
+                logger.info(f"Invalidating fit for Track ID {target_element['id']} due to point deletion.") #
+                target_element['analysis_state']['fit_results']['coefficients_poly2'] = None #
+                target_element['analysis_state']['fit_results']['r_squared'] = None #
+                target_element['analysis_state']['fit_results']['derived_scale_m_per_px'] = None #
+                # target_element['analysis_state']['fit_results']['is_applied_to_project'] = False #
+            # --- END Phase 2 MODIFICATION ---
+
             self.undoStateChanged.emit(True)
-            if element_index_for_point_delete == self.active_element_index: self.activeElementDataChanged.emit()
-            self.elementListChanged.emit(); 
-            if target_element['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
+            if element_index_for_point_delete == self.active_element_index: 
+                self.activeElementDataChanged.emit()
+            self.elementListChanged.emit()
+            if target_element['visibility_mode'] != ElementVisibilityMode.HIDDEN: 
+                self.visualsNeedUpdate.emit()
             return True
-        else: self._clear_last_action(); return False
+        else: 
+            self._clear_last_action()
+            return False
 
     def can_undo_last_point_action(self) -> bool:
         # ... (existing logic, no changes here for now) ...
@@ -437,12 +488,24 @@ class ElementManager(QtCore.QObject):
         return undone_successfully
 
     def _delete_point_for_undo(self, element_index: int, frame_index: int) -> bool:
-        # ... (existing logic) ...
         track_data_list: ElementData = self.elements[element_index]['data']; point_idx = -1
         for i, p_data in enumerate(track_data_list):
             if p_data[0] == frame_index: point_idx = i; break
         if point_idx != -1:
             del track_data_list[point_idx]
+
+            # --- BEGIN Phase 2 MODIFICATION ---
+            # Invalidate fit if undoing a point addition from a fitted track
+            target_element = self.elements[element_index]
+            if target_element['type'] == ElementType.TRACK and 'analysis_state' in target_element and \
+               target_element['analysis_state'].get('fit_results', {}).get('coefficients_poly2') is not None: #
+                logger.info(f"Invalidating fit for Track ID {target_element['id']} due to undoing point addition (effectively a deletion).") #
+                target_element['analysis_state']['fit_results']['coefficients_poly2'] = None #
+                target_element['analysis_state']['fit_results']['r_squared'] = None #
+                target_element['analysis_state']['fit_results']['derived_scale_m_per_px'] = None #
+                # target_element['analysis_state']['fit_results']['is_applied_to_project'] = False #
+            # --- END Phase 2 MODIFICATION ---
+
             if element_index == self.active_element_index: self.activeElementDataChanged.emit()
             self.elementListChanged.emit()
             if self.elements[element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
@@ -450,12 +513,24 @@ class ElementManager(QtCore.QObject):
         return False
 
     def _restore_point_for_undo(self, element_index: int, frame_index: int, point_to_restore: PointData) -> bool:
-        # ... (existing logic) ...
         track_data_list: ElementData = self.elements[element_index]['data']; point_idx = -1
         for i, p_data in enumerate(track_data_list):
             if p_data[0] == frame_index: point_idx = i; break
         if point_idx != -1:
             track_data_list[point_idx] = point_to_restore
+
+            # --- BEGIN Phase 2 MODIFICATION ---
+            # Invalidate fit if undoing a point modification on a fitted track
+            target_element = self.elements[element_index] #
+            if target_element['type'] == ElementType.TRACK and 'analysis_state' in target_element and \
+               target_element['analysis_state'].get('fit_results', {}).get('coefficients_poly2') is not None: #
+                logger.info(f"Invalidating fit for Track ID {target_element['id']} due to undoing point modification.") #
+                target_element['analysis_state']['fit_results']['coefficients_poly2'] = None #
+                target_element['analysis_state']['fit_results']['r_squared'] = None #
+                target_element['analysis_state']['fit_results']['derived_scale_m_per_px'] = None #
+                # target_element['analysis_state']['fit_results']['is_applied_to_project'] = False #
+            # --- END Phase 2 MODIFICATION ---
+            
             if element_index == self.active_element_index: self.activeElementDataChanged.emit()
             self.elementListChanged.emit()
             if self.elements[element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()
@@ -464,13 +539,25 @@ class ElementManager(QtCore.QObject):
         return False
 
     def _add_point_for_undo(self, element_index: int, point_data_to_add: PointData) -> bool:
-        # ... (existing logic) ...
         track_data_list: ElementData = self.elements[element_index]['data']
         for i, p_data in enumerate(track_data_list):
             if p_data[0] == point_data_to_add[0]: 
                 logger.warning(f"_add_point_for_undo: Point for frame {point_data_to_add[0]} already exists in element ID {self.elements[element_index]['id']}. Overwriting for undo.")
                 track_data_list[i] = point_data_to_add; track_data_list.sort(key=lambda p: p[0]); break
         else: track_data_list.append(point_data_to_add); track_data_list.sort(key=lambda p: p[0])
+
+        # --- BEGIN Phase 2 MODIFICATION ---
+        # Invalidate fit if undoing a point deletion (effectively an addition) on a fitted track
+        target_element = self.elements[element_index] #
+        if target_element['type'] == ElementType.TRACK and 'analysis_state' in target_element and \
+           target_element['analysis_state'].get('fit_results', {}).get('coefficients_poly2') is not None: #
+            logger.info(f"Invalidating fit for Track ID {target_element['id']} due to undoing point deletion (effectively an addition).") #
+            target_element['analysis_state']['fit_results']['coefficients_poly2'] = None #
+            target_element['analysis_state']['fit_results']['r_squared'] = None #
+            target_element['analysis_state']['fit_results']['derived_scale_m_per_px'] = None #
+            # target_element['analysis_state']['fit_results']['is_applied_to_project'] = False #
+        # --- END Phase 2 MODIFICATION ---
+
         if element_index == self.active_element_index: self.activeElementDataChanged.emit()
         self.elementListChanged.emit()
         if self.elements[element_index]['visibility_mode'] != ElementVisibilityMode.HIDDEN: self.visualsNeedUpdate.emit()

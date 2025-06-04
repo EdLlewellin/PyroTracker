@@ -65,6 +65,10 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.calculated_global_std_dev: Optional[float] = None
         self.num_tracks_for_global_scale: int = 0
         
+        # --- BEGIN Phase 3 MODIFICATION ---
+        self._global_scale_is_stale: bool = False # [cite: 39]
+        # --- END Phase 3 MODIFICATION ---
+        
         self.calculate_global_scale_button: Optional[QtWidgets.QPushButton] = None
         self.mean_global_scale_label: Optional[QtWidgets.QLabel] = None
         self.std_dev_global_scale_label: Optional[QtWidgets.QLabel] = None
@@ -83,6 +87,10 @@ class ScaleAnalysisView(QtWidgets.QWidget):
 
         if self.main_window_ref and self.main_window_ref.element_manager:
             self.main_window_ref.element_manager.elementListChanged.connect(self.populate_tracks_table)
+            # --- BEGIN Phase 3 MODIFICATION ---
+            # Connect to a signal that indicates a track's fit has been invalidated
+            self.main_window_ref.element_manager.elementListChanged.connect(self._check_track_fit_invalidated_for_staleness) # Simplified approach for Phase 3
+            # --- END Phase 3 MODIFICATION ---
         else:
             logger.warning("ScaleAnalysisView: Could not connect elementListChanged; MainWindow or ElementManager not available.")
 
@@ -169,6 +177,14 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         self.global_scale_groupbox = QtWidgets.QGroupBox("Global Scale")
         global_scale_main_v_layout = QtWidgets.QVBoxLayout(self.global_scale_groupbox)
         global_scale_main_v_layout.setContentsMargins(6, 6, 6, 6); global_scale_main_v_layout.setSpacing(8)
+        
+        # --- BEGIN Phase 1 MODIFICATION ---
+        self.fit_all_new_button = QtWidgets.QPushButton("Fit All New/Unfitted Tracks") # [cite: 5]
+        self.fit_all_new_button.setToolTip("Perform a default fit on all tracks without existing valid fit results.") # [cite: 6]
+        self.fit_all_new_button.setEnabled(False) # [cite: 6]
+        global_scale_main_v_layout.addWidget(self.fit_all_new_button) # [cite: 7]
+        # --- END Phase 1 MODIFICATION ---
+        
         global_scale_form_layout = QtWidgets.QFormLayout()
         global_scale_form_layout.setRowWrapPolicy(QtWidgets.QFormLayout.RowWrapPolicy.WrapLongRows)
         global_scale_form_layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
@@ -231,6 +247,9 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.apply_global_scale_button.clicked.connect(self._apply_calculated_global_scale)
         if self.show_constrained_fits_checkbox:
             self.show_constrained_fits_checkbox.toggled.connect(self._toggle_constrained_fits_display)
+        if hasattr(self, 'fit_all_new_button') and self.fit_all_new_button: # Check if button was created
+            self.fit_all_new_button.clicked.connect(self._trigger_fit_all_new_tracks) # [cite: 7]
+
 
     def _setup_analysis_tracks_table(self) -> None:
         if not self.analysis_tracks_table: return
@@ -335,7 +354,6 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         return color
 
     def _update_main_yt_plot(self) -> None:
-        # Unchanged from current state
         if not PYQTGRAPH_AVAILABLE or not self.main_yt_plot:
             return
         logger.debug(f"ScaleAnalysisView: Updating main_yt_plot. Selected track for highlight: {self.current_selected_track_id_for_plot}")
@@ -364,20 +382,20 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 self.main_window_ref.scale_manager): 
             logger.warning("Cannot update main_yt_plot: Core components not available/loaded.")
             plot_item.setTitle('<span style="color: black;">No video loaded or data available</span>')
-            plot_item.getViewBox().autoRange()
+            if plot_item.getViewBox(): plot_item.getViewBox().autoRange() # check if viewbox exists before calling
             return
 
         video_height = self.main_window_ref.video_handler.frame_height
         if video_height <= 0:
             logger.warning("Cannot plot y(t): Video height is invalid.")
             plot_item.setTitle('<span style="color: black;">Invalid video height for y(t) plot</span>')
-            plot_item.getViewBox().autoRange()
+            if plot_item.getViewBox(): plot_item.getViewBox().autoRange()
             return
 
         tracks = [el for el in self.main_window_ref.element_manager.elements if el.get('type') == ElementType.TRACK]
         if not tracks:
             plot_item.setTitle('<span style="color: black;">No tracks to plot</span>')
-            plot_item.getViewBox().autoRange()
+            if plot_item.getViewBox(): plot_item.getViewBox().autoRange()
             return
 
         plot_item.setTitle('<span style="color: black;">Tracks y(t) - Select track in table to highlight</span>')
@@ -405,9 +423,25 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             y_pixels_plot_all_points = video_height - y_pixels_tl_all_points
             track_color = self._get_plot_color_for_track(track_id)
             is_selected_track = (track_id == self.current_selected_track_id_for_plot)
-            symbol_size = 10 if is_selected_track else 7
+            
+            # --- BEGIN Phase 4 MODIFICATION ---
+            is_used_for_global = self.track_global_scale_checkbox_states.get(track_id, False) #
+            # Check if the track has a valid individual fit, as checkbox might be disabled
+            fit_results_for_use_check = analysis_state.get('fit_results', {})
+            individual_scale_for_use_check = fit_results_for_use_check.get('derived_scale_m_per_px')
+            is_actually_usable_for_global = is_used_for_global and \
+                                            individual_scale_for_use_check is not None and \
+                                            individual_scale_for_use_check > 0 # [cite: 62]
+
+            symbol_size = 10 if is_selected_track else 7 # [cite: 65]
             symbol_brush_color = QtGui.QColor(track_color)
-            if not is_selected_track: symbol_brush_color.setAlpha(100)
+            
+            if not is_actually_usable_for_global: #
+                symbol_brush_color = QtGui.QColor(180, 180, 180, 150) # Greyed out for scatter [cite: 63]
+            elif not is_selected_track: # Used for global but not selected
+                symbol_brush_color.setAlpha(100)
+            # If is_selected_track and is_actually_usable_for_global, it keeps its full color and alpha.
+            # --- END Phase 4 MODIFICATION ---
 
             scatter_item = pg.ScatterPlotItem(x=times_s_all_points, y=y_pixels_plot_all_points,
                                               symbol='o', size=symbol_size,
@@ -432,13 +466,19 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 if t_for_individual_curve is not None and len(t_for_individual_curve) > 0:
                     y_individual_curve = np.polyval(individual_coeffs, t_for_individual_curve)
                     individual_fit_pen_color = QtGui.QColor(track_color)
-                    individual_fit_pen_width = 3 if is_selected_track else 1.5
+                    individual_fit_pen_width = 3 if is_selected_track else 1.5 # [cite: 65]
                     individual_fit_pen_style = QtCore.Qt.PenStyle.SolidLine
-                    if can_show_constrained: 
+                    
+                    # --- BEGIN Phase 4 MODIFICATION ---
+                    if not is_actually_usable_for_global: #
+                        individual_fit_pen_color = QtGui.QColor(180, 180, 180, 200) # Greyed out line [cite: 64]
+                    elif can_show_constrained: 
                         individual_fit_pen_style = QtCore.Qt.PenStyle.DotLine
-                        individual_fit_pen_width *= 0.75
-                    if not is_selected_track and not can_show_constrained : 
+                        individual_fit_pen_width *= 0.75 
+                    elif not is_selected_track: # Used for global, not selected, no constrained fits shown
                          individual_fit_pen_color.setAlpha(120)
+                    # --- END Phase 4 MODIFICATION ---
+                         
                     individual_fit_pen = pg.mkPen(individual_fit_pen_color, width=individual_fit_pen_width, style=individual_fit_pen_style)
                     individual_fit_curve_item = pg.PlotDataItem(x=t_for_individual_curve, y=y_individual_curve, pen=individual_fit_pen)
                     plot_item.addItem(individual_fit_curve_item)
@@ -475,8 +515,15 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                         if t_constrained_curve_plot is not None and len(t_constrained_curve_plot) > 0:
                             y_constrained_curve = constrained_A * t_constrained_curve_plot**2 + constrained_B * t_constrained_curve_plot + constrained_C
                             constrained_pen_color = QtGui.QColor(track_color)
-                            constrained_pen_width = 3.0 if is_selected_track else 2.0
-                            if not is_selected_track: constrained_pen_color.setAlpha(180)
+                            constrained_pen_width = 3.0 if is_selected_track else 2.0 # [cite: 65]
+                            
+                            # --- BEGIN Phase 4 MODIFICATION ---
+                            if not is_actually_usable_for_global: #
+                                constrained_pen_color = QtGui.QColor(180, 180, 180, 180) # Slightly less transparent for dashed line [cite: 64]
+                            elif not is_selected_track: # Used, not selected
+                                constrained_pen_color.setAlpha(180)
+                            # --- END Phase 4 MODIFICATION ---
+                                
                             constrained_pen = pg.mkPen(constrained_pen_color, width=constrained_pen_width, style=QtCore.Qt.PenStyle.DashLine)
                             constrained_curve_item = pg.PlotDataItem(x=t_constrained_curve_plot, y=y_constrained_curve, pen=constrained_pen)
                             plot_item.addItem(constrained_curve_item)
@@ -492,7 +539,6 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         logger.debug("Main y(t) plot updated.")
 
     def populate_tracks_table(self) -> None:
-        # Method body unchanged except for the checkbox setChecked line
         logger.debug("ScaleAnalysisView: populate_tracks_table called.")
         if not self.analysis_tracks_table:
             logger.warning("analysis_tracks_table is None, cannot populate.")
@@ -506,6 +552,12 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             return
         tracks = [el for el in self.main_window_ref.element_manager.elements if el.get('type') == ElementType.TRACK]
         self.analysis_tracks_table.setRowCount(len(tracks))
+        
+        # --- BEGIN Phase 1 MODIFICATION ---
+        # Track if any checkbox state changed due to default logic
+        any_checkbox_defaulted_on = False
+        # --- END Phase 1 MODIFICATION ---
+
         for row_idx, track_element in enumerate(tracks):
             track_id = track_element.get('id', -1)
             analysis_state = track_element.get('analysis_state', copy.deepcopy(DEFAULT_ANALYSIS_STATE))
@@ -531,8 +583,23 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             r_squared_str = f"{r_squared:.4f}" if r_squared is not None else "N/A"
             derived_scale = fit_results.get('derived_scale_m_per_px')
             fit_scale_str = f"{derived_scale:.6g}" if derived_scale is not None else "N/A"
+            
+            # --- BEGIN Phase 1 MODIFICATION for checkbox default ---
             use_for_global_checkbox = QtWidgets.QCheckBox()
-            use_for_global_checkbox.setChecked(self.track_global_scale_checkbox_states.get(track_id, False)) # MODIFIED
+            is_checked_by_default = derived_scale is not None and derived_scale > 0 # [cite: 20]
+            
+            # If track_id is not in states, it's a new track or first time seeing it after reset.
+            # Use the default based on valid scale.
+            # Otherwise, use the stored state.
+            current_check_state = self.track_global_scale_checkbox_states.get(track_id, is_checked_by_default) # [cite: 19, 20]
+            use_for_global_checkbox.setChecked(current_check_state) # [cite: 20]
+            
+            # Update the stored state immediately to ensure consistency, especially if it was defaulted [cite: 20]
+            if track_id not in self.track_global_scale_checkbox_states and is_checked_by_default:
+                any_checkbox_defaulted_on = True # Track if any checkbox was defaulted ON
+            self.track_global_scale_checkbox_states[track_id] = current_check_state # [cite: 20]
+            # --- END Phase 1 MODIFICATION for checkbox default ---
+            
             use_for_global_checkbox.setProperty("track_id", track_id)
             use_for_global_checkbox.stateChanged.connect(lambda state, tid=track_id: self._on_global_scale_checkbox_changed(state, tid))
             use_for_global_checkbox.setEnabled(derived_scale is not None and derived_scale > 0)
@@ -573,11 +640,20 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.main_yt_plot.autoRange(padding=0.05)
         self._update_ancillary_plots(); self._update_global_scale_buttons_enabled_state()
 
+        # --- BEGIN Phase 1 MODIFICATION ---
+        # If any checkbox was defaulted to ON due to a valid fit, mark project as dirty
+        # This happens if a track had a fit but wasn't in track_global_scale_checkbox_states,
+        # and its checkbox was then set to True.
+        if any_checkbox_defaulted_on:
+             if self.main_window_ref and hasattr(self.main_window_ref, 'project_manager') and self.main_window_ref.project_manager:
+                logger.debug("Marking project dirty as one or more 'Use' checkboxes were defaulted to ON.")
+                self.main_window_ref.project_manager.set_project_dirty(True)
+        # --- END Phase 1 MODIFICATION ---
+
     def update_on_project_or_video_change(self, is_project_or_video_loaded: bool) -> None:
         logger.debug(f"ScaleAnalysisView: update_on_project_or_video_change called. Loaded: {is_project_or_video_loaded}")
         
         if not is_project_or_video_loaded:
-            # Full reset if no project or video is loaded
             if self.analysis_tracks_table: self.analysis_tracks_table.setRowCount(0)
             if PYQTGRAPH_AVAILABLE and hasattr(self, 'main_yt_plot') and self.main_yt_plot is not None:
                 self.main_yt_plot.clear(); self.main_yt_plot.setTitle("")
@@ -593,18 +669,29 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             if self.std_dev_global_scale_label: self.std_dev_global_scale_label.setText("N/A")
             if self.n_tracks_global_scale_label: self.n_tracks_global_scale_label.setText("0")
             self.track_global_scale_checkbox_states.clear()
+            
+            # --- BEGIN Phase 3 MODIFICATION ---
+            self._global_scale_is_stale = False # [cite: 53]
+            # --- END Phase 3 MODIFICATION ---
+            
+            if hasattr(self, 'fit_all_new_button') and self.fit_all_new_button:
+                self.fit_all_new_button.setEnabled(False) # [cite: 21]
+
         else:
-            # Video/Project IS loaded.
-            # Refresh the table and plots based on current ElementManager and internal states.
-            # If a project was just loaded, set_scale_analysis_data_from_project would have
-            # already populated self.track_global_scale_checkbox_states,
-            # self.calculated_global_mean_scale, etc.
-            # If it's a new video load (no project), these attributes would be in their default
-            # (cleared) state from the call to update_on_project_or_video_change(False) during _release_video,
-            # followed by scale_manager.reset() etc.
+            # --- BEGIN Phase 3 MODIFICATION ---
+            # If this is a new video load (not a project load which calls set_scale_analysis_data_from_project)
+            # then the global scale context is fresh, so it's not stale.
+            # This condition assumes that if a project was loaded, set_scale_analysis_data_from_project
+            # would have already been called and handled the stale state.
+            if not (self.main_window_ref and self.main_window_ref.project_manager and self.main_window_ref.project_manager.get_current_project_filepath()):
+                 self._global_scale_is_stale = False # [cite: 54]
+            # --- END Phase 3 MODIFICATION ---
+            
             self.populate_tracks_table()
             self._update_global_scale_display_labels() 
-            # Other updates like _update_ancillary_plots are implicitly called by populate_tracks_table
+            
+            if hasattr(self, 'fit_all_new_button') and self.fit_all_new_button:
+                self.fit_all_new_button.setEnabled(True) # [cite: 21]
 
         self.setEnabled(is_project_or_video_loaded and PYQTGRAPH_AVAILABLE)
         self._update_global_scale_buttons_enabled_state()
@@ -614,16 +701,95 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 self.main_window_ref and self.main_window_ref.scale_manager and 
                 self.main_window_ref.scale_manager.get_scale_m_per_px() is not None
             )
-    
+
+    @QtCore.Slot()
+    def _trigger_fit_all_new_tracks(self) -> None:
+        logger.info("'_trigger_fit_all_new_tracks' called.") # [cite: 8]
+
+        if not self.main_window_ref or \
+           not self.main_window_ref.element_manager or \
+           not self.main_window_ref.video_handler or \
+           not self.main_window_ref.video_handler.is_loaded:
+            logger.warning("Cannot 'Fit All New': Core components (MainWindow, ElementManager, VideoHandler) not available or video not loaded.") # [cite: 8]
+            if self.main_window_ref and self.main_window_ref.statusBar():
+                self.main_window_ref.statusBar().showMessage("Cannot perform 'Fit All': Video not loaded or core components missing.", 3000)
+            return
+
+        video_fps = self.main_window_ref.video_handler.fps
+        video_height = self.main_window_ref.video_handler.frame_height
+
+        if video_fps <= 0 or video_height <= 0:
+            logger.error("Cannot 'Fit All New': Video FPS or height is invalid.")
+            if self.main_window_ref and self.main_window_ref.statusBar():
+                self.main_window_ref.statusBar().showMessage("Cannot perform 'Fit All': Invalid video parameters (FPS/height).", 3000)
+            return
+
+        fitted_any_track = False
+        tracks_fitted_count = 0
+
+        for track_element in self.main_window_ref.element_manager.elements: # [cite: 8]
+            if track_element.get('type') == ElementType.TRACK: # [cite: 8]
+                track_id = track_element.get('id')
+                analysis_state = track_element.get('analysis_state', copy.deepcopy(DEFAULT_ANALYSIS_STATE)) # [cite: 8]
+                fit_results = analysis_state.get('fit_results', {})
+                
+                needs_fitting = fit_results.get('coefficients_poly2') is None or \
+                                fit_results.get('derived_scale_m_per_px') is None or \
+                                not (isinstance(fit_results.get('derived_scale_m_per_px'), (float, int)) and fit_results.get('derived_scale_m_per_px') > 0) # [cite: 9]
+
+                if needs_fitting:
+                    logger.info(f"Track ID {track_id} needs fitting. Performing default fit.")
+                    
+                    temp_track_copy = copy.deepcopy(track_element)
+                    temp_track_copy['analysis_state'] = copy.deepcopy(DEFAULT_ANALYSIS_STATE) 
+                                        
+                    temp_fit_widget = SingleTrackFitWidget(main_window_ref=self.main_window_ref, parent_view=self)
+                    temp_fit_widget.load_track_data(temp_track_copy, video_fps, video_height) # [cite: 11]
+                    newly_fitted_analysis_state = temp_fit_widget._get_current_analysis_state_dict() # [cite: 12]
+                    
+                    self.main_window_ref.element_manager.update_track_analysis_state(track_id, newly_fitted_analysis_state) # [cite: 15]
+                    fitted_any_track = True
+                    tracks_fitted_count += 1
+                else:
+                    logger.debug(f"Track ID {track_id} already has valid fit results. Skipping.")
+
+        if fitted_any_track:
+            logger.info(f"Finished fitting {tracks_fitted_count} new/unfitted track(s).")
+            if self.main_window_ref and hasattr(self.main_window_ref, 'project_manager') and self.main_window_ref.project_manager:
+                self.main_window_ref.project_manager.set_project_dirty(True) # [cite: 4]
+            
+            # --- BEGIN Phase 3 MODIFICATION ---
+            self._global_scale_is_stale = True # [cite: 17, 43]
+            # --- END Phase 3 MODIFICATION ---
+
+        self.populate_tracks_table() # [cite: 16]
+        self._update_global_scale_buttons_enabled_state() # [cite: 18]
+        
+        if self.main_window_ref and self.main_window_ref.statusBar():
+            if tracks_fitted_count > 0:
+                self.main_window_ref.statusBar().showMessage(f"Default fit applied to {tracks_fitted_count} track(s).", 3000)
+            else:
+                self.main_window_ref.statusBar().showMessage("No tracks required fitting.", 3000)
+
     @QtCore.Slot(int, int)
     def _on_global_scale_checkbox_changed(self, state: int, track_id: int) -> None:
         is_checked = (state == QtCore.Qt.CheckState.Checked.value)
         if self.track_global_scale_checkbox_states.get(track_id) != is_checked:
             self.track_global_scale_checkbox_states[track_id] = is_checked
             logger.debug(f"Track ID {track_id} 'Use for Global' checkbox state changed to: {is_checked}")
+            # --- BEGIN Phase 3 MODIFICATION ---
+            self._global_scale_is_stale = True # [cite: 40]
+            # --- END Phase 3 MODIFICATION ---
             self._update_global_scale_buttons_enabled_state()
             if self.main_window_ref and hasattr(self.main_window_ref, 'project_manager') and self.main_window_ref.project_manager:
                 self.main_window_ref.project_manager.set_project_dirty(True)
+            
+            # --- BEGIN Phase 4 Fix ---
+            # Trigger plot updates to reflect the change in 'used for global' status visually
+            self._update_main_yt_plot()
+            self._update_ancillary_plots()
+            logger.debug(f"Plots updated after 'Use for Global' checkbox change for Track ID {track_id}.")
+            # --- END Phase 4 Fix ---
 
     @QtCore.Slot()
     def _calculate_global_scale(self) -> None:
@@ -659,12 +825,15 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.num_tracks_for_global_scale = 0
             logger.info("No tracks selected or no valid derived scales for global calculation.")
 
-        self._update_global_scale_display_labels()
-        self._update_global_scale_buttons_enabled_state()
+        # --- BEGIN Phase 3 MODIFICATION ---
+        self._global_scale_is_stale = False # [cite: 48]
+        # --- END Phase 3 MODIFICATION ---
+
+        self._update_global_scale_display_labels() # This will now reflect non-stale state
+        self._update_global_scale_buttons_enabled_state() # This will re-enable "Apply" if conditions met
         self._update_ancillary_plots()
         logger.info("Called _update_ancillary_plots after global scale calculation.")
 
-        # Check if calculated values changed, then set dirty
         changed = not (old_mean == self.calculated_global_mean_scale and \
                        old_std == self.calculated_global_std_dev and \
                        old_n == self.num_tracks_for_global_scale)
@@ -732,22 +901,53 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             self.main_window_ref.project_manager.set_project_dirty(True)
     
     def _update_global_scale_display_labels(self) -> None: 
-        # Unchanged
-        if self.mean_global_scale_label: self.mean_global_scale_label.setText(f"{self.calculated_global_mean_scale:.6g}" if self.calculated_global_mean_scale is not None else "N/A")
-        if self.std_dev_global_scale_label: self.std_dev_global_scale_label.setText(f"{self.calculated_global_std_dev:.2g}" if self.calculated_global_std_dev is not None else "N/A")
-        if self.n_tracks_global_scale_label: self.n_tracks_global_scale_label.setText(str(self.num_tracks_for_global_scale))
+        stale_suffix = " (Stale)" if self._global_scale_is_stale else "" # [cite: 51]
+        
+        if self.mean_global_scale_label: 
+            mean_text = f"{self.calculated_global_mean_scale:.6g}{stale_suffix}" if self.calculated_global_mean_scale is not None else f"N/A{stale_suffix if self.calculated_global_mean_scale is not None else ''}" # [cite: 51]
+            self.mean_global_scale_label.setText(mean_text)
+        if self.std_dev_global_scale_label: 
+            std_text = f"{self.calculated_global_std_dev:.2g}{stale_suffix}" if self.calculated_global_std_dev is not None else f"N/A{stale_suffix if self.calculated_global_std_dev is not None else ''}" # [cite: 51]
+            self.std_dev_global_scale_label.setText(std_text)
+        if self.n_tracks_global_scale_label: 
+            self.n_tracks_global_scale_label.setText(f"{str(self.num_tracks_for_global_scale)}{stale_suffix if self.num_tracks_for_global_scale > 0 else ''}") # [cite: 51]
+
+        # Optional: Change stylesheet for stale labels (e.g., grey out text)
+        # This requires more complex stylesheet management or direct property setting.
+        # For now, appending text is simpler. Example:
+        # style_sheet_normal = "" # Or load default from a theme
+        # style_sheet_stale = "color: gray;"
+        # if self.mean_global_scale_label:
+        #     self.mean_global_scale_label.setStyleSheet(style_sheet_stale if self._global_scale_is_stale else style_sheet_normal)
+        # (Similar for std_dev_global_scale_label and n_tracks_global_scale_label)
 
     def _update_global_scale_buttons_enabled_state(self) -> None:
-        # Unchanged
-        can_calculate = any(self.track_global_scale_checkbox_states.values())
+        can_calculate_from_checkboxes = any(self.track_global_scale_checkbox_states.values())
         video_loaded_and_pyqtgraph = PYQTGRAPH_AVAILABLE and self.main_window_ref and self.main_window_ref.video_handler and self.main_window_ref.video_handler.is_loaded
-        if self.calculate_global_scale_button: self.calculate_global_scale_button.setEnabled(can_calculate and video_loaded_and_pyqtgraph)
+        
+        if self.calculate_global_scale_button: 
+            self.calculate_global_scale_button.setEnabled(can_calculate_from_checkboxes and video_loaded_and_pyqtgraph)
+            # --- BEGIN Phase 3 MODIFICATION ---
+            if self._global_scale_is_stale and self.calculated_global_mean_scale is not None: # [cite: 49]
+                self.calculate_global_scale_button.setText("Recalculate Global Scale (Pending)") # [cite: 49]
+            else:
+                self.calculate_global_scale_button.setText("Calculate Global Scale") # [cite: 50]
+            # --- END Phase 3 MODIFICATION ---
+
         can_apply = self.calculated_global_mean_scale is not None
-        if self.apply_global_scale_button: self.apply_global_scale_button.setEnabled(can_apply and video_loaded_and_pyqtgraph)
-        can_show_constrained = video_loaded_and_pyqtgraph and (self.main_window_ref.scale_manager is not None and self.main_window_ref.scale_manager.get_scale_m_per_px() is not None)
+        # --- BEGIN Phase 3 MODIFICATION ---
+        apply_button_enabled = can_apply and video_loaded_and_pyqtgraph and not self._global_scale_is_stale # [cite: 50]
+        if self.apply_global_scale_button: 
+            self.apply_global_scale_button.setEnabled(apply_button_enabled) # [cite: 50]
+        # --- END Phase 3 MODIFICATION ---
+
+        can_show_constrained = video_loaded_and_pyqtgraph and \
+                               (self.main_window_ref.scale_manager is not None and 
+                                self.main_window_ref.scale_manager.get_scale_m_per_px() is not None)
         if self.show_constrained_fits_checkbox:
             self.show_constrained_fits_checkbox.setEnabled(can_show_constrained)
-            if not can_show_constrained and self.show_constrained_fits_checkbox.isChecked(): self.show_constrained_fits_checkbox.setChecked(False)
+            if not can_show_constrained and self.show_constrained_fits_checkbox.isChecked(): 
+                self.show_constrained_fits_checkbox.setChecked(False)
 
     @QtCore.Slot()
     def _on_analysis_table_selection_changed(self) -> None: 
@@ -833,7 +1033,8 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                                    "scale_vs_centroid_y_plot", "scale_vs_radial_pos_plot",
                                    "scale_histogram_plot", "scale_cdf_plot"]:
                 plot_widget = getattr(self, plot_attr_name, None)
-                if plot_widget: plot_widget.autoRange()
+                if plot_widget and plot_widget.getPlotItem() and plot_widget.getPlotItem().getViewBox(): # Check if plot_item and viewbox exist
+                     plot_widget.getPlotItem().getViewBox().autoRange()
             return
 
         fit_summaries: List[Dict] = []
@@ -849,7 +1050,8 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                                    "scale_vs_centroid_y_plot", "scale_vs_radial_pos_plot",
                                    "scale_histogram_plot", "scale_cdf_plot"]:
                 plot_widget = getattr(self, plot_attr_name, None)
-                if plot_widget: plot_widget.autoRange()
+                if plot_widget and plot_widget.getPlotItem() and plot_widget.getPlotItem().getViewBox():
+                     plot_widget.getPlotItem().getViewBox().autoRange()
             return
 
         track_ids_all = [s['track_id'] for s in fit_summaries]
@@ -858,7 +1060,26 @@ class ScaleAnalysisView(QtWidgets.QWidget):
         centroid_xs = np.array([s['centroid_x_px'] for s in fit_summaries])
         centroid_ys = np.array([s['centroid_y_px'] for s in fit_summaries])
         radial_positions = np.array([s['radial_pos_px'] for s in fit_summaries])
-        point_brushes_all = [self._get_plot_color_for_track(tid) for tid in track_ids_all]
+        
+        # --- BEGIN Phase 4 MODIFICATION ---
+        point_brushes_all = []
+        for tid in track_ids_all:
+            is_used = self.track_global_scale_checkbox_states.get(tid, False)
+            # Check if the track has a valid individual fit (similar to main plot logic)
+            track_element_for_brush = next((el for el in self.main_window_ref.element_manager.elements if el.get('id') == tid and el.get('type') == ElementType.TRACK), None)
+            is_actually_usable_for_global = False
+            if track_element_for_brush:
+                analysis_state_brush = track_element_for_brush.get('analysis_state', {})
+                fit_results_brush = analysis_state_brush.get('fit_results', {})
+                derived_scale_brush = fit_results_brush.get('derived_scale_m_per_px')
+                is_actually_usable_for_global = is_used and derived_scale_brush is not None and derived_scale_brush > 0
+            
+            if is_actually_usable_for_global: #
+                point_brushes_all.append(self._get_plot_color_for_track(tid))
+            else:
+                point_brushes_all.append(QtGui.QColor(180, 180, 180, 100)) # Greyed out brush [cite: 66, 67]
+        # --- END Phase 4 MODIFICATION ---
+
 
         mean_scale = self.calculated_global_mean_scale
         std_dev_scale = self.calculated_global_std_dev
@@ -881,13 +1102,11 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 if not plot_item: continue
                 logger.debug(f"Populating {plot_name_for_log} with full-span mean/SD overlays.")
                 items_to_add = []
-                if len(x_data_array) > 0:
+                if len(x_data_array) > 0 and len(scales_all) == len(x_data_array): # Ensure consistent lengths
                     scatter_item = pg.ScatterPlotItem(x=x_data_array, y=scales_all, data=track_ids_all,
                                                       symbol='o', size=8, brush=point_brushes_all, pen=None)
                     scatter_item.setZValue(0)
-                    # --- MODIFICATION: Connect to the correct existing handler ---
                     scatter_item.sigClicked.connect(self._on_main_yt_plot_point_clicked) 
-                    # --- END MODIFICATION ---
                     items_to_add.append(scatter_item)
 
                 if plot_mean_sd_visuals and mean_scale is not None and std_dev_scale is not None:
@@ -904,7 +1123,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                     mean_line_horizontal = pg.InfiniteLine(pos=mean_scale, angle=0, pen=global_mean_pen, movable=False)
                     mean_line_horizontal.setZValue(-10); items_to_add.append(mean_line_horizontal)
                 for item in items_to_add: plot_item.addItem(item)
-                plot_widget.autoRange()
+                if plot_item.getViewBox(): plot_item.getViewBox().autoRange()
 
         if self.scale_histogram_plot and len(scales_all) > 0:
             logger.debug("Updating scale histogram plot with mean/SD (vertical).")
@@ -929,7 +1148,7 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                     mean_line_hist = pg.InfiniteLine(pos=mean_scale, angle=90, pen=global_mean_pen, movable=False)
                     mean_line_hist.setZValue(-10); items_hist.append(mean_line_hist)
                 for item in items_hist: plot_item_hist.addItem(item)
-                self.scale_histogram_plot.autoRange()
+                if plot_item_hist.getViewBox(): plot_item_hist.getViewBox().autoRange()
 
         if self.scale_cdf_plot and len(scales_all) > 0:
             logger.debug("Updating scale CDF plot with mean/SD (vertical).")
@@ -943,14 +1162,30 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                 connecting_line_pen = pg.mkPen(color=(150, 150, 150, 200), width=1.5, style=QtCore.Qt.PenStyle.DotLine)
                 cdf_line_item = pg.PlotDataItem(x=sorted_individual_scales, y=y_cdf_individual, pen=connecting_line_pen)
                 cdf_line_item.setZValue(0); items_cdf.append(cdf_line_item)
-                cdf_point_brushes = [self._get_plot_color_for_track(tid) for tid in track_ids_for_cdf_points]
+                
+                # --- BEGIN Phase 4 MODIFICATION ---
+                cdf_point_brushes = []
+                for tid_cdf in track_ids_for_cdf_points:
+                    is_used_cdf = self.track_global_scale_checkbox_states.get(tid_cdf, False)
+                    track_element_cdf = next((el for el in self.main_window_ref.element_manager.elements if el.get('id') == tid_cdf and el.get('type') == ElementType.TRACK), None)
+                    is_actually_usable_cdf = False
+                    if track_element_cdf:
+                        analysis_state_cdf = track_element_cdf.get('analysis_state', {})
+                        fit_results_cdf = analysis_state_cdf.get('fit_results', {})
+                        derived_scale_cdf = fit_results_cdf.get('derived_scale_m_per_px')
+                        is_actually_usable_cdf = is_used_cdf and derived_scale_cdf is not None and derived_scale_cdf > 0
+                    
+                    if is_actually_usable_cdf: #
+                        cdf_point_brushes.append(self._get_plot_color_for_track(tid_cdf))
+                    else:
+                        cdf_point_brushes.append(QtGui.QColor(180, 180, 180, 100)) # Greyed out brush [cite: 67]
+                # --- END Phase 4 MODIFICATION ---
+
                 cdf_scatter_points_item = pg.ScatterPlotItem(x=sorted_individual_scales, y=y_cdf_individual,
                                                              data=track_ids_for_cdf_points, symbol='o', size=8,
                                                              pen=None, brush=cdf_point_brushes)
                 cdf_scatter_points_item.setZValue(1)
-                # --- MODIFICATION: Connect to the correct existing handler ---
                 cdf_scatter_points_item.sigClicked.connect(self._on_main_yt_plot_point_clicked)
-                # --- END MODIFICATION ---
                 items_cdf.append(cdf_scatter_points_item)
                 if plot_mean_sd_visuals and mean_scale is not None and std_dev_scale is not None:
                     if std_dev_scale > 0:
@@ -965,28 +1200,69 @@ class ScaleAnalysisView(QtWidgets.QWidget):
                     mean_line_cdf = pg.InfiniteLine(pos=mean_scale, angle=90, pen=global_mean_pen, movable=False)
                     mean_line_cdf.setZValue(-10); items_cdf.append(mean_line_cdf)
                 for item in items_cdf: plot_item_cdf.addItem(item)
-                self.scale_cdf_plot.setYRange(0, 1.05, padding=0)
-                if len(sorted_individual_scales) > 0:
-                    min_x_cdf, max_x_cdf = min(sorted_individual_scales), max(sorted_individual_scales)
-                    padding_cdf_val = 0.05 * (max_x_cdf - min_x_cdf) if max_x_cdf > min_x_cdf else 0.1 * abs(min_x_cdf) if abs(min_x_cdf) > 1e-9 else 0.1
-                    self.scale_cdf_plot.setXRange(min_x_cdf - padding_cdf_val, max_x_cdf + padding_cdf_val)
-                else: self.scale_cdf_plot.autoRange()
+                
+                if plot_item_cdf.getViewBox():
+                    plot_item_cdf.getViewBox().setYRange(0, 1.05, padding=0)
+                    if len(sorted_individual_scales) > 0:
+                        min_x_cdf, max_x_cdf = min(sorted_individual_scales), max(sorted_individual_scales)
+                        padding_cdf_val = 0.05 * (max_x_cdf - min_x_cdf) if max_x_cdf > min_x_cdf else 0.1 * abs(min_x_cdf) if abs(min_x_cdf) > 1e-9 else 0.1
+                        plot_item_cdf.getViewBox().setXRange(min_x_cdf - padding_cdf_val, max_x_cdf + padding_cdf_val)
+                    else: plot_item_cdf.getViewBox().autoRange()
         logger.debug("Finished updating ancillary plots with full-span Mean/SD and harmonized SD lines.")
 
     @QtCore.Slot(int, dict)
     def _handle_save_track_analysis(self, track_id: int, analysis_state_dict: Dict) -> None:
-        # Unchanged
         logger.info(f"ScaleAnalysisView: Received request to save analysis for Track ID {track_id}.")
         if self.main_window_ref and self.main_window_ref.element_manager:
             success = self.main_window_ref.element_manager.update_track_analysis_state(track_id, analysis_state_dict)
             if success:
                 logger.info(f"Analysis state for Track ID {track_id} updated in ElementManager.")
-                self.populate_tracks_table(); self._update_main_yt_plot() 
-                if self.main_window_ref.statusBar(): self.main_window_ref.statusBar().showMessage(f"Analysis for Track {track_id} saved.", 3000)
+                
+                # --- BEGIN Phase 3 MODIFICATION ---
+                if self.track_global_scale_checkbox_states.get(track_id, False): # Check if this track was used for global scale [cite: 41]
+                    logger.debug(f"Track {track_id} was used for global scale and its analysis was saved. Marking global scale as stale.")
+                    self._global_scale_is_stale = True # [cite: 42]
+                # --- END Phase 3 MODIFICATION ---
+                
+                self.populate_tracks_table()
+                self._update_main_yt_plot() 
+                if self.main_window_ref.statusBar(): 
+                    self.main_window_ref.statusBar().showMessage(f"Analysis for Track {track_id} saved.", 3000)
             else:
                 logger.error(f"Failed to update analysis state for Track ID {track_id} in ElementManager.")
                 QtWidgets.QMessageBox.warning(self, "Save Error", f"Could not save analysis for Track {track_id}.")
-        else: logger.error("Cannot save track analysis: MainWindow or ElementManager not available.")
+        else: 
+            logger.error("Cannot save track analysis: MainWindow or ElementManager not available.")
+
+    @QtCore.Slot()
+    def _check_track_fit_invalidated_for_staleness(self) -> None:
+        """
+        Checks if any track that was previously used for global scale now has an invalid fit.
+        If so, marks the global scale as stale. This is connected to elementListChanged.
+        This is a simplified approach as ElementManager doesn't emit a specific "fitInvalidated" signal.
+        """
+        if not self.main_window_ref or not self.main_window_ref.element_manager:
+            return
+
+        potentially_stale = False
+        for track_id, was_used in self.track_global_scale_checkbox_states.items():
+            if was_used: # If this track was contributing to the global scale
+                track_element = next((el for el in self.main_window_ref.element_manager.elements if el.get('id') == track_id and el.get('type') == ElementType.TRACK), None)
+                if track_element:
+                    analysis_state = track_element.get('analysis_state', {})
+                    fit_results = analysis_state.get('fit_results', {})
+                    derived_scale = fit_results.get('derived_scale_m_per_px')
+                    if derived_scale is None or not (isinstance(derived_scale, (float, int)) and derived_scale > 0):
+                        # This track was used, but now its scale is invalid (likely due to point modification)
+                        logger.info(f"Track ID {track_id} was used for global scale but now has an invalid individual fit. Marking global scale stale.")
+                        potentially_stale = True
+                        break 
+        
+        if potentially_stale and not self._global_scale_is_stale:
+            self._global_scale_is_stale = True
+            logger.debug("Global scale marked stale due to a contributing track's fit becoming invalid.")
+            self._update_global_scale_buttons_enabled_state() # Refresh button states and labels
+            self._update_global_scale_display_labels() # Refresh display labels
 
     @QtCore.Slot(int, float)
     def _handle_apply_track_scale(self, track_id: int, derived_scale: float) -> None:
@@ -1009,61 +1285,66 @@ class ScaleAnalysisView(QtWidgets.QWidget):
             if self.main_window_ref.statusBar(): self.main_window_ref.statusBar().showMessage(f"Scale from Track {track_id} applied to project.", 5000)
         else: logger.info("User cancelled applying scale from track to project.")
 
-    # --- NEW METHOD for ProjectManager to set state ---
     def set_scale_analysis_data_from_project(self, data: Dict[str, Any]) -> None:
         """
         Sets the internal state of the ScaleAnalysisView from loaded project data.
         This method is called by ProjectManager after loading a project file.
         """
         logger.info("ScaleAnalysisView: Setting state from loaded project data.")
+        
+        can_set_dirty = self.main_window_ref and hasattr(self.main_window_ref, 'project_manager') and self.main_window_ref.project_manager is not None
+
+        loaded_checkbox_states = data.get('track_global_scale_checkbox_states', {})
         self.track_global_scale_checkbox_states = {
-            int(k): v for k, v in data.get('track_global_scale_checkbox_states', {}).items() if isinstance(v, bool)
+            int(k): v for k, v in loaded_checkbox_states.items() if isinstance(v, bool)
         }
-        
-        self.calculated_global_mean_scale = data.get('calculated_global_mean_scale')
-        if not isinstance(self.calculated_global_mean_scale, (float, int, type(None))):
-            logger.warning(f"Invalid type for 'calculated_global_mean_scale' from project: {type(self.calculated_global_mean_scale)}. Resetting to None.")
+        logger.debug(f"Loaded track_global_scale_checkbox_states: {self.track_global_scale_checkbox_states}")
+
+        loaded_mean_scale = data.get('calculated_global_mean_scale')
+        if isinstance(loaded_mean_scale, (float, int)):
+            self.calculated_global_mean_scale = float(loaded_mean_scale)
+        elif loaded_mean_scale is None:
             self.calculated_global_mean_scale = None
-            
-        self.calculated_global_std_dev = data.get('calculated_global_std_dev')
-        if not isinstance(self.calculated_global_std_dev, (float, int, type(None))):
-            logger.warning(f"Invalid type for 'calculated_global_std_dev' from project: {type(self.calculated_global_std_dev)}. Resetting to None.")
+        else:
+            logger.warning(f"Invalid type for 'calculated_global_mean_scale' from project: {type(loaded_mean_scale)}. Resetting to None.")
+            self.calculated_global_mean_scale = None
+        logger.debug(f"Loaded calculated_global_mean_scale: {self.calculated_global_mean_scale}")
+
+        loaded_std_dev = data.get('calculated_global_std_dev')
+        if isinstance(loaded_std_dev, (float, int)):
+            self.calculated_global_std_dev = float(loaded_std_dev)
+        elif loaded_std_dev is None:
             self.calculated_global_std_dev = None
-
-        self.num_tracks_for_global_scale = data.get('num_tracks_for_global_scale', 0)
-        if not isinstance(self.num_tracks_for_global_scale, int):
-            logger.warning(f"Invalid type for 'num_tracks_for_global_scale' from project: {type(self.num_tracks_for_global_scale)}. Resetting to 0.")
+        else:
+            logger.warning(f"Invalid type for 'calculated_global_std_dev' from project: {type(loaded_std_dev)}. Resetting to None.")
+            self.calculated_global_std_dev = None
+        logger.debug(f"Loaded calculated_global_std_dev: {self.calculated_global_std_dev}")
+            
+        loaded_num_tracks = data.get('num_tracks_for_global_scale', 0)
+        if isinstance(loaded_num_tracks, int):
+            self.num_tracks_for_global_scale = loaded_num_tracks
+        else:
+            logger.warning(f"Invalid type for 'num_tracks_for_global_scale' from project: {type(loaded_num_tracks)}. Resetting to 0.")
             self.num_tracks_for_global_scale = 0
+        logger.debug(f"Loaded num_tracks_for_global_scale: {self.num_tracks_for_global_scale}")
 
-        show_constrained_state = data.get('show_constrained_fits_checkbox_state', False)
+        loaded_show_constrained_state = data.get('show_constrained_fits_checkbox_state', False)
         if self.show_constrained_fits_checkbox:
-            self.show_constrained_fits_checkbox.setChecked(show_constrained_state if isinstance(show_constrained_state, bool) else False)
+            self.show_constrained_fits_checkbox.blockSignals(True)
+            self.show_constrained_fits_checkbox.setChecked(loaded_show_constrained_state if isinstance(loaded_show_constrained_state, bool) else False)
+            self.show_constrained_fits_checkbox.blockSignals(False)
+        logger.debug(f"Loaded show_constrained_fits_checkbox_state: {self.show_constrained_fits_checkbox.isChecked() if self.show_constrained_fits_checkbox else 'N/A'}")
         
-        # selected_track_id_for_plot is intentionally not restored based on user request.
-        # self.current_selected_track_id_for_plot = data.get('selected_track_id_for_plot') 
-        # if not isinstance(self.current_selected_track_id_for_plot, (int, type(None))):
-        #     self.current_selected_track_id_for_plot = None
+        # --- BEGIN Phase 3 MODIFICATION ---
+        self._global_scale_is_stale = False # [cite: 52]
+        # --- END Phase 3 MODIFICATION ---
 
         logger.debug("ScaleAnalysisView: Internal state updated from project data. Triggering UI refreshes.")
         
-        # Trigger UI updates. These should be robust to potentially incomplete data.
-        self.populate_tracks_table() # This will use the loaded checkbox states
+        self.populate_tracks_table() 
         self._update_global_scale_display_labels()
         self._update_global_scale_buttons_enabled_state() 
-        # _update_main_yt_plot and _update_ancillary_plots are called by populate_tracks_table
-        
-        # If a track was previously selected for analysis, and it still exists, re-select it.
-        # (This part is skipped based on user request to not save selected track)
-        # if self.current_selected_track_id_for_plot is not None and self.analysis_tracks_table:
-        #     found_row = -1
-        #     for r in range(self.analysis_tracks_table.rowCount()):
-        #         id_item = self.analysis_tracks_table.item(r, 1) # ID column
-        #         if id_item and id_item.data(QtCore.Qt.ItemDataRole.UserRole) == self.current_selected_track_id_for_plot:
-        #             found_row = r; break
-        #     if found_row != -1:
-        #         self.analysis_tracks_table.selectRow(found_row)
-        #     else: # Previously selected track no longer exists or table empty
-        #         self.current_selected_track_id_for_plot = None 
-        #         if self.single_track_fit_widget: self.single_track_fit_widget.clear_and_disable()
-        # elif self.single_track_fit_widget: # No track was selected, ensure fit widget is clear
-        #      self.single_track_fit_widget.clear_and_disable()
+        if not (self.main_window_ref and self.main_window_ref.element_manager and \
+                any(el.get('type') == ElementType.TRACK for el in self.main_window_ref.element_manager.elements)):
+            self._update_main_yt_plot()
+            self._update_ancillary_plots()
