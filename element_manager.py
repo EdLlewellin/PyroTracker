@@ -697,7 +697,6 @@ class ElementManager(QtCore.QObject):
         return visual_elements_list
 
     def find_closest_visible_point(self, click_x: float, click_y: float, current_frame_index: int) -> Optional[Tuple[int, PointData]]:
-        # ... (existing logic, no changes needed here for this phase) ...
         min_dist_sq = config.CLICK_TOLERANCE_SQ
         closest_element_idx = -1
         closest_point_data: Optional[PointData] = None
@@ -718,6 +717,92 @@ class ElementManager(QtCore.QObject):
         if closest_element_idx != -1 and closest_point_data is not None:
             return (closest_element_idx, closest_point_data)
         return None
+
+    def _distance_point_to_segment_sq(self, px: float, py: float, x1: float, y1: float, x2: float, y2: float) -> float:
+        """
+        Calculates the squared shortest distance from a point (px, py) to a line segment ((x1,y1)-(x2,y2)).
+        """
+        line_dx = x2 - x1
+        line_dy = y2 - y1
+
+        if line_dx == 0 and line_dy == 0:  # Segment is a point
+            return (px - x1)**2 + (py - y1)**2
+
+        # Project point (px,py) onto the line P1P2
+        # t = [(px-x1)(x2-x1) + (py-y1)(y2-y1)] / |P1P2|^2
+        dot_product = (px - x1) * line_dx + (py - y1) * line_dy
+        len_sq = line_dx**2 + line_dy**2
+        
+        t = dot_product / len_sq
+
+        if t < 0:  # Projection is outside segment, closer to P1
+            closest_x, closest_y = x1, y1
+        elif t > 1:  # Projection is outside segment, closer to P2
+            closest_x, closest_y = x2, y2
+        else:  # Projection is on the segment
+            closest_x = x1 + t * line_dx
+            closest_y = y1 + t * line_dy
+            
+        return (px - closest_x)**2 + (py - closest_y)**2
+
+    def find_closest_visible_measurement_line(self, click_x: float, click_y: float, current_frame_index: int) -> Optional[int]:
+        """
+        Finds the index of the closest visible measurement line to a click point.
+
+        Args:
+            click_x: The x-coordinate of the click (scene).
+            click_y: The y-coordinate of the click (scene).
+            current_frame_index: The current frame index to check visibility.
+
+        Returns:
+            The index of the closest measurement line element in self.elements if found
+            within tolerance, otherwise None.
+        """
+        min_dist_sq_to_line = config.CLICK_TOLERANCE_SQ # Reuse point click tolerance for now
+        closest_line_element_index: Optional[int] = None
+
+        for i, element in enumerate(self.elements):
+            if element['type'] != ElementType.MEASUREMENT_LINE:
+                continue
+
+            element_data: ElementData = element['data']
+            visibility_mode: ElementVisibilityMode = element['visibility_mode']
+
+            if visibility_mode == ElementVisibilityMode.HIDDEN:
+                continue
+            
+            if len(element_data) != 2: # A defined line must have two points
+                continue
+
+            p1_data, p2_data = element_data[0], element_data[1]
+            line_definition_frame = p1_data[0] 
+
+            is_line_visible_on_current_frame = False
+            if visibility_mode == ElementVisibilityMode.ALWAYS_VISIBLE:
+                is_line_visible_on_current_frame = True
+            elif visibility_mode == ElementVisibilityMode.INCREMENTAL and current_frame_index >= line_definition_frame:
+                is_line_visible_on_current_frame = True
+            elif visibility_mode == ElementVisibilityMode.HOME_FRAME and current_frame_index == line_definition_frame:
+                is_line_visible_on_current_frame = True
+            
+            if not is_line_visible_on_current_frame:
+                continue
+
+            # Points are (frame_idx, time_ms, x_tl_px, y_tl_px)
+            x1, y1 = p1_data[2], p1_data[3]
+            x2, y2 = p2_data[2], p2_data[3]
+
+            dist_sq = self._distance_point_to_segment_sq(click_x, click_y, x1, y1, x2, y2)
+
+            if dist_sq < min_dist_sq_to_line:
+                min_dist_sq_to_line = dist_sq
+                closest_line_element_index = i
+        
+        if closest_line_element_index is not None:
+            logger.debug(f"Found closest measurement line: Index {closest_line_element_index}, "
+                         f"ID {self.elements[closest_line_element_index]['id']}, dist_sq {min_dist_sq_to_line:.2f}")
+        return closest_line_element_index
+
 
     def get_track_elements_summary(self) -> List[Tuple[int, int, int, int]]:
         # ... (existing logic) ...

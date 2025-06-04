@@ -1792,31 +1792,91 @@ class MainWindow(QtWidgets.QMainWindow):
     def _handle_modified_click(self, x: float, y: float, modifiers: QtCore.Qt.KeyboardModifiers) -> None:
         status_bar = self.statusBar()
         if not self.video_loaded:
-            if status_bar: status_bar.showMessage("Cannot interact: Video/components not ready.", 3000); return
-        if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            result = self.element_manager.find_closest_visible_point(x, y, self.current_frame_index)
-            if result is None:
-                if self.element_manager.active_element_index != -1: self.element_manager.set_active_element(-1); 
-                if status_bar: status_bar.showMessage("Track deselected." if self.element_manager.active_element_index == -1 else "No track to deselect.", 3000)
-                return
-        result = self.element_manager.find_closest_visible_point(x, y, self.current_frame_index)
-        if result is None:
-            if modifiers != QtCore.Qt.KeyboardModifier.ControlModifier and status_bar: status_bar.showMessage("No track marker found near click.", 3000)
+            if status_bar:
+                status_bar.showMessage("Cannot interact: Video/components not ready.", 3000)
             return
-        element_idx, point_data = result; element_id = -1
-        if 0 <= element_idx < len(self.element_manager.elements): element_id = self.element_manager.elements[element_idx]['id']
-        if element_id == -1: return
-        frame_idx_of_point = point_data[0]
+
         if modifiers == QtCore.Qt.KeyboardModifier.ControlModifier:
-            if self.element_manager.active_element_index != element_idx:
-                self.element_manager.set_active_element(element_idx)
-                if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id, self.tracksTableWidget, config.COL_TRACK_ID)) 
-                if status_bar: status_bar.showMessage(f"Selected Track {element_id}.", 3000)
+            logger.debug(f"Ctrl+Click detected at scene ({x:.2f}, {y:.2f})")
+            
+            # 1. Try to find a track point first
+            point_result = self.element_manager.find_closest_visible_point(x, y, self.current_frame_index)
+            
+            if point_result:
+                element_idx, _ = point_result
+                element_id = self.element_manager.elements[element_idx]['id']
+                logger.debug(f"Ctrl+Click found track point for Track ID {element_id}.")
+                if self.element_manager.active_element_index != element_idx or \
+                   self.element_manager.get_active_element_type() != ElementType.TRACK:
+                    self.element_manager.set_active_element(element_idx)
+                    # Table selection will be handled by _sync_active_element_selection_in_tables
+                    if status_bar:
+                        status_bar.showMessage(f"Selected Track {element_id}.", 3000)
+                else: # Clicked on the already active track element
+                    self.element_manager.set_active_element(-1) # Deselect
+                    if status_bar:
+                        status_bar.showMessage(f"Deselected Track {element_id}.", 3000)
+                return # Handled track point click
+
+            # 2. If no track point found, try to find a measurement line
+            line_element_index = self.element_manager.find_closest_visible_measurement_line(x, y, self.current_frame_index)
+            
+            if line_element_index is not None:
+                line_id = self.element_manager.elements[line_element_index]['id']
+                logger.debug(f"Ctrl+Click found measurement line: ID {line_id}, Index {line_element_index}.")
+                if self.element_manager.active_element_index != line_element_index or \
+                   self.element_manager.get_active_element_type() != ElementType.MEASUREMENT_LINE:
+                    self.element_manager.set_active_element(line_element_index)
+                    # Table selection handled by _sync_active_element_selection_in_tables
+                    if status_bar:
+                        status_bar.showMessage(f"Selected Measurement Line {line_id}.", 3000)
+                else: # Clicked on the already active measurement line
+                    self.element_manager.set_active_element(-1) # Deselect
+                    if status_bar:
+                        status_bar.showMessage(f"Deselected Measurement Line {line_id}.", 3000)
+                return # Handled measurement line click
+
+            # 3. If neither a point nor a line was found near the Ctrl+Click
+            if self.element_manager.active_element_index != -1:
+                logger.debug("Ctrl+Click found no element. Deselecting current active element.")
+                current_active_id = self.element_manager.get_active_element_id()
+                current_active_type = self.element_manager.get_active_element_type()
+                self.element_manager.set_active_element(-1)
+                if status_bar:
+                    type_str = current_active_type.name.lower().replace("_", " ") if current_active_type else "element"
+                    status_bar.showMessage(f"Deselected {type_str} {current_active_id}.", 3000)
+            else:
+                if status_bar:
+                    status_bar.showMessage("No element found near click.", 3000)
+            return
+
         elif modifiers == QtCore.Qt.KeyboardModifier.ShiftModifier:
-            if self.element_manager.active_element_index != element_idx: self.element_manager.set_active_element(element_idx)
-            if self.table_data_controller: QtCore.QTimer.singleShot(0, lambda: self.table_data_controller._select_element_row_by_id_in_ui(element_id, self.tracksTableWidget, config.COL_TRACK_ID)) 
-            if self.current_frame_index != frame_idx_of_point: self.video_handler.seek_frame(frame_idx_of_point)
-            if status_bar: status_bar.showMessage(f"Selected Track {element_id}, jumped to Frame {frame_idx_of_point + 1}.", 3000)
+            # Existing Shift+Click logic for tracks (jump to frame of clicked point)
+            point_result = self.element_manager.find_closest_visible_point(x, y, self.current_frame_index)
+            if point_result:
+                element_idx, point_data = point_result
+                element_id = self.element_manager.elements[element_idx]['id']
+                frame_idx_of_point = point_data[0]
+                
+                logger.debug(f"Shift+Click found track point for Track ID {element_id} at frame {frame_idx_of_point}.")
+                if self.element_manager.active_element_index != element_idx or \
+                   self.element_manager.get_active_element_type() != ElementType.TRACK:
+                    self.element_manager.set_active_element(element_idx)
+                    # Table selection will be updated by _sync_active_element_selection_in_tables
+
+                if self.current_frame_index != frame_idx_of_point:
+                    self.video_handler.seek_frame(frame_idx_of_point)
+                
+                if status_bar:
+                    status_bar.showMessage(f"Selected Track {element_id}, jumped to Frame {frame_idx_of_point + 1}.", 3000)
+            else:
+                if status_bar:
+                    status_bar.showMessage("No track marker found near Shift+click.", 3000)
+        else:
+            # Fallback for other modifier combinations or if no specific action matched
+            logger.debug(f"Modified click with unhandled modifiers: {modifiers}")
+            if status_bar:
+                status_bar.showMessage("Unhandled modified click.", 3000)
 
     @QtCore.Slot(float, float)
     def _handle_scale_or_measurement_line_first_point(self, scene_x: float, scene_y: float) -> None:
