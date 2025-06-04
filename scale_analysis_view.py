@@ -17,6 +17,8 @@ from single_track_fit_widget import SingleTrackFitWidget
 try:
     import pyqtgraph as pg
     PYQTGRAPH_AVAILABLE = True
+    pg.setConfigOption('useOpenGL', False)
+    pg.setConfigOption('enableExperimental', False)
 except ImportError:
     pg = None
     PYQTGRAPH_AVAILABLE = False
