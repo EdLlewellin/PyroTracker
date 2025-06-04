@@ -1,0 +1,9 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <file alias="collapsible_panel.qss">collapsible_panel.qss</file>
+    <file alias="icons/arrow_down.svg">icons/arrow_down.svg</file>
+    <file alias="icons/arrow_down_hover.svg">icons/arrow_down_hover.svg</file>
+    <file alias="icons/arrow_right.svg">icons/arrow_right.svg</file>
+    <file alias="icons/arrow_right_hover.svg">icons/arrow_right_hover.svg</file>
+    </qresource>
+</RCC>

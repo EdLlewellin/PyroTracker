@@ -13,6 +13,7 @@ import os
 from typing import Optional
 
 from PySide6 import QtWidgets, QtCore
+import resources_rc
 
 # Import application components AFTER basic logging is configured
 import config
@@ -91,14 +92,18 @@ if __name__ == "__main__":
         # --- END MODIFICATION ---
 
         # --- Load External Stylesheet ---
-        # Path to QSS is now relative to basedir (which is correct for both modes)
-        qss_file_path = os.path.join(basedir, "collapsible_panel.qss")
-
+        qss_file_path = ":/collapsible_panel.qss" # NEW WAY
+        
         try:
-            with open(qss_file_path, "r") as f:
-                stylesheet_content = f.read()
+            # Use QFile to read from resources
+            qss_file = QtCore.QFile(qss_file_path)
+            if qss_file.open(QtCore.QIODevice.OpenModeFlag.ReadOnly | QtCore.QIODevice.OpenModeFlag.Text):
+                stylesheet_content = QtCore.QTextStream(qss_file).readAll()
+                qss_file.close()
                 app.setStyleSheet(stylesheet_content)
-                logger.info(f"Loaded stylesheet from {qss_file_path}")
+                logger.info(f"Loaded stylesheet from resource: {qss_file_path}")
+            else:
+                logger.warning(f"Could not open stylesheet from resource: {qss_file_path}. Error: {qss_file.errorString()}")
         except FileNotFoundError:
             logger.warning(f"Stylesheet file not found: {qss_file_path}. Using default styles for panels.")
         except Exception as e:

@@ -37,17 +37,17 @@ QGroupBox[collapsible="true"]::indicator {
 }
 
 QGroupBox[collapsible="true"]::indicator:unchecked {
-    image: url(icons/arrow_right.svg); /* Relative path */
+    image: url(:/icons/arrow_right.svg); /* Path changed */
 }
 
 QGroupBox[collapsible="true"]::indicator:unchecked:hover {
-    image: url(icons/arrow_right_hover.svg); /* Relative path */
+    image: url(:/icons/arrow_right_hover.svg); /* Path changed */
 }
 
 QGroupBox[collapsible="true"]::indicator:checked {
-    image: url(icons/arrow_down.svg); /* Relative path */
+    image: url(:/icons/arrow_down.svg); /* Path changed */
 }
 
 QGroupBox[collapsible="true"]::indicator:checked:hover {
-    image: url(icons/arrow_down_hover.svg); /* Relative path */
+    image: url(:/icons/arrow_down_hover.svg); /* Path changed */
 }
